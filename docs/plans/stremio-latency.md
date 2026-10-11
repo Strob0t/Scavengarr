@@ -743,6 +743,90 @@ Opened in the window: kinoking:5000 ×2, supervideo ×1, filemoon ×1, dropload 
   build before 10:58 UTC; row 54's backoff shows in their increase from now
   on.
 
+### Twelfth round (2026-10-11, production rebuilt 14:10 UTC from `staging` dad3051)
+
+The build of rows 63 to 70: the filmo plugin, Byse through the watch page, three segments ahead, the domain lists and the challenge counter (row 75). The round ran 14:22:09 to 14:33:04 UTC (`stremio_round.py --base https://scavengarr.lan --insecure --portainer`, the 19 titles with play checks, the play check of row 64 and row 66's codecs), after Ultracode's capture probe ended at 14:16:40 UTC. Every title but Interstellar answered from the search cache's stale entries, which the eleventh round stored about 3 h 15 min earlier (`X-Cache: STALE`, each starting one refresh in the background), so the first answers are fast and their streams are whatever the stale entry and the resolver cache gave at that moment.
+
+| Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable | Findings |
+|---|---|---|---|---|---|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | 8.2 s | 5 | STALE | false | 1.04 s | 5 | 5 of 5 | – |
+| Lola rennt (`movie/tt0130827`) | 6.0 s | 4 | STALE | false | 0.35 s | 4 | 4 of 4 | – |
+| Good Bye, Lenin! (`movie/tt0301357`) | 4.7 s | 1 | STALE | false | 0.03 s | 1 | 1 of 1 | – |
+| Im Westen nichts Neues (`movie/tt1016150`) | 2.9 s | 5 | STALE | false | 0.11 s | 5 | 5 of 5 | – |
+| Oppenheimer (`movie/tt15398776`) | 7.2 s | 5 | STALE | false | 0.05 s | 5 | 5 of 5 | – |
+| Dune: Part Two (`movie/tt15239678`) | 6.0 s | 5 | STALE | false | 0.03 s | 5 | 4 of 5 | VIDSONIC |
+| Inception (`movie/tt1375666`) | 8.7 s | 5 | STALE | false | 0.12 s | 6 | 5 of 5 | – |
+| Interstellar (`movie/tt0816692`) | 2.1 s | 5 | HIT | true | 0.06 s | 5 | 5 of 5 | – |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 0.1 s | 0 | STALE | false | 0.04 s | 0 | 0 of 0 | – |
+| Dark S01E01 (`series/tt5753856:1:1`) | 2.0 s | 1 | STALE | false | 0.41 s | 1 | 1 of 1 | – |
+| Stranger Things S04E01 (`series/tt4574334:4:1`) | 5.2 s | 3 | STALE | false | 0.05 s | 3 | 3 of 3 | – |
+| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 0.6 s | 1 | STALE | false | 0.02 s | 1 | 1 of 1 | – |
+| The Last of Us S01E01 (`series/tt3581920:1:1`) | 2.5 s | 5 | STALE | false | 0.11 s | 5 | 4 of 5 | FIRESTREAM |
+| One Piece S01E01 (`series/tt0388629:1:1`) | 4.6 s | 5 | STALE | false | 0.08 s | 5 | 5 of 5 | – |
+| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 3.8 s | 5 | STALE | false | 0.12 s | 5 | 5 of 5 | – |
+| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 4.0 s | 6 | STALE | false | 0.23 s | 6 | 5 of 6 | VIDMOLY |
+| Frieren S01E01 (`series/tt22248376:1:1`) | 4.3 s | 5 | STALE | false | 0.80 s | 5 | 5 of 5 | – |
+| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 0.1 s | 0 | STALE | false | 0.02 s | 0 | 0 of 0 | – |
+| The Matrix (`movie/tt0133093`) | 2.1 s | 5 | STALE | false | 0.07 s | 5 | 5 of 5 | – |
+| **Median / total** (19 titles) | 4.0 s | 71 | 1 HIT | 1 of 19 complete | 0.08 s | 72 | 68 of 71 | – |
+
+Titles without stream: 2 of 19 (first answer), 2 of 19 (cached answer); max first answer 8.7 s.
+
+CPU of the container during the round: Python 220.8 s, Chromium 497.2 s.
+
+| Hoster | Codecs | Streams |
+|---|---|---|
+| DOODSTREAM | codecs unread | 2 |
+| DOODSTREAM | h264/aac | 3 |
+| FIRESTREAM | h264/aac | 1 |
+| FSST | codecs unread | 4 |
+| FSST | h264/aac | 4 |
+| GXPLAYER | h264/aac | 3 |
+| MIXDROP | codecs unread | 3 |
+| MIXDROP | h264/aac | 1 |
+| PLAYMATE | h264/aac | 2 |
+| STRMUP | h264/aac | 12 |
+| VIDHIDE | h264/aac | 2 |
+| VIDMOLY | h264/aac | 9 |
+| VIDSONIC | h264/aac | 3 |
+| VINOVO | codecs unread | 3 |
+| VINOVO | h264/aac | 4 |
+| VOE | h264/aac | 13 |
+
+**Reading against the eleventh round** (18 of 19 titles with streams, 73 streams, 72 of 73 playable with the proxied files judged as files, 9 of 9 of them with seeks):
+
+- **Times.** The median first answer is 4.0 s (13.7 s), and the longest is 8.7 s (30.5 s): the stale entries answer at once. Only Interstellar's answer was complete (1 of 19, against 7), because a stale answer reports the refresh as still running.
+- **Streams.** 17 of 19 titles answered with streams, 71 streams in all (18 of 19, 73). The proxied files (DoodStream, MixDrop, Vinovo, FSST) were judged as files, and none failed. 68 of 71 play (72 of 73 last time).
+- **Finding: Breaking Bad S01E01 answered 0 streams** (2 in the eleventh round). Production's log of the request (`request_id=1a91a548cb24`, 14:28:53 UTC):
+  - The stale entry held one link, filmpalast's VOE, which failed: `voe_all_methods_failed`, then `hoster_resolve_failed hoster=voe plugin=filmpalast`.
+  - `stremio_stream_response streams_returned=0 source=stale`; the round's cached second request one second later saw the same.
+  - The background refresh stored 3 results (`stremio_search_cache_stored result_count=3 missing=['kinoking']`; kinoking timed out at 30 s and opened its breaker again) and resolved 2 video streams by 14:29:24 (`stremio_resolve_complete background=True ... video_streams=2`), as many as the eleventh round.
+  - So the empty answer is one request's: a stale entry whose only link died since. The refresh restores it, and Stremio's next request gets the 2 streams.
+- **Finding: Stranger Things S04E01, 3 streams (5), and Haus des Geldes S01E01, 1 stream (2).** Same mechanism, a stale entry answered:
+  - Stranger Things (`request_id=320b793671fc`): 9 of 10 links tried, 3 video streams. The background refresh then had 6 links and 2 video streams (14:30:16 and 14:30:25), so this title has fewer live links today, not only a stale answer.
+  - Haus des Geldes (`request_id=5bf0ddae1a25`): 1 of 1 link, 1 stream. The refresh resolved 2 by 14:30:25, as many as before.
+- **Finding: three plays failed with 502 from the HLS proxy**, each after its 15 s timeout to the CDN (`hls_proxy_network_error`):
+  - VIDSONIC on Dune: Part Two (`FAIL variant 502`, 14:26:24 UTC, `cdn=vidsonic`). Vidsonic played in the eleventh round.
+  - VIDMOLY on Demon Slayer S01E01 (`FAIL variant 502`, 14:31:54 UTC, `cdn=vmnow`). The other 8 Vidmoly streams played.
+  - FIRESTREAM on The Last of Us S01E01 (`FAIL hls ... 502` on a segment, 14:29:42 UTC, `cdn=firestream`), the same stream that failed in the eleventh round (a timeout then), the CDN's own answer of row 64.
+  - Each is one stream of a hoster whose other streams played, and all three are network errors toward the CDN, not answers of Scavengarr's own.
+- **Filemoon and Byse.** No Filemoon stream: its breaker is open (`breaker_open` 115 since the start), and the Pi gets no Filemoon or Byse capture (Ultracode measured 0 of 4 after about 20 s, row 65's reading). That is known and needs no finding of its own here. filmo answered 31 results in 65 searches since the start.
+- **Breakers not closed after the round:** dropload, filemoon, supervideo and vixeo (hosters, as in the eleventh round); kinoking:5000 (open) and kinox:2000 (half open).
+
+**Read-ahead (row 68's after check).** `scavengarr_hls_readahead_total` was 0 before the round (no HLS since the restart at 14:10 UTC), so these counts are the round's HLS plays alone. The play check reads a few segments per stream; it is not a playback.
+
+| Outcome | Count |
+|---|---|
+| ok (fetches) | 161 |
+| failed (fetches) | 4 |
+| hit (answers from memory) | 40 |
+| miss (answers fetched on request) | 45 |
+| dropped (fetched, never asked for) | 101 |
+
+The 165 fetches took 947.8 s in all (5.7 s each on average, three in flight per playback). The 4 failures: one `ConnectTimeout`, one `ReadTimeout` and two `ReadError` against the CDNs `cloudwindow-route` (twice), `s1q2105` and `97bf1`. The high `dropped` count is the play check's pattern: it reads the first segments and stops, so the segments fetched ahead of the last one it asked for are dropped. Whether three segments in flight keep a 1080p picture without stalls is the maintainer's playback check (row 68), not this round's.
+
+**The challenge counter (row 70), live.** The digest at 14:35 UTC: kinoger 10 challenges, 1 of them unsolved; moflix 5, none unsolved. N20's line reads `kinoger 1 of 188 searches (0.5 %)`, far below the 5 % rule; the 7-day reading is due on 2026-10-18.
+
 ## AIOStreams
 
 Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
