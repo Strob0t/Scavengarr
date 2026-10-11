@@ -1,6 +1,7 @@
 """A browser-capture resolver's capture, timed in the container.
 
     probe capture_timing -- URL [--hoster filemoon] [--runs 2] [--timeout S]
+        [--diagnose]
 
 Resolves the hoster page *URL* (a link as the plugins store it) with the
 app's resolver for ``--hoster`` (one that captures in the stealth browser:
@@ -22,15 +23,21 @@ and at exit the probe kills every process it started. Per run it prints
 the pages the browser loaded (the path's first segment, when the load
 started, how long it took), the clicks on the player, when the stream was
 captured (its CDN's domain) and the resolver's whole time, then
-production's two bounds. Prints no URLs: domains, the first path segment
-and times only. Run it while nothing plays: its browser shares the Pi's
-CPU with the app.
+production's two bounds. ``--diagnose`` adds per run the page's requests
+(domain, path with its ids masked as ``/api/videos/<id>/embed/playback``,
+resource type, and the status, ``redirect``, the browser's error or
+``pending``) and, after the clicks, what each frame can play: its video
+element (MediaError code, network state) and the answers of MediaSource
+and canPlayType for H.264, AAC and HLS. Prints no URLs: domains, paths
+with ids masked and times only. Run it while nothing plays: its browser
+shares the Pi's CPU with the app.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import logging
 import os
 import re
@@ -40,6 +47,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +80,32 @@ _BROWSER_NAMES = frozenset({"chrome", "chromium", "chromium-browser", "headless_
 _DISPLAY = ":99"
 _X_SOCKET = Path("/tmp/.X11-unix/X99")
 _MEM_AVAILABLE_RE = re.compile(r"MemAvailable:\s+(\d+) kB")
+# --diagnose: a path segment shows when it is a plain word (sub-words of
+# letters split by -, _ or ., each up to nine letters and a final digit at
+# most: ids are longer or mix digits in), else it reads <id>
+_SUBWORD_RE = re.compile(r"[A-Za-z]{1,9}\d?")
+_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+_SHAPE_DEPTH = 8
+# ...the kinds of request summed up in one line, the lines per run
+_QUIET_KINDS = frozenset({"image", "font", "stylesheet"})
+_MAX_REQUEST_LINES = 40
+# ...the frames read after the clicks, the time each gets
+_MAX_FRAMES = 6
+_FRAME_READ_S = 3.0
+# Asked in each frame after the clicks: the player's video element (its
+# MediaError code and network state) and what the browser can play
+_FRAME_CHECK = """() => {
+  const mse = (type) => (window.MediaSource ? MediaSource.isTypeSupported(type) : null);
+  const video = document.querySelector('video');
+  return {
+    video: video !== null,
+    error: video && video.error ? video.error.code : null,
+    network: video ? video.networkState : null,
+    h264: mse('video/mp4; codecs="avc1.42E01E"'),
+    aac: mse('audio/mp4; codecs="mp4a.40.2"'),
+    hls: document.createElement('video').canPlayType('application/vnd.apple.mpegurl'),
+  };
+}"""
 
 
 def path_kind(url: str) -> str:
@@ -80,9 +114,37 @@ def path_kind(url: str) -> str:
     return f"/{segment}/" if segment else "/"
 
 
-def cdn(url: str) -> str:
-    host = urlsplit(url).hostname or ""
-    return ".".join(host.split(".")[-2:])
+def domain(url: str) -> str:
+    """*url*'s domain: the host's last two labels, ``<ip>`` for an address,
+    the scheme for a URL without a host (``blob``)."""
+    parts = urlsplit(url)
+    host = parts.hostname
+    if not host:
+        return parts.scheme or "?"
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return ".".join(host.split(".")[-2:])
+    return "<ip>"
+
+
+def _plain(segment: str) -> bool:
+    return all(_SUBWORD_RE.fullmatch(word) for word in re.split(r"[-_.]", segment))
+
+
+def shape(url: str) -> str:
+    """*url*'s path with each segment that is no plain word masked
+    (``/api/videos/<id>/embed/playback``); extensions stay, no query."""
+    segments = [segment for segment in urlsplit(url).path.split("/") if segment]
+    shaped = []
+    for segment in segments[:_SHAPE_DEPTH]:
+        stem, extension = segment, ""
+        if (found := _EXTENSION_RE.search(segment)) and found.start():
+            stem, extension = segment[: found.start()], found.group()
+        shaped.append((stem if _plain(stem) else "<id>") + extension)
+    if len(segments) > _SHAPE_DEPTH:
+        shaped.append("…")
+    return "/" + "/".join(shaped)
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +290,32 @@ class PageLoad:
 
 
 @dataclass
+class RequestNote:
+    """A request of a watched page: domain, path shape, resource type and
+    outcome (the status, ``redirect``, the browser's error or ``pending``)."""
+
+    domain: str
+    shape: str
+    kind: str
+    outcome: str = "pending"
+
+
+@dataclass(frozen=True)
+class FrameNote:
+    """What a frame of the capture's page can play, read after the clicks;
+    ``video`` None: the frame could not be read."""
+
+    domain: str
+    main: bool  # the page itself, not a frame in it
+    video: bool | None = None
+    error: int | None = None  # the video's MediaError code
+    network: int | None = None  # the video's networkState
+    h264: bool | None = None  # None: no MediaSource
+    aac: bool | None = None
+    hls: str = ""  # canPlayType: "", "maybe" or "probably"
+
+
+@dataclass
 class Run:
     """One resolution, its times in seconds after its start."""
 
@@ -239,12 +327,81 @@ class Run:
     took: float = 0.0
     resolved: bool = False
     cut: bool = False
+    # --diagnose
+    requests: list[RequestNote] = field(default_factory=list)
+    frames: list[FrameNote] = field(default_factory=list)
+
+
+def watch_requests(page: Any, run: Run) -> None:
+    """Note each request *page* makes in *run*, with its outcome."""
+    notes: dict[Any, RequestNote] = {}
+
+    def requested(request: Any) -> None:
+        # Web requests only: no data: URLs, no extension or browser pages
+        if not request.url.startswith(("http:", "https:")):
+            return
+        hop = notes.get(request.redirected_from)
+        if hop is not None and hop.outcome == "pending":
+            hop.outcome = "redirect"
+        note = RequestNote(
+            domain(request.url), shape(request.url), request.resource_type
+        )
+        notes[request] = note
+        run.requests.append(note)
+
+    def answered(response: Any) -> None:
+        if (note := notes.get(response.request)) is not None:
+            note.outcome = str(response.status)
+
+    def failed(request: Any) -> None:
+        if (note := notes.get(request)) is not None:
+            note.outcome = request.failure or "failed"
+
+    page.on("request", requested)
+    page.on("response", answered)
+    page.on("requestfailed", failed)
+
+
+async def frame_notes(page: Any) -> list[FrameNote]:
+    """What each web frame of *page* (the page first) can play."""
+    notes: list[FrameNote] = []
+    frames = [f for f in page.frames if f.url.startswith(("http:", "https:"))]
+    for frame in frames[:_MAX_FRAMES]:
+        where, main = domain(frame.url), frame is page.main_frame
+        try:
+            async with asyncio.timeout(_FRAME_READ_S):
+                found = await frame.evaluate(_FRAME_CHECK)
+        except Exception:  # noqa: BLE001
+            found = None  # detached, or busy past the bound
+        if not isinstance(found, dict):
+            notes.append(FrameNote(where, main))
+            continue
+        notes.append(
+            FrameNote(
+                where,
+                main,
+                video=bool(found.get("video")),
+                error=found.get("error"),
+                network=found.get("network"),
+                h264=found.get("h264"),
+                aac=found.get("aac"),
+                hls=str(found.get("hls") or ""),
+            )
+        )
+    return notes
 
 
 class TimedStealthPool(StealthPool):
-    """The app's stealth pool, noting its page loads and captures in ``run``."""
+    """The app's stealth pool, noting its page loads and captures in ``run``;
+    with ``diagnose`` each page's requests too (``watch_requests``, once
+    per page)."""
 
     run: Run | None = None
+    diagnose: bool = False
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._watched: list[Any] = []
 
     async def _navigate(
         self,
@@ -255,6 +412,13 @@ class TimedStealthPool(StealthPool):
         timeout_ms: int,
         done: Callable[[], bool] = lambda: False,
     ) -> bool:
+        if (
+            self.diagnose
+            and self.run is not None
+            and not any(watched is page for watched in self._watched)
+        ):
+            self._watched.append(page)
+            watch_requests(page, self.run)
         started = time.monotonic()
         loaded = await super()._navigate(
             page, url, wait_until=wait_until, timeout_ms=timeout_ms, done=done
@@ -276,7 +440,7 @@ class TimedStealthPool(StealthPool):
         media = await super().capture_media(url, timeout=timeout, player=player)
         if self.run is not None and media is not None:
             self.run.stream_at = time.monotonic() - self.run.started
-            self.run.cdn = cdn(media.url)
+            self.run.cdn = domain(media.url)
         return media
 
 
@@ -291,6 +455,21 @@ def note_clicks(pool: TimedStealthPool) -> None:
         return await click_point(page, player)
 
     stealth._click_point = noted
+
+
+def note_frames(pool: TimedStealthPool) -> None:
+    """With ``pool.diagnose``, note what the page's frames can play once
+    the capture's clicks are done (the capture looks ``_start_player`` up
+    in its module)."""
+    start_player = stealth._start_player
+
+    async def noted(page: Any, found: Any, player: str | None) -> CapturedMedia | None:
+        media = await start_player(page, found, player)
+        if pool.diagnose and pool.run is not None:
+            pool.run.frames = await frame_notes(page)
+        return media
+
+    stealth._start_player = noted
 
 
 def capture_resolvers(
@@ -326,6 +505,57 @@ def report_row(number: int, run: Run) -> str:
     )
 
 
+def request_lines(run: Run) -> list[str]:
+    """*run*'s requests in the order they came, alike ones counted
+    together; images, fonts and stylesheets summed up in one line."""
+    alike: Counter[tuple[str, str, str, str]] = Counter()
+    quiet: Counter[str] = Counter()
+    for note in run.requests:
+        if note.kind in _QUIET_KINDS:
+            quiet[note.kind] += 1
+        else:
+            alike[note.domain, note.shape, note.kind, note.outcome] += 1
+    lines = [
+        f"- {where} {path} {kind}: {outcome}" + (f" ×{count}" if count > 1 else "")
+        for (where, path, kind, outcome), count in alike.items()
+    ]
+    if len(lines) > _MAX_REQUEST_LINES:
+        more = f"- … {len(lines) - _MAX_REQUEST_LINES} more"
+        lines[_MAX_REQUEST_LINES:] = [more]
+    if quiet:
+        summed = ", ".join(f"{count} {kind}" for kind, count in sorted(quiet.items()))
+        lines.append(f"- also {summed}")
+    return lines
+
+
+def _answer(value: bool | None) -> str:
+    return "no MediaSource" if value is None else ("yes" if value else "no")
+
+
+def frame_line(note: FrameNote) -> str:
+    where = f"{'page' if note.main else 'frame'} {note.domain}"
+    if note.video is None:
+        return f"- {where}: unreadable"
+    video = "no video element"
+    if note.video:
+        error = f"error {note.error}" if note.error else "no error"
+        video = f"video element, {error}, network state {note.network}"
+    return (
+        f"- {where}: {video}; MediaSource H.264 {_answer(note.h264)},"
+        f" AAC {_answer(note.aac)}; canPlayType HLS {note.hls or 'no'}"
+    )
+
+
+def diagnosis_lines(number: int, run: Run) -> list[str]:
+    lines = [
+        f"### Run {number}: requests (domain, path with ids masked, type: outcome)"
+    ]
+    lines.extend(request_lines(run) or ["- none"])
+    lines.append("frames after the clicks:")
+    lines.extend([frame_line(note) for note in run.frames] or ["- none read"])
+    return lines
+
+
 async def _close(label: str, closing: Any) -> None:
     try:
         async with asyncio.timeout(10):
@@ -354,7 +584,9 @@ async def probe(args: argparse.Namespace) -> int:
         os.environ["DISPLAY"] = _DISPLAY
     browser = SharedBrowserPool(headless=config.playwright_headless)
     pool = TimedStealthPool(browser_pool=browser, timeout_ms=int(timeout * 1000))
+    pool.diagnose = args.diagnose
     note_clicks(pool)
+    note_frames(pool)
     http = build_http_client(config)
     try:
         resolver = capture_resolvers(http, pool).get(args.hoster)
@@ -366,15 +598,20 @@ async def probe(args: argparse.Namespace) -> int:
             f" · navigation bound {timeout:g} s"
         )
         started = time.monotonic()
-        await browser.warmup()
+        chromium, _ = await browser.warmup()
+        # Major and build: the full version reads like an address to the masks
+        version = chromium.version.split(".")
+        build = version[2] if len(version) > 2 else "?"
         print(
             f"browser launch {time.monotonic() - started:.1f} s"
-            f" (DISPLAY {os.environ.get('DISPLAY', 'none')})"
+            f" (Chromium {version[0]}, build {build}, DISPLAY {os.environ.get('DISPLAY', 'none')})"
         )
         print("| run | pages (path: start, load) | clicks at | stream at | resolve |")
         print("|---|---|---|---|---|")
+        runs: list[Run] = []
         for number in range(1, args.runs + 1):
             run = Run(time.monotonic())
+            runs.append(run)
             pool.run = run
             try:
                 async with asyncio.timeout(RUN_LIMIT_S):
@@ -390,6 +627,9 @@ async def probe(args: argparse.Namespace) -> int:
             f" {config.stremio.probe_stealth_timeout_seconds:g} s"
             " (stremio.probe_stealth_timeout_seconds)"
         )
+        if args.diagnose:
+            for number, run in enumerate(runs, 1):
+                print("\n".join(diagnosis_lines(number, run)))
     finally:
         pool.run = None
         await _close("stealth pool", pool.cleanup())
@@ -408,6 +648,11 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="navigation and challenge bound in seconds (default: production's)",
+    )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="print each run's requests and what its frames can play",
     )
     return parser
 

@@ -1,5 +1,5 @@
-"""Tests for the pre-checks, process cleanup, timing and report of
-scripts/probes/capture_timing.py."""
+"""Tests for the pre-checks, process cleanup, timing, diagnosis and report
+of scripts/probes/capture_timing.py."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
@@ -44,7 +46,7 @@ class TestNames:
         assert _mod.path_kind("https://byse.example/") == "/"
 
     def test_the_cdn_is_the_last_two_labels(self) -> None:
-        assert _mod.cdn("https://edge-1.cdn.example.com/hls/master.m3u8") == (
+        assert _mod.domain("https://edge-1.cdn.example.com/hls/master.m3u8") == (
             "example.com"
         )
 
@@ -179,4 +181,261 @@ def test_the_capture_resolvers_by_name() -> None:
 def test_two_runs_by_default() -> None:
     args = _mod._parser().parse_args(["https://byse.example/e/abc"])
 
-    assert (args.hoster, args.runs, args.timeout) == ("filemoon", 2, None)
+    assert (args.hoster, args.runs, args.timeout, args.diagnose) == (
+        "filemoon",
+        2,
+        None,
+        False,
+    )
+
+
+class _Page:
+    """Stands in for a Playwright page: its handlers by event and its frames."""
+
+    def __init__(self, frames: list[_Frame] | None = None) -> None:
+        self.handlers: dict[str, list[Callable[[Any], None]]] = {}
+        self.frames = frames or []
+        self.main_frame = self.frames[0] if self.frames else None
+
+    def on(self, event: str, handler: Callable[[Any], None]) -> None:
+        self.handlers.setdefault(event, []).append(handler)
+
+    def emit(self, event: str, payload: object) -> None:
+        for handler in self.handlers.get(event, []):
+            handler(payload)
+
+
+class _Request:
+    def __init__(
+        self,
+        url: str,
+        resource_type: str = "fetch",
+        *,
+        redirected_from: _Request | None = None,
+        failure: str | None = None,
+    ) -> None:
+        self.url = url
+        self.resource_type = resource_type
+        self.redirected_from = redirected_from
+        self.failure = failure
+
+
+class _Response:
+    def __init__(self, request: _Request, status: int) -> None:
+        self.request = request
+        self.status = status
+
+
+class _Frame:
+    def __init__(
+        self,
+        url: str,
+        answer: dict[str, Any] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.url = url
+        self.answer = answer
+        self.error = error
+
+    async def evaluate(self, _script: str) -> dict[str, Any] | None:
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+
+def _plays(**changes: object) -> dict[str, Any]:
+    answer: dict[str, Any] = {
+        "video": False,
+        "error": None,
+        "network": None,
+        "h264": True,
+        "aac": True,
+        "hls": "",
+    }
+    answer.update(changes)
+    return answer
+
+
+class TestShapes:
+    def test_the_shape_masks_ids_and_drops_the_query(self) -> None:
+        shape = _mod.shape
+
+        assert (
+            shape("https://byse.example/api/videos/aa6n0tuxqz1h/embed/playback?t=x")
+            == "/api/videos/<id>/embed/playback"
+        )
+        assert (
+            shape(
+                "https://edge.example.com/hls2/01/04711/abcdefghijkl_h/master.m3u8?t=a"
+            )
+            == "/hls2/<id>/<id>/<id>/master.m3u8"
+        )
+        # A twelve-letter id without a digit is masked by its length
+        assert shape("https://filemoon.example/e/abcdefghijkl") == "/e/<id>"
+        assert (
+            shape("https://cdn.example/assets/jwplayer.core.controls.js")
+            == "/assets/jwplayer.core.controls.js"
+        )
+        assert shape("https://byse.example/") == "/"
+
+    def test_the_domain_hides_addresses(self) -> None:
+        assert _mod.domain("https://a.b.example.com/x") == "example.com"
+        assert _mod.domain("https://203.0.113.7/x") == "<ip>"
+        assert _mod.domain("https://[2001:db8::1]/x") == "<ip>"
+        assert _mod.domain("blob:https://byse.example/1f2e") == "blob"
+
+
+class TestRequests:
+    def test_each_request_is_noted_with_its_outcome(self) -> None:
+        page, run = _Page(), _mod.Run(0.0)
+        _mod.watch_requests(page, run)
+        document = _Request("https://byse.example/d/abc123def456", "document")
+        playback = _Request(
+            "https://byse.example/api/videos/aa6n0tuxqz1h/embed/playback"
+        )
+        media = _Request(
+            "https://edge.cdn.example.com/a1b2c3d4/master.m3u8",
+            "media",
+            failure="net::ERR_FAILED",
+        )
+        attest = _Request("https://byse.example/api/videos/access/attest", "xhr")
+        for request in (document, playback, media, attest):
+            page.emit("request", request)
+        page.emit("request", _Request("data:image/png;base64,AAAA", "image"))
+        page.emit(
+            "request", _Request("chrome-extension://mhjfbmdgcfjb/main.js", "script")
+        )
+        page.emit("response", _Response(document, 200))
+        page.emit("response", _Response(playback, 403))
+        page.emit("requestfailed", media)
+
+        assert [(n.domain, n.shape, n.kind, n.outcome) for n in run.requests] == [
+            ("byse.example", "/d/<id>", "document", "200"),
+            ("byse.example", "/api/videos/<id>/embed/playback", "fetch", "403"),
+            ("example.com", "/<id>/master.m3u8", "media", "net::ERR_FAILED"),
+            ("byse.example", "/api/videos/access/attest", "xhr", "pending"),
+        ]
+
+    def test_a_redirect_marks_its_hop(self) -> None:
+        page, run = _Page(), _mod.Run(0.0)
+        _mod.watch_requests(page, run)
+        first = _Request("https://a.example/go", "document")
+        second = _Request(
+            "https://b.example/d/abc123def456", "document", redirected_from=first
+        )
+        page.emit("request", first)
+        page.emit("request", second)
+        page.emit("response", _Response(second, 200))
+
+        assert [n.outcome for n in run.requests] == ["redirect", "200"]
+
+    def test_the_lines_count_alike_requests_and_sum_up_the_quiet_kinds(self) -> None:
+        note = _mod.RequestNote
+        run = _mod.Run(0.0)
+        run.requests.extend(
+            [
+                note("byse.example", "/api/videos/<id>/embed/playback", "fetch", "403"),
+                note("ads.example", "/<id>.png", "image", "200"),
+                note("byse.example", "/api/videos/<id>/embed/playback", "fetch", "403"),
+                note("fonts.example", "/<id>.woff2", "font", "200"),
+            ]
+        )
+
+        assert _mod.request_lines(run) == [
+            "- byse.example /api/videos/<id>/embed/playback fetch: 403 ×2",
+            "- also 1 font, 1 image",
+        ]
+
+
+class TestFrames:
+    async def test_each_frame_says_what_it_can_play(self) -> None:
+        page = _Page(
+            [
+                _Frame("https://byse.example/d/abc", _plays()),
+                _Frame(
+                    "https://player.example.net/e/abc",
+                    _plays(video=True, error=4, network=3, h264=False, hls="maybe"),
+                ),
+                _Frame("about:blank", _plays()),
+                _Frame("https://ads.example.org/x", error=RuntimeError("detached")),
+            ]
+        )
+
+        notes = await _mod.frame_notes(page)
+
+        assert [_mod.frame_line(n) for n in notes] == [
+            "- page byse.example: no video element; MediaSource H.264 yes,"
+            " AAC yes; canPlayType HLS no",
+            "- frame example.net: video element, error 4, network state 3;"
+            " MediaSource H.264 no, AAC yes; canPlayType HLS maybe",
+            "- frame example.org: unreadable",
+        ]
+
+    async def test_the_frames_are_read_after_the_clicks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def start_player(*_args: object) -> None:
+            return None
+
+        # restores the module's own function after the test
+        monkeypatch.setattr(stealth, "_start_player", start_player)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.diagnose = True
+        pool.run = _mod.Run(time.monotonic())
+        _mod.note_frames(pool)
+        page = _Page([_Frame("https://byse.example/d/abc", _plays())])
+
+        assert await stealth._start_player(page, MagicMock(), None) is None
+        assert [n.domain for n in pool.run.frames] == ["byse.example"]
+
+    async def test_without_diagnose_no_frame_is_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def start_player(*_args: object) -> None:
+            return None
+
+        monkeypatch.setattr(stealth, "_start_player", start_player)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.run = _mod.Run(time.monotonic())
+        _mod.note_frames(pool)
+
+        await stealth._start_player(
+            _Page([_Frame("https://byse.example/d/abc")]), None, None
+        )
+
+        assert pool.run.frames == []
+
+
+class TestDiagnosedPool:
+    async def test_a_page_is_watched_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def navigate(*_args: object, **_kwargs: object) -> bool:
+            return True
+
+        monkeypatch.setattr(StealthPool, "_navigate", navigate)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.diagnose = True
+        pool.run = _mod.Run(time.monotonic())
+        page = _Page()
+
+        for url in ("https://filemoon.example/e/abc", "https://byse.example/d/abc"):
+            await pool._navigate(
+                page, url, wait_until="domcontentloaded", timeout_ms=1000
+            )
+
+        assert len(page.handlers["request"]) == 1
+
+    def test_the_diagnosis_of_a_run(self) -> None:
+        run = _mod.Run(0.0)
+        run.requests.append(
+            _mod.RequestNote("byse.example", "/d/<id>", "document", "200")
+        )
+        run.frames.append(_mod.FrameNote("byse.example", main=True))
+
+        assert _mod.diagnosis_lines(1, run) == [
+            "### Run 1: requests (domain, path with ids masked, type: outcome)",
+            "- byse.example /d/<id> document: 200",
+            "frames after the clicks:",
+            "- page byse.example: unreadable",
+        ]
