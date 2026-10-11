@@ -644,6 +644,28 @@ files and byte-range playlists).
 
 Row 64 (2026-10-11, Mr. Normal): the play check takes a URL whose path ends in `/file` for a file (`stream_kind()`; `.m3u8`, `master.txt` and the proxy's other paths stay HLS) and counts a segment answered 200 only under `EXT-X-BYTERANGE`, so this round reads 72 of 73 playable and its HLS titles carry no `200 instead of 206` finding; the live check of the three titles above waits for Mr. Fable's signal.
 
+**Row 64's proof** (2026-10-11, 11:48:03 to 11:48:27 UTC, `scripts/stremio_playcheck.py` from the dev container against production, each title once in sequence; the load phase of the maintainer's FireStream read-ahead check in Stremio Web): 16 of 17 streams play. All 10 address-bound files (DoodStream, MixDrop, Vinovo, FSST) are judged as files, `OK mp4 …, seek 206`, and no HLS verdict carries `200 instead of 206`. The one failure is FIRESTREAM · filmpalast on Der Schuh des Manitu: both checked segments answered 502 through the proxy, while the maintainer played a FireStream stream at the same time.
+
+| Title | Hoster · plugin | Verdict |
+|---|---|---|
+| Der Schuh des Manitu (`movie/tt0248408`) | FIRESTREAM · filmpalast | FAIL hls 1272 segments: 502, 502 |
+| Der Schuh des Manitu | FSST · kinoger | OK mp4 1.74 GB, seek 206 |
+| Der Schuh des Manitu | VOE · megakino | OK hls 462 segments: mpegts, mpegts |
+| Der Schuh des Manitu | DOODSTREAM · einschalten | OK mp4 0.98 GB, seek 206 |
+| Der Schuh des Manitu | STRMUP · filmpalast | OK hls 636 segments: mpegts, mpegts |
+| Der Schuh des Manitu | VINOVO · movie2k | OK mp4 0.96 GB, seek 206 |
+| Der Schuh des Manitu | MIXDROP · hdfilme | OK mp4 0.96 GB, seek 206 |
+| Lola rennt (`movie/tt0130827`) | FSST · kinoger | OK mp4 1.60 GB, seek 206 |
+| Lola rennt | DOODSTREAM · hdfilme | OK mp4 0.82 GB, seek 206 |
+| Lola rennt | STRMUP · kinoger | OK hls 597 segments: mpegts, mpegts |
+| Lola rennt | MIXDROP · hdfilme | OK mp4 0.83 GB, seek 206 |
+| Oppenheimer (`movie/tt15398776`) | VOE · megakino | OK hls 902 segments: mpegts, mpegts |
+| Oppenheimer | FSST · kinoger | OK mp4 2.25 GB, seek 206 |
+| Oppenheimer | STRMUP · kinoger | OK hls 1083 segments: mpegts, mpegts |
+| Oppenheimer | GXPLAYER · megakino | OK hls 1083 segments: mpegts, mpegts |
+| Oppenheimer | VINOVO · movie2k | OK mp4 6.15 GB, seek 206 |
+| Oppenheimer | MIXDROP · hdfilme | OK mp4 1.99 GB, seek 206 |
+
 **The digest** (`prodctl.py digest --since 2h`, 11:20 UTC; the metrics count
 since the restart, 17 minutes), plugins:
 
