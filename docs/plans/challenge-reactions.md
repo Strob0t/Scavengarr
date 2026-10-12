@@ -248,6 +248,16 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       - **Kept:** a database with only plain records (4 stores, 8 records, a compound key path and a unique index) was kept whole. A database with one plain record beside five others (dates, NaN, a typed array, a date key) was left out, and so was one with a File value and a unique index over invalid dates.
       - **Restore:** a new context created from the read state read every kept record back. The context from `storage_state()`'s state failed: `Error setting storage state` (finding 8, reproduced).
     - **The restore's log lines (row 97):** `capture_state_restored` now follows the creation and names how many origins the context took, so after the next restart it means that the context took the state (the restart of 15:11:28 above could not tell). A refused state falls back to the cookies and drops the kept origins (`capture_state_origins_dropped`).
+    - **The recycle's relaunch (row 97, V15; dev container, 17:23 to 17:24 UTC):** the shared browser's restart after 200 pages now launches the new browser, bounded to 30 s, and an operation waits for it with its resolve bound stopped. Before, the next operation launched it inside its own bound: 6 to 11 s on the Pi at the app's starts, against the 10 s bound. Real Chromium under Xvfb, the restart after 1 page, 5 rounds per row, the next operation under a 10 s work clock:
+
+      | Pool | Next operation | To its page (median) | Bound spent (median) |
+      |---|---|---|---|
+      | staging | during the restart | 0.73 s | 0.73 s |
+      | staging | after the restart | 0.40 s | 0.40 s |
+      | row 97 | during the restart | 0.73 s | 0.07 s |
+      | row 97 | after the restart | 0.07 s | 0.07 s |
+
+      The 0.33 s between the staging rows' 0.40 s and row 97's 0.07 s is the dev container's launch; on the Pi the launch is the 6 to 11 s above. Limits: no network, an empty profile, the dev container's launch time. A crash's relaunch still falls to the next operation.
 
 ### R5: warm-up after a start (gap 5)
 

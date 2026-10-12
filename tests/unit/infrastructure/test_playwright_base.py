@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import (
@@ -20,6 +21,7 @@ from scavengarr.infrastructure.browser.hardening import (
     CHROMIUM_ARGS,
     block_heavy_resources,
 )
+from scavengarr.infrastructure.browser.page_gate import work_clock
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 
 # ---------------------------------------------------------------------------
@@ -1835,6 +1837,25 @@ async def _settle() -> None:
         await asyncio.sleep(0)
 
 
+def _after(release: asyncio.Event) -> Callable[..., Awaitable[object]]:
+    """A launch that returns the mock's browser once *release* is set."""
+
+    async def _launch(*_: object, **__: object) -> object:
+        await release.wait()
+        return DEFAULT
+
+    return _launch
+
+
+async def _timed_operation(pool: Any, *, timeout: float, work: float) -> str:
+    """An operation under a resolve bound (``work_clock``), as a capture."""
+    async with asyncio.timeout(timeout) as clock:
+        work_clock.set(clock)
+        async with pool.lease():
+            await asyncio.sleep(work)
+            return "done"
+
+
 class TestSharedBrowserRecycle:
     """Chromium's memory grows with the pages it rendered (1.7 GB on the Pi):
     it restarts after enough pages, but never while an operation holds it
@@ -1861,6 +1882,17 @@ class TestSharedBrowserRecycle:
             pool.note_page()
         return pool, browser, pw
 
+    @pytest.fixture(autouse=True)
+    def relaunched(self) -> Iterator[AsyncMock]:
+        """The Playwright the restart starts, with the new browser."""
+        new_pw = AsyncMock()
+        new_pw.chromium.launch = AsyncMock(return_value=_make_mock_browser())
+        with patch(
+            "scavengarr.infrastructure.browser.shared_browser.async_playwright"
+        ) as mock_apw:
+            mock_apw.return_value.start = AsyncMock(return_value=new_pw)
+            yield new_pw
+
     @pytest.mark.asyncio
     async def test_restarts_after_enough_pages_once_the_last_operation_ends(
         self,
@@ -1876,6 +1908,147 @@ class TestSharedBrowserRecycle:
 
         browser.close.assert_awaited_once()
         pw.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_the_restart_launches_the_new_browser(
+        self, relaunched: AsyncMock
+    ) -> None:
+        """The next operation finds the browser up: a lazy launch took 6 to
+        11 s on the Pi, inside a capture's 10 s resolve bound (code review
+        2026-10-12, V15)."""
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+
+        async with pool.lease():
+            pass
+        await _settle()
+
+        relaunched.chromium.launch.assert_awaited_once()
+        assert pool.is_running is True
+        browser, _ = await pool.warmup()
+        assert browser is relaunched.chromium.launch.return_value
+        relaunched.chromium.launch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_operation_waits_for_the_relaunch(
+        self, relaunched: AsyncMock
+    ) -> None:
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+        release = asyncio.Event()
+        relaunched.chromium.launch.side_effect = _after(release)
+        async with pool.lease():
+            pass
+        await _settle()
+        entered = asyncio.Event()
+
+        async def _operation() -> None:
+            async with pool.lease():
+                entered.set()
+
+        task = asyncio.create_task(_operation())
+        await _settle()
+        assert not entered.is_set()
+
+        release.set()
+        await task
+        assert pool.is_running is True
+
+    @pytest.mark.asyncio
+    async def test_a_failed_relaunch_is_left_to_the_next_operation(
+        self, relaunched: AsyncMock
+    ) -> None:
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+        relaunched.chromium.launch.side_effect = [RuntimeError("boom"), DEFAULT]
+
+        with capture_logs() as logs:
+            async with pool.lease():
+                pass
+            await _settle()
+            async with pool.lease():
+                assert pool.is_running is False
+
+        assert {
+            "event": "shared_browser_restart_failed",
+            "error": "RuntimeError",
+            "log_level": "warning",
+        } in logs
+        browser, _ = await pool.warmup()
+        assert browser is relaunched.chromium.launch.return_value
+
+    @pytest.mark.asyncio
+    async def test_a_restart_past_its_bound_ends(self, relaunched: AsyncMock) -> None:
+        """Operations wait for a restart with their resolve bounds stopped,
+        so a launch that hangs must not hold them for good."""
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+        relaunched.chromium.launch.side_effect = _after(asyncio.Event())
+
+        with (
+            patch(
+                "scavengarr.infrastructure.browser.shared_browser._RESTART_BOUND_S",
+                0.05,
+            ),
+            capture_logs() as logs,
+        ):
+            async with pool.lease():
+                pass
+            async with asyncio.timeout(1):
+                async with pool.lease():
+                    pass
+
+        assert {
+            "event": "shared_browser_restart_failed",
+            "error": "TimeoutError",
+            "log_level": "warning",
+        } in logs
+
+    @pytest.mark.asyncio
+    async def test_the_resolve_bound_stops_while_the_restart_runs(
+        self, relaunched: AsyncMock
+    ) -> None:
+        """The wait for the restart is the browser's, as a page's is."""
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+        release = asyncio.Event()
+        relaunched.chromium.launch.side_effect = _after(release)
+        async with pool.lease():
+            pass
+        await _settle()
+        work = asyncio.create_task(_timed_operation(pool, timeout=0.1, work=0.0))
+
+        await asyncio.sleep(0.3)
+        release.set()
+
+        assert await work == "done"
+
+    @pytest.mark.asyncio
+    async def test_the_operation_keeps_only_its_remaining_time(
+        self, relaunched: AsyncMock
+    ) -> None:
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+        release = asyncio.Event()
+        relaunched.chromium.launch.side_effect = _after(release)
+        async with pool.lease():
+            pass
+        await _settle()
+        work = asyncio.create_task(_timed_operation(pool, timeout=0.1, work=0.5))
+
+        await asyncio.sleep(0.2)
+        release.set()
+
+        with pytest.raises(TimeoutError):
+            await work
+
+    @pytest.mark.asyncio
+    async def test_cleanup_ends_a_running_restart(self, relaunched: AsyncMock) -> None:
+        """At shutdown a new browser would be closed at once."""
+        pool, _, _ = self._pool(pages=-1, open_pages=0)
+        relaunched.chromium.launch.side_effect = _after(asyncio.Event())
+        async with pool.lease():
+            pass
+        await _settle()
+
+        async with asyncio.timeout(1):
+            await pool.cleanup()
+
+        relaunched.stop.assert_awaited_once()
         assert pool.is_running is False
 
     @pytest.mark.asyncio

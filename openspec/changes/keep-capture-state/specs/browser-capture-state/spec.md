@@ -83,6 +83,21 @@ Once the app has reported ready, it SHALL launch the shared browser and create t
 - **WHEN** the browser cannot be launched at the start
 - **THEN** `browser_warmup_failed` is logged with the error type, and the first capture launches the browser as before
 
+### Requirement: The Browser Restarts Warm
+The shared browser's restart after 200 pages SHALL launch the new browser before the operations that wait for it go on, so that no operation launches it inside its own resolve bound. An operation SHALL wait for the restart with its resolve bound stopped. A restart that fails or takes longer than 30 s SHALL be logged with its error type and SHALL leave the launch to the next operation.
+
+#### Scenario: A capture after a recycle
+- **WHEN** the shared browser restarted after 200 pages and a capture comes after the restart
+- **THEN** the capture's resolve bound runs for its context and its page, without the browser's launch
+
+#### Scenario: A capture during the restart
+- **WHEN** a capture asks for the browser while the restart runs
+- **THEN** it waits with its resolve bound stopped, and keeps the time it had left
+
+#### Scenario: A failed relaunch
+- **WHEN** the new browser cannot be launched within 30 s
+- **THEN** `shared_browser_restart_failed` is logged with the error type, the waiting operations go on, and the next one launches the browser
+
 ### Requirement: The Kept State Is Bounded And Quiet
 A host's state larger than 512 KiB once serialized SHALL NOT be kept and SHALL be logged with its host and size; a corrupt stored entry SHALL be dropped with a warning; no log line SHALL carry a cookie's or a storage entry's value or a URL.
 

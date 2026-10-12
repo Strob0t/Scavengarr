@@ -108,8 +108,10 @@ class _Waiter:
 
 
 @contextmanager
-def _clock_stopped() -> Iterator[None]:
-    """Stop the waiting work's ``work_clock``; it gets its time left back."""
+def clock_stopped() -> Iterator[None]:
+    """Stop the waiting work's ``work_clock``; it gets its time left back.
+    For the waits that are the browser's, not the work's: a page, the
+    shared browser's restart."""
     clock = work_clock.get()
     if clock is None or clock.expired() or (when := clock.when()) is None:
         yield
@@ -176,7 +178,7 @@ class PageGate:
             claim = PageClaim(kind, time.monotonic() + timeout)
         with self._telemetry.stage("browser_page_wait", kind=claim.kind) as wait:
             try:
-                with _clock_stopped():
+                with clock_stopped():
                     await self._acquire(claim, latest)
             except PageBusy:
                 wait.outcome = "busy"

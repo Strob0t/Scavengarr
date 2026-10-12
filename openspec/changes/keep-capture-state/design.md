@@ -49,12 +49,21 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
   - Logs name hosts and counts (cookies, origins, bytes), never names of values or values.
 - **The warm-up at the start.**
   - The lifespan starts one background task after `app_startup_complete`: `StealthPool.warmup()`, which runs `_ensure_context()` (the shared browser's launch through its pool, then the context with the kept state).
-  - It is the same path the first capture takes, done early. The plugin search runner's per-search warm-up stays: after a crash or a recycle it relaunches the browser.
+  - It is the same path the first capture takes, done early. The plugin search runner's per-search warm-up stays: after a crash it relaunches the browser (a recycle relaunches it itself, below).
   - A failure is logged (`browser_warmup_failed`, the error type) and changes nothing else. The task is cancelled at shutdown before the pools close.
+- **The recycle relaunches the browser (row 97, code review 2026-10-12, V15).**
+  - The shared browser's restart after 200 pages closed it, and the next operation launched the new one inside its own resolve bound: 6 to 11 s on the Pi at the app's starts, against the 10 s bound, and a timeout counts against the hoster's breaker.
+  - The restart now launches the new browser before the waiting operations go on. The stealth context stays lazy: a new context and page took 0.07 s in the dev container.
+  - An operation waits for the restart with its resolve bound stopped, as for a page (the page gate's `clock_stopped()`). So the restart is bounded: after 30 s, `shared_browser_restart_failed` is logged and the next operation launches the browser, as before.
+  - A crash's relaunch stays with the next operation (or the next search's warm-up). A crash has no moment of its own to relaunch at, and the browser's `disconnected` event fires on the pool's own closes too.
+  - Alternatives:
+    - A relaunch in the background after the restart, without the wait: the operations in between would launch the browser themselves, the lazy path again.
+    - A new stealth context at the restart too: 0.07 s, not worth a second warm path.
 - **R5's warm-up capture stays out.** With a kept state, a restart's first capture runs warm while the state holds. If R7's outcomes after a deploy show a cold capture despite a kept state, R5 follows: a warm-up capture with a recent link.
 
 ## Risks / Trade-offs
 
+- **A hung restart** holds the operations that wait for it for up to 30 s, with their bounds stopped. Before, their bounds cut them, and the browser stayed unusable until the restart ended.
 - **A stale state** (the hoster rotates what it trusts) costs a challenge, as a fresh context does, and the next pass replaces it.
 - **The read's cost** is one cookie query and one evaluate per kept origin, on the resolution path: 4 to 11 ms in the dev container, at most 0.5 s, none near the resolve bound.
 - **What a player writes after its stream request** is not kept: Vixeo's one localStorage key, on a hoster that meets no challenge. Filemoon's captcha pass is written at the verify, before the stream.

@@ -369,7 +369,7 @@ The composition root is where concrete implementations are wired together. It ru
    then HosterStateStore.aclose() and PluginHistory.aclose() (the last snapshot and counts, before the cache closes)
 3. Cancel the scoring, plugin-health, loop-lag, page-budget and browser warm-up tasks
 4. StealthPool.cleanup() (its context lives on the shared browser)
-5. SharedBrowserPool.cleanup()
+5. SharedBrowserPool.cleanup() (a running restart is cancelled first)
 6. HosterResolverRegistry.cleanup()
 7. http_client.aclose()
 8. cache.aclose()

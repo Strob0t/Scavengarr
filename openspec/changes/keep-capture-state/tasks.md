@@ -45,3 +45,12 @@
 - [x] 5.2 Implementation: `StealthPool.warmup()`, and the task in `composition.py`'s lifespan.
 - [x] 5.3 Live, dev server (`PYTHONPATH=src`): `shared_browser_launched` and `stealth_pool_started` come before the first request, and so does `capture_state_restored` with a kept state. Then the startup's lines go into `docs/plans/challenge-reactions.md` → R4 built.
 - [x] 5.4 Docs: the shared browser's lifecycle in `docs/features/` (where the warm-up is described), `CHANGELOG.md`.
+
+## 6. The code review of 2026-10-12 (backlog row 97)
+
+- [x] 6.1 Finding 6, tests first: the capture reads its state from its own page before the page closes, bounded by 0.5 s and skipped close to its resolve bound; an IndexedDB database plain JSON cannot hold stays out; the store write runs in the background.
+- [x] 6.2 Finding 7: the newest cookie wins at creation, whether the clearance cookies or a kept state hold it (`saved_at` on the clearance cookies).
+- [x] 6.3 Finding 8 and the log lines: a refused state falls back to the cookies and drops the kept origins; `capture_state_restored` and `clearance_restored` follow the creation.
+- [x] 6.4 V15: the recycle launches the new browser, bounded to 30 s, and an operation waits for it with its resolve bound stopped.
+- [x] 6.5 Live, dev container: `capture_timing.py --runs 2 --restore` (Filemoon and Dropload restored warm), the relaunch against staging's pool (`docs/plans/challenge-reactions.md` → R4).
+- [ ] 6.6 Production after the deploy: task 3.2, and the first `shared_browser_recycled` followed by its `shared_browser_launched` before the next operation.
