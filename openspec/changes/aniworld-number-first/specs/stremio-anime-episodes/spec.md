@@ -31,6 +31,24 @@ aniworld SHALL locate the row that shows the reference's absolute number, whatev
 - **WHEN** the search carries no reference
 - **THEN** aniworld fetches `/staffel-<season>/episode-<episode>` as today
 
+## ADDED Requirements
+
+### Requirement: A Parent Series Is Located By Title Only
+When a plugin's series matches the request only as a shorter form of the request's series titles (none of its titles holds a request title whole, and one is a strict word subset of a request title, as Bleach for "Bleach: Thousand Year Blood War"), aniworld and sto SHALL locate the episode on it by title only, without the reference's absolute number and without the neighbour rule.
+
+#### Scenario: A sequel kept as the parent's season
+- **WHEN** the request is "Bleach: Thousand Year Blood War" S1E13, whose absolute number is 13, and the site holds it as season 17 of the series Bleach
+- **THEN** the episode is located on Bleach's index by its English title in season 17
+- **AND** never on Bleach's row numbered 13
+
+#### Scenario: No title match on the parent
+- **WHEN** the request is "Naruto: Shippūden" S1E6, a site lists only the series Naruto, and no Naruto row carries the episode's English title
+- **THEN** that site answers no result for the request
+
+#### Scenario: The full title is not partial
+- **WHEN** the site's series for the request "Naruto: Shippūden" is "Naruto Shippuden"
+- **THEN** the number rule of "aniworld Locates The Episode" applies
+
 ## REMOVED Requirements
 
 ### Requirement: A Number-Only Row Is Located By The Number

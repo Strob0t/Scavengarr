@@ -23,3 +23,16 @@
 
 - [ ] 4.1 `docs/features/python-plugins.md`: the rules of `locate()`, and the reference's absolute number, which the Kitsu number now gives for IMDb anime requests too (rows 76 and 77).
 - [ ] 4.2 `CHANGELOG.md` under `## Unreleased (staging)`.
+
+## 5. The wrong-series leak and the parent series (row 92)
+
+- [ ] 5.1 Tests: the partial test (one domain function). "Naruto" and sto's "Naruto - S01E06 - …" are partial for "Naruto: Shippūden"; "Naruto Shippuden" is not; a site title that holds a request title whole is not.
+- [ ] 5.2 Tests: a plugin's partial matches are dropped beside its full match and kept without one; movie results are untouched.
+- [ ] 5.3 Tests: on a partial series `locate()` uses the title rules only (no number, no neighbour); without a title match it locates nothing.
+- [ ] 5.4 Implementation: the domain function, `EpisodeRef`'s series titles and their builder, the matcher and the search progress, `locate()`; the search cache key's change, if any, named in the CHANGELOG.
+- [ ] 5.5 Live proof, before and after:
+  - the four Shippuden requests (S1E6, S2E9, S3E1, S9E10) answer no Naruto result through aniworld and sto;
+  - TYBW's four references (S1E1, S1E13, S2E1, S3E5): sto 4 of 4 right, aniworld 2 of 4 right, no wrong placement;
+  - `anime_offsets --aniworld` for row 82's fourteen series unchanged against row 87's after-table;
+  - `series_episodes --plugins sto` unchanged apart from the leak's results (then 3.2).
+- [ ] 5.6 Docs: the title match in `docs/features/`, `docs/plans/series-episodes.md`, `CHANGELOG.md`.
