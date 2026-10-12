@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Kept-State Probe
+- `scripts/probes/capture_state.py` (`prodctl.py probe capture_state`, read-only) prints the browser's kept capture states (`browser:capture_state:v1`: per host its age, each cookie's name, domain, path and remaining lifetime or `session`, per origin the localStorage key names with their value lengths and the IndexedDB names) and the stored clearance cookies alike; never a value. The first production reading (`docs/plans/challenge-reactions.md` → R4): Filemoon's captcha pass is a localStorage token on its player host, not a cookie, so no cookie lifetime bounds it.
+
 ### Changed: The Capture Probe Uses the App's Challenge Rule and Store
 - `scripts/probes/capture_timing.py` marked a run's challenges by its own rule (any request to Cloudflare's challenge host, any `captcha` path segment) and `--restore` copied the context state into its own context, beside `ClearanceStore`. It now judges each request with the stealth pool's rule (`_challenge_of`: a captcha provider's challenge frame, or a request matching the resolver's own captcha pattern, which the probe's pool takes from the capture; the hoster captcha is still split into `captcha` and `captcha/verify`), and `--restore` keeps the state under every host it names through the app's `ClearanceStore` in a temporary directory, from which the app's own context creation starts the `restored` run. What it measures stays: a control and a restored run of the whole state (code review of 2026-10-12; backlog row 99). Dev container, one Filemoon link, `--runs 1 --restore`: run 1 and the control met `captcha, captcha/verify` (5.3 s, 4.4 s), the restored run none (1.9 s), as in row 91's measurement.
 
