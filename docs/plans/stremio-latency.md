@@ -841,7 +841,7 @@ The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose o
 | 868d96c, 10-12 08:54:40 | not read | | | Mr. Fable signalled the rebuild at 09:09 without reading it; its counter went with the container at 09:13:30 |
 | 003f04e, 10-12 09:13:48 | 10-12 09:58 | 1 | 0 | none to fill |
 | 10d43f4, 10-12 10:11:59 | 10-12 10:34 | 3 | 0 | none to fill |
-| 7c23863, 10-12 10:39:09 | 10-12 11:06 | 2 | 0 | none to fill; read on the maintainer's question whether to rebuild (no code since 7c23863) |
+| 7c23863, 10-12 10:39:09 | 10-12 13:00 | 4 | 0 | none to fill; first read at 11:06 (2, 0) on the maintainer's question whether to rebuild, again before row 94's rebuild signal |
 
 ## AIOStreams
 
