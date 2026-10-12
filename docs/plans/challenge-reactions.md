@@ -2,7 +2,7 @@
 
 # Plan: Reactive Challenge Handling (Round 2)
 
-**Status:** Proposed 2026-10-12 (Mr. Fable); nothing is built yet, and the maintainer decides per item.
+**Status:** Decided 2026-10-12 07:02 UTC (the maintainer): R1 with R7, R2, and R4 with R5 become backlog rows 89 to 91; R3 is not chosen; R6, R8 and R9 wait for the numbers ([Decision and Expected Gain](#decision-and-expected-gain-2026-10-12)). Nothing is built yet.
 
 **Request:** the maintainer's, of 2026-10-11 17:41 UTC: after the release v0.4.0, research reactive approaches to Cloudflare challenges and captchas and document them ("reaktive lösungsansätze für cloudflare und captchas einlegen und diese dokumentieren").
 
@@ -165,6 +165,39 @@ Each option names the gap it closes (the numbers of the list above).
 2. R2: the first cold capture warms the context. Until it is built, R3's YAML value is the stopgap, if the maintainer wants Filemoon on the Pi now.
 3. R4's premise (which state warms) measured with `capture_timing`, then R4 and R5.
 4. R6 and R8 when the numbers of R7 and row 70 ask for them; R9 only for a hoster that needs it.
+
+## Decision and Expected Gain (2026-10-12)
+
+The maintainer's decision of 07:02 UTC (AskUserQuestion in Mr. Fable's session): R1 with R7 (backlog row 89), R2 (row 90), and R4 with R5 (row 91, its premise measured first). R3 is not chosen, so production's resolve bound stays 10 s. R6, R8 and R9 wait for R7's and row 70's numbers. With the choice the maintainer asked what the options would gain. The answer, given in the session:
+
+- **The baseline (2026-10-11).**
+  - Filemoon and Dropload delivered next to nothing on the Pi. Every trial ran cold (Filemoon 17.1 and 17.8 s, Dropload 13.3 s), the 10 s bound cut it, and the breaker skipped the hoster for up to an hour.
+  - One cut trial at 12:13 UTC was followed by 63 refused Filemoon links within five minutes (aniworld 36, kinoking 13, moflix 8, filmo 6).
+  - Warm captures fit the bound: Filemoon 5.8 and 6.7 s, Dropload 2.2 s.
+- **R1 with R7.**
+  - On its own it adds no stream, since every capture still runs cold and is cut.
+  - The skip shrinks from up to an hour to 1 to 30 minutes, and a challenge no longer reads as a dead hoster.
+  - Its numbers per hoster (challenge, cold, warm, the time to the stream) judge R2, R4 and R5, and decide R6 and R8.
+- **R2, the main gain.**
+  - The first request after a restart or a recycle still misses that hoster's stream. But the capture finishes in the background, its stream lands in the resolution cache, and the hoster runs warm within the bound from then on.
+  - Open: Filemoon's cold path gave a stream in 2 of 4 Pi runs (none by 20.8 and 25.0 s in the other two), so whether 30 s rescues more is unmeasured.
+  - Also unmeasured: how long a context stays warm (R7 shows it).
+- **R4 with R5, a smaller gain on top of R2.**
+  - The first request after a deploy, a restart or a recycle (every 200 pages) finds the hoster warm.
+  - Unproven until row 91's measurement: if the warm state lives only in the browser's memory, R4 drops out and R5 remains.
+- **Out of reach.**
+  - A real image captcha.
+  - A hoster that refuses the VPN address.
+  - Filemoon's `embedding from this domain is not allowed` answer, another failure.
+  - The share of all streams: no count of all links exists, and R7's numbers give one.
+- **Costs.**
+  - A cold capture holds one browser page for up to 30 s; plugin pages keep their priority.
+  - A request that waits for Filemoon's stream waits for its warm capture, about 6 s, within the bound.
+
+After each of the three deploys, compare the following against the baseline:
+- Filemoon's and Dropload's `hoster_resolve` outcomes per day (stream, challenge, timeout);
+- the cooldown's skips against the breaker's refusals;
+- the warm captures' times.
 
 ## Sources
 
