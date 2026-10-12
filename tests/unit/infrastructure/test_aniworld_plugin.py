@@ -781,6 +781,48 @@ class TestLocatesEpisodes:
         located = next(e for e in logs if e["event"] == "aniworld_episode_located")
         assert (located["site_episode"], located["located_by"]) == (site_episode, rule)
 
+    async def test_a_partial_series_is_located_by_title_only(self) -> None:
+        """The site's "One Piece" is a shorter form of the request's title, as
+        Bleach is of the Thousand-Year Blood War: the reference's number
+        counts the request's series, the title places the episode."""
+        plugin, paths = _locating_plugin()
+        ref = EpisodeRef(
+            1, 1, _LABOON, absolute=1, titles=("One Piece: Episode of Laboon",)
+        )
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=1, episode=1, episode_ref=ref
+            )
+
+        assert results[0].metadata["episode_located_by"] == "title"
+        assert "/anime/stream/one-piece/staffel-2/episode-1" in paths
+        assert "/anime/stream/one-piece/staffel-1/episode-1" not in paths
+        located = next(e for e in logs if e["event"] == "aniworld_episode_located")
+        assert located["partial"] is True
+
+    async def test_without_a_title_match_a_partial_series_gives_nothing(
+        self,
+    ) -> None:
+        plugin, paths = _locating_plugin()
+        ref = EpisodeRef(
+            1,
+            1,
+            "Nothing Like It",
+            absolute=1,
+            titles=("One Piece: Episode of Laboon",),
+        )
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=1, episode=1, episode_ref=ref
+            )
+
+        assert results == []
+        assert not any("/episode-" in path for path in paths)
+        missed = next(e for e in logs if e["event"] == "aniworld_episode_not_located")
+        assert missed["partial"] is True
+
     async def test_the_runners_entry_reaches_the_reference(self) -> None:
         """The runner calls ``isolated_search``: the reference arrives there too
         (the probe of 2026-10-09 found it did not)."""

@@ -84,6 +84,35 @@ def test_verdicts_score_against_the_threshold_best_first() -> None:
     assert not hits[1].kept and hits[1].score < 0.7
 
 
+def test_a_shorter_title_is_a_partial_verdict() -> None:
+    shippuden = TitleMatchInfo(
+        title="Naruto: Shippūden", year=2007, content_type="series"
+    )
+    hits = probe.verdicts(
+        [_result("Naruto"), _result("Naruto Shippuden")], shippuden, 0.7, {}
+    )
+    assert {(h.title, h.kept, h.reason) for h in hits} == {
+        ("Naruto Shippuden", True, "score"),
+        ("Naruto", True, "partial"),
+    }
+
+
+def test_partial_hits_count_only_without_another_kept_hit() -> None:
+    hits = [
+        probe.Hit("Naruto Shippuden", None, 1.0, True, "score"),
+        probe.Hit("Naruto", None, 1.0, True, "partial"),
+    ]
+    probe.drop_partial(hits)
+    assert [h.kept for h in hits] == [True, False]
+
+    alone = [
+        probe.Hit("Naruto", None, 1.0, True, "partial"),
+        probe.Hit("Boruto", None, 0.364, False, "score"),
+    ]
+    probe.drop_partial(alone)
+    assert [h.kept for h in alone] == [True, False]
+
+
 def test_render_lists_plugins_queries_and_results() -> None:
     runs = [
         probe.PluginRun(

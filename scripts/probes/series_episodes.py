@@ -533,7 +533,10 @@ async def probe(
                     continue
             for result in results:
                 found.setdefault(result_key(result), result)
-        matched = await titles.matching(list(found.values()), ref)
+        matches = await titles.matching(list(found.values()), ref)
+        # A plugin's partial matches count only without another of its
+        # matches (the app's SearchProgress)
+        matched = matches.matching or matches.partial
         assert req.season is not None and req.episode is not None
         _record(sid, name, matched, req.season, req.episode, records, kept_links)
 
@@ -546,8 +549,14 @@ async def probe(
             print(f"{sid}: no translation", file=sys.stderr)
             continue
         req, absolute = request
-        infos, meta = await titles.title_infos(req, titles.languages(names))
-        episode_ref = titles.episode_ref(req, meta, absolute=absolute)
+        languages = titles.languages(names)
+        infos, meta = await titles.title_infos(req, languages)
+        episode_ref = titles.episode_ref(
+            req,
+            meta,
+            absolute=absolute,
+            titles=titles.series_titles(infos, languages),
+        )
         references[sid] = _reference(req, episode_ref)
         tasks = []
         for langs, group in titles.language_groups(names).items():

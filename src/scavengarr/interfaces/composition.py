@@ -21,6 +21,7 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
 from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
 from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
@@ -358,6 +359,20 @@ def build_crawljob_store(
     return repo, factory
 
 
+def build_tmdb_client(
+    config: AppConfig, http_client: httpx.AsyncClient, cache: CachePort
+) -> TmdbClientPort:
+    """The title look-up: TMDB with ``tmdb_api_key``, else the IMDb suggest
+    API."""
+    if config.tmdb_api_key:
+        log.info("tmdb_client_initialized")
+        return HttpxTmdbClient(
+            api_key=config.tmdb_api_key, http_client=http_client, cache=cache
+        )
+    log.info("tmdb_client_fallback", reason="no API key, using IMDB suggest API")
+    return ImdbFallbackClient(http_client=http_client, cache=cache)
+
+
 def _inject_shared_browser_pool(
     plugins: PluginRegistry,
     pool: SharedBrowserPool,
@@ -513,22 +528,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # 7) TMDB client (with IMDB fallback when no API key is configured)
-    if config.tmdb_api_key:
-        state.tmdb_client = HttpxTmdbClient(
-            api_key=config.tmdb_api_key,
-            http_client=state.http_client,
-            cache=state.cache,
-        )
-        log.info("tmdb_client_initialized")
-    else:
-        state.tmdb_client = ImdbFallbackClient(
-            http_client=state.http_client,
-            cache=state.cache,
-        )
-        log.info(
-            "tmdb_client_fallback",
-            reason="no API key, using IMDB suggest API",
-        )
+    state.tmdb_client = build_tmdb_client(config, state.http_client, state.cache)
 
     # 8) One Chromium process for everything: the shared browser pool serves
     #    the Playwright plugins (own contexts) and the stealth pool (CF bypass

@@ -27,7 +27,12 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.entities.stremio import EpisodeMeta, EpisodeRef, SeriesMeta
+from scavengarr.domain.entities.stremio import (
+    EpisodeMeta,
+    EpisodeRef,
+    SeriesMeta,
+    TitleMatchInfo,
+)
 from scavengarr.infrastructure.anime import kitsu_addon
 from scavengarr.infrastructure.anime.id_lists import LIST_URL
 from scavengarr.infrastructure.anime.kitsu_addon import ADDON_URL, Placement
@@ -379,7 +384,9 @@ def _tallied() -> Any:
         2: None,
         3: Located(index[3], "neighbour"),
     }
-    with patch.object(_mod, "locate", side_effect=lambda _, ref: placed[ref.episode]):
+    with patch.object(
+        _mod, "locate", side_effect=lambda _, ref, **_kw: placed[ref.episode]
+    ):
         return _mod.tally("Series", "series", "tt1", index, meta, {(1, 2): 2})
 
 
@@ -405,12 +412,45 @@ class TestTally:
             (2, 2)
         ]
 
+    def test_a_partial_series_is_placed_by_title_alone(self) -> None:
+        """The site's "Bleach" is a shorter form of the request's title (the
+        Thousand-Year Blood War, its season 17 there): the reference's
+        number counts the request's series (row 92)."""
+        meta = SeriesMeta(
+            name="Bleach: Thousand-Year Blood War",
+            year=2022,
+            genres=("Animation",),
+            episodes=(EpisodeMeta(1, 1, name="The Blood Warfare"),),
+        )
+        index = [
+            _row(1, 1, "The Day I Became a Shinigami", 1),
+            _row(17, 1, "The Blood Warfare", 367),
+        ]
+        titles = ("Bleach: Thousand-Year Blood War",)
+
+        def tally(site_name: str) -> Any:
+            return _mod.tally(
+                "Bleach: Thousand-Year Blood War",
+                "bleach",
+                "tt14986406",
+                index,
+                meta,
+                site_name=site_name,
+                titles=titles,
+            )
+
+        partial = tally("Bleach")
+        assert (partial.partial, dict(partial.kinds)) == (True, {"title": 1})
+        assert "| bleach | yes |" in _mod.site_row("tt14986406", partial)
+        whole = tally("Bleach: Thousand-Year Blood War")
+        assert (whole.partial, dict(whole.kinds)) == (False, {"exact": 1})
+
 
 class TestSiteReport:
     def test_the_row_names_counts_and_offsets(self) -> None:
         assert _mod.site_row("tt1", _tallied()) == (
-            "| Series | tt1 | series | 4 | 4 | 3 | 1 | 1 | 1 (+1: 1) | 0 | 1 (1) | 0"
-            " | 2 | 1 (0) |"
+            "| Series | tt1 | series | no | 4 | 4 | 3 | 1 | 1 | 1 (+1: 1) | 0 | 1 (1)"
+            " | 0 | 2 | 1 (0) |"
         )
 
     def test_the_share_sums_the_series(self) -> None:
@@ -483,9 +523,9 @@ class TestSiteIndex:
         )
         found = await _mod.site_index(plugin, "One Piece")
         assert found is not None
-        slug, hits, rows = found
+        slug, name, hits, rows = found
         # The exact hit, as the plugin takes it (the film is another title)
-        assert (slug, hits) == ("one-piece", ["One Piece"])
+        assert (slug, name, hits) == ("one-piece", "One Piece", ["One Piece"])
         # Each of the 23 season pages once
         assert plugin._season_html.await_count == 23
         assert (len(rows), rows[0].absolute, rows[-1].absolute) == (16, 62, 77)
@@ -499,7 +539,8 @@ class TestSiteIndex:
         plugin._season_html = AsyncMock(return_value=None)
         found = await _mod.site_index(plugin, "One Piece", slug="one-piece")
         assert found is not None
-        assert found[:2] == ("one-piece", [])
+        # The page's heading names the series
+        assert found[:3] == ("one-piece", "One Piece", [])
         plugin._ajax_search.assert_not_awaited()
         assert plugin._safe_fetch.await_args.args[0] == (
             "https://aniworld.to/anime/stream/one-piece"
@@ -509,3 +550,26 @@ class TestSiteIndex:
         plugin = _aniworld()
         plugin._ajax_search = AsyncMock(return_value=[])
         assert await _mod.site_index(plugin, "Digimon Adventure") is None
+
+
+class TestRequestTitles:
+    async def test_each_languages_title_and_alternatives(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(
+                title="Bleach: Thousand Year Blood War",
+                alt_titles=["Bleach: Sennen Kessen-hen"],
+            ),
+            "en": TitleMatchInfo(title="Bleach: Thousand-Year Blood War"),
+        }
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda _imdb_id, language: infos[language]
+        )
+
+        titles = await _mod.request_titles(tmdb, "tt14986406", ["de", "en"])
+
+        assert titles == (
+            "Bleach: Thousand Year Blood War",
+            "Bleach: Sennen Kessen-hen",
+            "Bleach: Thousand-Year Blood War",
+        )

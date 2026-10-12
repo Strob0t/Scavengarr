@@ -297,7 +297,8 @@ class StremioStreamUseCase:
                 self._titles.title_infos(request, languages),
                 self._kitsu_number(request, absolute),
             )
-            episode_ref = self._episode_ref(request, meta, absolute)
+            titles = self._titles.series_titles(title_infos, languages)
+            episode_ref = self._episode_ref(request, meta, absolute, titles)
 
             primary_title_info = first_available_title(title_infos, languages)
             metadata.outcome = "not_found" if primary_title_info is None else "found"
@@ -426,11 +427,12 @@ class StremioStreamUseCase:
         request: StremioStreamRequest,
         meta: SeriesMeta | None,
         absolute: int | None,
+        titles: tuple[str, ...],
     ) -> EpisodeRef | None:
         """The episode's placement for the plugins that locate episodes (the
-        title and air date from the Cinemeta list, the absolute number),
-        logged when there is one."""
-        ref = self._titles.episode_ref(request, meta, absolute=absolute)
+        title and air date from the Cinemeta list, the absolute number, the
+        request's series titles), logged when there is one."""
+        ref = self._titles.episode_ref(request, meta, absolute=absolute, titles=titles)
         if ref is not None:
             log.debug(
                 "stremio_episode_ref",

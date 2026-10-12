@@ -1332,6 +1332,29 @@ class TestLocatesEpisodes:
             missed.items() >= {"slug": "one-piece", "absolute": 999, "rows": 3}.items()
         )
 
+    async def test_a_partial_series_without_titles_gives_no_anime_result(
+        self,
+    ) -> None:
+        """s.to's anime rows show the number alone, and on a series that is a
+        shorter form of the request's title the number counts another
+        series: nothing is located."""
+        plugin, paths = _anime_plugin()
+        ref = EpisodeRef(
+            5, 2, _LABOON, absolute=62, titles=("One Piece: Episode of Laboon",)
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=5, episode=2, episode_ref=ref
+            )
+
+        assert [r for r in results if r.category == 5070] == []
+        assert not any(
+            "/serie/one-piece/" in path and "/episode-" in path for path in paths
+        )
+        missed = next(e for e in logs if e["event"] == "sto_episode_not_located")
+        assert missed["partial"] is True
+
     async def test_without_a_reference_the_page_comes_from_the_numbers(self) -> None:
         plugin, paths = _anime_plugin()
 

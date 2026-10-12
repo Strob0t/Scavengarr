@@ -16,10 +16,12 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Protocol
 
+from scavengarr.application.stremio.queries import build_multi_lang_reference
 from scavengarr.domain.entities.stremio import (
     EpisodeRef,
     SeriesMeta,
     StremioStreamRequest,
+    TitleMatches,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -29,7 +31,7 @@ from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 
 # The title matcher: (results, reference, threshold, **weights) -> matches
-TitleFilterFn = Callable[..., list[SearchResult]]
+TitleFilterFn = Callable[..., TitleMatches]
 
 # A Kitsu number this far from the Cinemeta position still counts as absolute
 # (One Piece: 1089 where the list says 1088); farther off it is a season entry's
@@ -147,15 +149,28 @@ class TitleResolver:
         return meta
 
     @staticmethod
+    def series_titles(
+        title_infos: dict[str, TitleMatchInfo | None], languages: list[str]
+    ) -> tuple[str, ...]:
+        """The request's series titles in *languages*: each language's title
+        and alternatives, once each (``EpisodeRef.titles``)."""
+        reference = build_multi_lang_reference(title_infos, languages)
+        if reference is None:
+            return ()
+        return (reference.title, *reference.alt_titles)
+
+    @staticmethod
     def episode_ref(
         request: StremioStreamRequest,
         meta: SeriesMeta | None,
         *,
         absolute: int | None = None,
+        titles: tuple[str, ...] = (),
     ) -> EpisodeRef | None:
         """The episode *request* means, for plugins that locate episodes on
         the site's own numbering: the request's season and episode, the
-        catalog entry's English title and release date, and the absolute
+        catalog entry's English title and release date, the request's
+        series *titles* (``series_titles``), and the absolute
         number: the entry's position among the regular seasons' numbered
         episodes (season 1 and up, episode 1 and up) ordered by season and
         episode, or *absolute* (a ``kitsu:`` request's episode number)
@@ -197,6 +212,7 @@ class TitleResolver:
             title=entry.name or None if entry is not None else None,
             aired=entry.released if entry is not None else None,
             absolute=absolute,
+            titles=titles,
         )
 
     async def _title_info(
@@ -221,11 +237,12 @@ class TitleResolver:
 
     async def matching(
         self, results: list[SearchResult], ref: TitleMatchInfo
-    ) -> list[SearchResult]:
-        """The results whose title matches *ref* (in a worker thread: CPU work;
-        ``to_thread`` keeps the log context, unlike ``run_in_executor``)."""
+    ) -> TitleMatches:
+        """The results whose title matches *ref*, the partial matches apart
+        (in a worker thread: CPU work; ``to_thread`` keeps the log context,
+        unlike ``run_in_executor``)."""
         if not results:
-            return []
+            return TitleMatches()
         return await asyncio.to_thread(
             lambda: self._filter_fn(results, ref, self._threshold, **self._weights)
         )

@@ -564,3 +564,114 @@ class TestBrowserWarmup:
         # All 3 plugins searched — dynamic semaphore doesn't block
         assert plugins.get.call_count >= 3
         assert isinstance(result, list)
+
+
+def _episode(link: str, title: str) -> SearchResult:
+    """An episode result as aniworld and sto give it: the site's series
+    title, the request's numbers."""
+    result = hit(link, title)
+    result.metadata.update({"season": 1, "episode": 6})
+    return result
+
+
+def _site_by_query(answers: dict[str, list[SearchResult]]) -> AsyncMock:
+    """A plugin answering each query with its own results."""
+
+    async def _search(query: str, *_args: object, **_kwargs: object):
+        return answers.get(query, [])
+
+    plugin = AsyncMock()
+    plugin.isolated_search = AsyncMock(side_effect=_search)
+    return plugin
+
+
+def _series_use_case(
+    sites: dict[str, AsyncMock], info: TitleMatchInfo
+) -> StremioStreamUseCase:
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(return_value=info)
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: (
+        sorted(sites) if p == "stream" else []
+    )
+    plugins.get.side_effect = sites.__getitem__
+    config = make_config(plugin_timeout_seconds=1.0, stream_deadline_seconds=2.0)
+    return make_use_case(tmdb=tmdb, plugins=plugins, config=config)
+
+
+_SHIPPUDEN = TitleMatchInfo(
+    title="Naruto: Shippūden", year=2007, alt_titles=["Naruto: Shippuden"]
+)
+_TYBW = TitleMatchInfo(
+    title="Bleach: Thousand Year Blood War",
+    year=2022,
+    alt_titles=["Bleach: Thousand-Year Blood War"],
+)
+_EPISODE = make_request(imdb_id="tt0988824", content_type="series", season=1, episode=6)
+
+
+class TestShorterTitles:
+    """The base title ("Naruto" of "Naruto: Shippūden") finds the parent
+    series on a site that lists both: a plugin's partial match yields to
+    its other match, and counts where the site lists only the shorter name
+    (row 92)."""
+
+    async def test_naruto_beside_naruto_shippuden_is_dropped(self) -> None:
+        site = _site_by_query(
+            {
+                "Naruto Shippuden": [
+                    _episode("https://voe.sx/e/shippuden", "Naruto Shippuden")
+                ],
+                "Naruto": [_episode("https://dood.to/e/naruto", "Naruto")],
+            }
+        )
+        uc = _series_use_case({"sto": site}, _SHIPPUDEN)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/shippuden"]
+
+    async def test_bleach_beside_the_thousand_year_blood_war_is_dropped(
+        self,
+    ) -> None:
+        site = _site_by_query(
+            {
+                "Bleach Thousand Year Blood War": [
+                    _episode(
+                        "https://voe.sx/e/tybw",
+                        "Bleach: Thousand-Year Blood War - S01E06",
+                    )
+                ],
+                "Bleach": [_episode("https://dood.to/e/bleach", "Bleach - S01E06")],
+            }
+        )
+        uc = _series_use_case({"sto": site}, _TYBW)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/tybw"]
+
+    async def test_a_site_that_lists_only_the_shorter_name_keeps_it(self) -> None:
+        """Another plugin's full match does not drop it."""
+        bleach = _site_by_query(
+            {"Bleach": [_episode("https://dood.to/e/bleach", "Bleach - S01E06")]}
+        )
+        tybw = _site_by_query(
+            {
+                "Bleach Thousand Year Blood War": [
+                    _episode(
+                        "https://voe.sx/e/tybw",
+                        "Bleach: Thousand-Year Blood War - S01E06",
+                    )
+                ]
+            }
+        )
+        uc = _series_use_case({"aniworld": bleach, "sto": tybw}, _TYBW)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert sorted(s.url for s in streams) == [
+            "https://dood.to/e/bleach",
+            "https://voe.sx/e/tybw",
+        ]

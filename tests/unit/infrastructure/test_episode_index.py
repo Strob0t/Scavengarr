@@ -18,6 +18,7 @@ from scavengarr.infrastructure.plugins.episode_index import (
     RowSelectors,
     SeasonPageParser,
     episode_index,
+    is_partial_series,
     locate,
     normalize_title,
 )
@@ -183,6 +184,66 @@ class TestLocate:
         )
         assert locate(_ONE_PIECE, EpisodeRef(9, 9)) is None
         assert locate([], EpisodeRef(5, 2, _LABOON, absolute=62)) is None
+
+
+# Bleach as the sites list it: the Thousand-Year Blood War is its season 17,
+# numbered on from the series
+_BLEACH = [
+    _row(1, 1, "The Day I Became a Shinigami", 1),
+    _row(1, 13, "Ichigo and Rukia, Thoughts in the Rain", 13),
+    _row(17, 1, "The Blood Warfare", 367),
+    _row(17, 13, "The Blade Is Me", 379),
+]
+_TYBW = ("Bleach: Thousand Year Blood War", "Bleach: Thousand-Year Blood War")
+
+
+class TestPartialSeries:
+    """A site's series named only by a shorter form of the request's titles
+    (Bleach for the Thousand-Year Blood War) is partial: the reference's
+    number counts the request's series, so the title alone places the
+    episode there."""
+
+    def test_the_parent_is_a_partial_series(self) -> None:
+        ref = EpisodeRef(1, 13, "The Blade Is Me", absolute=13, titles=_TYBW)
+
+        assert is_partial_series(["Bleach"], ref)
+        assert not is_partial_series(["Bleach: Thousand-Year Blood War"], ref)
+
+    def test_the_full_title_is_not_partial(self) -> None:
+        ref = EpisodeRef(1, 6, absolute=6, titles=("Naruto: Shippūden",))
+
+        assert not is_partial_series(["Naruto Shippuden"], ref)
+
+    def test_without_the_requests_titles_no_series_is_partial(self) -> None:
+        assert not is_partial_series(["Bleach"], EpisodeRef(1, 13, absolute=13))
+
+    def test_a_sequel_kept_as_the_parents_season_is_located_by_title(self) -> None:
+        ref = EpisodeRef(1, 13, "The Blade Is Me", absolute=13, titles=_TYBW)
+
+        # never on Bleach's own row 13
+        assert locate(_BLEACH, ref, partial=True) == Located(_BLEACH[3], "title")
+        assert locate(_BLEACH, ref) == Located(_BLEACH[1], "number")
+
+    def test_the_best_fuzzy_title_places_it_too(self) -> None:
+        ref = EpisodeRef(1, 1, "The Blood Warfares", absolute=1, titles=_TYBW)
+
+        assert locate(_BLEACH, ref, partial=True) == Located(_BLEACH[2], "fuzzy_title")
+
+    def test_no_neighbour_on_a_partial_series(self) -> None:
+        # The neighbour rule needs the number: the variant translation (0.82)
+        # is no fuzzy title (0.85)
+        index = [row for row in _ONE_PIECE if row.absolute != 2]
+        ref = EpisodeRef(1, 2, _LUFFY_CATALOG, absolute=2)
+
+        assert locate(index, ref) == Located(_ONE_PIECE[0], "neighbour")
+        assert locate(index, ref, partial=True) is None
+
+    def test_without_a_title_match_a_partial_series_locates_nothing(self) -> None:
+        naruto = [_row(1, 6, "Dangerous Mission! Journey to the Land of Waves!", 6)]
+        ref = EpisodeRef(1, 6, "Mission Cleared", absolute=6)
+
+        assert locate(naruto, ref, partial=True) is None
+        assert locate(naruto, EpisodeRef(1, 6, absolute=6), partial=True) is None
 
 
 class TestNormalizeTitle:

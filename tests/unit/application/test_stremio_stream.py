@@ -574,7 +574,9 @@ class TestEpisodeReference:
             5000,
             season=22,
             episode=4,
-            episode_ref=EpisodeRef(season=22, episode=4, absolute=1089),
+            episode_ref=EpisodeRef(
+                season=22, episode=4, absolute=1089, titles=("One Piece",)
+            ),
         )
 
     async def test_a_kitsu_request_is_not_numbered_again(self) -> None:
@@ -610,7 +612,9 @@ class TestEpisodeReference:
             5000,
             season=5,
             episode=2,
-            episode_ref=EpisodeRef(season=5, episode=2, title="S5E2", absolute=62),
+            episode_ref=EpisodeRef(
+                season=5, episode=2, title="S5E2", absolute=62, titles=("One Piece",)
+            ),
         )
 
     async def test_a_plugin_without_the_capability_is_called_as_today(self) -> None:
@@ -656,7 +660,9 @@ class TestEpisodeReference:
             5000,
             season=22,
             episode=4,
-            episode_ref=EpisodeRef(season=22, episode=4, absolute=1089),
+            episode_ref=EpisodeRef(
+                season=22, episode=4, absolute=1089, titles=("One Piece",)
+            ),
         )
 
     @staticmethod

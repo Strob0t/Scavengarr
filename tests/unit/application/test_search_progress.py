@@ -267,3 +267,72 @@ class TestMergingIntoABase:
         assert entry.missing == ()
         assert entry.stored_at == 1.0
         assert [r.download_link for r in entry.results] == ["h1", "s1", "s2"]
+
+
+class TestPartialMatches:
+    """A partial match (a series named only by a shorter form of the
+    request's titles, ``TitleMatches.partial``) waits for its plugin's end:
+    it counts only where the plugin gave no other match."""
+
+    async def test_a_partial_match_counts_at_its_plugins_end(self) -> None:
+        """A site that lists only the shorter name keeps it."""
+        progress = SearchProgress()
+        event = asyncio.Event()
+        progress.listen(event)
+
+        progress.add([_sr("naruto")], [], [_sr("naruto")])
+        assert progress.results == []
+        assert progress.total == 1
+        event.clear()
+
+        await progress.plugin_done("a", True)
+
+        assert [r.download_link for r in progress.results] == ["naruto"]
+        assert event.is_set()
+
+    async def test_it_is_dropped_beside_the_plugins_other_match(self) -> None:
+        """Naruto beside Naruto Shippuden is the parent series."""
+        progress = SearchProgress()
+
+        progress.add([_sr("naruto")], [], [_sr("naruto")])
+        progress.add([_sr("shippuden")], [_sr("shippuden")])
+        await progress.plugin_done("a", True)
+
+        assert [r.download_link for r in progress.results] == ["shippuden"]
+        assert progress.total == 2
+
+    async def test_it_is_dropped_after_the_plugins_other_match(self) -> None:
+        progress = SearchProgress()
+
+        progress.add([_sr("shippuden"), _sr("naruto")], [_sr("shippuden")], [])
+        progress.add([_sr("naruto")], [], [_sr("naruto")])
+        await progress.plugin_done("a", True)
+
+        assert [r.download_link for r in progress.results] == ["shippuden"]
+
+    async def test_another_plugins_match_does_not_drop_it(self) -> None:
+        progress = SearchProgress()
+
+        progress.add([_sr("naruto", "a")], [], [_sr("naruto", "a")])
+        progress.add([_sr("shippuden", "b")], [_sr("shippuden", "b")])
+        await progress.plugin_done("a", True)
+
+        assert [r.download_link for r in progress.results] == ["shippuden", "naruto"]
+
+    async def test_an_unfinished_plugins_partial_matches_count(self) -> None:
+        progress = SearchProgress()
+
+        progress.add([_sr("naruto")], [], [_sr("naruto")])
+        await progress.plugin_done("a", False)
+
+        assert [r.download_link for r in progress.results] == ["naruto"]
+
+    def test_the_search_end_releases_the_rest(self) -> None:
+        """A standby's results carry its own name, while its end is reported
+        under its mirror group's member."""
+        progress = SearchProgress()
+
+        progress.add([_sr("naruto", "standby")], [], [_sr("naruto", "standby")])
+        progress.finish()
+
+        assert [r.download_link for r in progress.results] == ["naruto"]

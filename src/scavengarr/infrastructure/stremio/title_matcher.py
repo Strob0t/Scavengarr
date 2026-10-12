@@ -6,7 +6,10 @@ to filter out wrong titles (sequels, spin-offs, unrelated results), and
 decides by identity where a result shows one: an IMDb id in its
 metadata, a year outside the tolerance, or a category against the
 reference's kind (``TitleMatchInfo.animation``). Every verdict names the
-rule that decided it (``TitleScore.reason``).
+rule that decided it (``TitleScore.reason``). A series result named only by
+a shorter form of the reference's titles ("Naruto" for "Naruto: Shippūden")
+is a partial match (``TitleMatches.partial``), which counts only where its
+plugin gave no other match.
 
 Uses **rapidfuzz** for fast, robust fuzzy matching (C++ backend).
 """
@@ -22,7 +25,11 @@ import structlog
 from rapidfuzz import fuzz
 from unidecode import unidecode as _unidecode
 
-from scavengarr.domain.entities.stremio import TitleMatchInfo
+from scavengarr.domain.entities.stremio import (
+    TitleMatches,
+    TitleMatchInfo,
+    is_partial_title,
+)
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import names_anime
 from scavengarr.infrastructure.stremio.release_guess import guess_release
@@ -57,10 +64,13 @@ class TitleScore:
     """A result's score and the rule that decided it: ``imdb`` (the ids
     agree, 1.2, or differ, 0.0), ``category`` (the result's label against
     the reference's kind, 0.0), ``year`` (the result's year outside the
-    tolerance, 0.0) or ``score`` (the text rules)."""
+    tolerance, 0.0) or ``score`` (the text rules). *partial*: a series
+    result whose titles name only a shorter form of the reference's
+    (``is_partial_title``)."""
 
     score: float
     reason: TitleReason
+    partial: bool = False
 
 
 def _normalize(text: str) -> str:
@@ -333,6 +343,10 @@ def score_title(
       the set ratio minus *extra_words_penalty* if the result adds words
     - Year bonus: +*year_bonus* if the year matches (tolerance by type)
     - Sequel penalty: −*sequel_penalty* if sequel numbers differ
+
+    A series result whose candidates name only a shorter form of the
+    reference's titles is marked ``partial``; a movie's never is, since
+    scene names drop subtitles ("Dune.2021" for "Dune: Part One").
     """
     verdict = _identity_verdict(result, reference)
     if verdict is not None:
@@ -355,11 +369,13 @@ def score_title(
     if not candidates:
         return TitleScore(0.0, "score")
 
-    all_ref_titles = [reference.title] + list(reference.alt_titles)
+    norm_refs = [
+        _normalize(_strip_year(title))
+        for title in [reference.title, *reference.alt_titles]
+    ]
     best = 0.0
     for norm_res in candidates:
-        for ref_title in all_ref_titles:
-            norm_ref = _normalize(_strip_year(ref_title))
+        for norm_ref in norm_refs:
             s = _score_single_title(
                 norm_ref,
                 norm_res,
@@ -373,7 +389,10 @@ def score_title(
             if s > best:
                 best = s
 
-    return TitleScore(best, "score")
+    partial = reference.content_type == "series" and is_partial_title(
+        candidates, norm_refs
+    )
+    return TitleScore(best, "score", partial)
 
 
 def score_title_match(
@@ -408,18 +427,20 @@ def filter_by_title_match(
     extra_words_penalty: float = 0.35,
     year_tolerance_movie: int = 1,
     year_tolerance_series: int = 3,
-) -> list[SearchResult]:
-    """Keep only results whose title score meets *threshold*.
+) -> TitleMatches:
+    """The results whose title score meets *threshold*, the partial
+    matches apart (``TitleScore.partial``).
 
     If *reference* is ``None`` (title lookup failed), all results pass
     through unchanged — better to return unfiltered than nothing. Every
     drop logs ``title_match_filtered`` with its ``reason``, and the
-    summary counts the drops per reason.
+    summary counts the drops per reason and the partial matches.
     """
     if reference is None:
-        return results
+        return TitleMatches(matching=list(results))
 
     kept: list[SearchResult] = []
+    partial: list[SearchResult] = []
     reasons: Counter[str] = Counter()
 
     for r in results:
@@ -433,7 +454,7 @@ def filter_by_title_match(
             year_tolerance_series=year_tolerance_series,
         )
         if verdict.score >= threshold:
-            kept.append(r)
+            (partial if verdict.partial else kept).append(r)
         else:
             reasons[verdict.reason] += 1
             log.debug(
@@ -448,9 +469,10 @@ def filter_by_title_match(
         "title_match_summary",
         reference=reference.title,
         total=len(results),
-        kept=len(kept),
+        kept=len(kept) + len(partial),
+        partial=len(partial),
         dropped=sum(reasons.values()),
         reasons=dict(reasons),
         threshold=threshold,
     )
-    return kept
+    return TitleMatches(kept, partial)

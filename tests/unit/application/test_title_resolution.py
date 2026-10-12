@@ -20,6 +20,7 @@ from scavengarr.domain.entities.stremio import (
     EpisodeRef,
     SeriesMeta,
     StremioStreamRequest,
+    TitleMatches,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -367,7 +368,7 @@ class TestWorkerThread:
 
         def _filter(results: list[SearchResult], *_args: object, **_kw: object):
             seen.update(structlog.contextvars.get_contextvars())
-            return results
+            return TitleMatches(matching=results)
 
         titles = TitleResolver(
             tmdb=AsyncMock(),
@@ -600,6 +601,31 @@ class TestEpisodeRef:
         ref = TitleResolver.episode_ref(request, _one_piece(), absolute=1090)
 
         assert ref == EpisodeRef(22, 90, None, None, absolute=1090)
+
+    def test_the_reference_carries_the_requests_titles(self) -> None:
+        """A plugin tells a parent series by them (``is_partial_title``)."""
+        ref = TitleResolver.episode_ref(
+            _series(), _one_piece(), titles=("One Piece", "One Piece DE")
+        )
+
+        assert ref is not None
+        assert ref.titles == ("One Piece", "One Piece DE")
+
+    def test_the_series_titles_of_the_languages(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(
+                title="Naruto: Shippūden", alt_titles=["Naruto: Shippuden"]
+            ),
+            "en": TitleMatchInfo(title="Naruto Shippūden"),
+            "fr": None,
+        }
+
+        assert TitleResolver.series_titles(infos, ["de", "en", "fr"]) == (
+            "Naruto: Shippūden",
+            "Naruto: Shippuden",
+            "Naruto Shippūden",
+        )
+        assert TitleResolver.series_titles(infos, ["fr"]) == ()
 
     def test_without_a_record(self) -> None:
         assert TitleResolver.episode_ref(_series(), None) is None

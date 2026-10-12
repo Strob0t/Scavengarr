@@ -8,8 +8,11 @@ row of the series' season pages, ``(season, episode, german, english,
 absolute)``, cached per series for 7 days; ``locate`` finds the row a
 request's ``EpisodeRef`` means: the row that shows its absolute number
 (``[Episode 062]`` in the English title), whatever its title; without
-one, by the title. A plugin passes its page selectors and its fetcher and
-logs the outcome itself.
+one, by the title. On a series named only by a shorter form of the
+request's titles (``is_partial_series``: Bleach for the Thousand-Year
+Blood War, which the sites keep as Bleach's season 17) the number counts
+another series, and the title alone places the episode. A plugin passes
+its page selectors and its fetcher and logs the outcome itself.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from rapidfuzz import fuzz
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 from unidecode import unidecode
 
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import EpisodeRef, is_partial_title
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.plugins.dom import parse_page
 
@@ -207,7 +210,19 @@ def _best(rows: Iterable[EpisodeRow], title: str) -> tuple[EpisodeRow, float] | 
     return best
 
 
-def locate(index: list[EpisodeRow], ref: EpisodeRef) -> Located | None:
+def is_partial_series(titles: Iterable[str], ref: EpisodeRef) -> bool:
+    """Whether the site's series, named *titles*, is only a shorter form of
+    the request's series titles (``is_partial_title``): the request's
+    parent, whose rows count another series, or the site's short name for
+    it. Without the request's titles no series is."""
+    return is_partial_title(
+        map(normalize_title, titles), map(normalize_title, ref.titles)
+    )
+
+
+def locate(
+    index: list[EpisodeRow], ref: EpisodeRef, *, partial: bool = False
+) -> Located | None:
     """The row *ref* means, or ``None``.
 
     1. ``number``: the row that shows the reference's absolute number,
@@ -223,20 +238,24 @@ def locate(index: list[EpisodeRow], ref: EpisodeRef) -> Located | None:
        reference's.
     4. ``fuzzy_title``: the best title match of at least ``_TITLE_MIN``
        over the index.
+
+    On a *partial* series (``is_partial_series``) the number counts
+    another series: only rules 3 and 4 apply.
     """
-    if ref.absolute is not None:
-        exact = next((row for row in index if row.absolute == ref.absolute), None)
+    absolute = None if partial else ref.absolute
+    if absolute is not None:
+        exact = next((row for row in index if row.absolute == absolute), None)
         if exact is not None:
             return Located(exact, "number")
     title = normalize_title(ref.title) if ref.title else ""
     if not title:
         return None
-    if ref.absolute is not None:
+    if absolute is not None:
         near = [
             row
             for row in index
             if row.absolute is not None
-            and abs(row.absolute - ref.absolute) <= _NUMBER_SLACK
+            and abs(row.absolute - absolute) <= _NUMBER_SLACK
         ]
         best = _best(near, title)
         if best is not None and best[1] >= _NEIGHBOUR_MIN:

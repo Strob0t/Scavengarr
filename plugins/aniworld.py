@@ -30,6 +30,7 @@ from scavengarr.infrastructure.plugins.episode_index import (
     Located,
     RowSelectors,
     episode_index,
+    is_partial_series,
     locate,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -258,7 +259,12 @@ class AniworldPlugin(HttpxPluginBase):
         detail_parser = await parse_page(_DetailPageParser(self.base_url), resp.text)
 
         page = await self._episode_page(
-            detail_url, detail_parser, season, episode, episode_ref
+            detail_url,
+            detail_parser,
+            season,
+            episode,
+            episode_ref,
+            name=item.get("title", ""),
         )
         if page is None:
             return None
@@ -295,11 +301,14 @@ class AniworldPlugin(HttpxPluginBase):
         season: int | None,
         episode: int | None,
         episode_ref: EpisodeRef | None,
+        *,
+        name: str,
     ) -> tuple[str, dict[str, str | int]] | None:
         """The episode page to scrape and the placement its result claims
         (``season`` and ``episode`` for the Stremio episode filter).
 
-        A reference: the located row's page, the request's season and
+        A reference: the row it locates on the series named *name*, the
+        located row's page, the request's season and
         episode, the site's as ``site_season`` and ``site_episode`` and the
         evidence as ``episode_located_by``. A season: the page built from
         the numbers (a season without episode starts at its first episode).
@@ -307,7 +316,9 @@ class AniworldPlugin(HttpxPluginBase):
         """
         series = detail_url.rstrip("/")
         if episode_ref is not None:
-            located = await self._locate_episode(series, detail.seasons, episode_ref)
+            located = await self._locate_episode(
+                series, detail.seasons, episode_ref, name
+            )
             if located is None:
                 return None
             return (
@@ -333,10 +344,12 @@ class AniworldPlugin(HttpxPluginBase):
         return None
 
     async def _locate_episode(
-        self, series_url: str, seasons: list[int], ref: EpisodeRef
+        self, series_url: str, seasons: list[int], ref: EpisodeRef, name: str
     ) -> Located | None:
         """The row of the series' season pages *ref* means (the index is
-        cached per series); ``None``, logged, when no row matches.
+        cached per series); ``None``, logged, when no row matches. On a
+        series whose *name* is only a shorter form of the request's titles
+        (``is_partial_series``) the title alone places it.
 
         A series page without season links is a single season: its
         episode table is ``/staffel-1``.
@@ -351,12 +364,14 @@ class AniworldPlugin(HttpxPluginBase):
             selectors=_ROW_SELECTORS,
             semaphore=self._new_semaphore(),
         )
-        located = locate(index, ref)
+        partial = is_partial_series([name], ref)
+        located = locate(index, ref, partial=partial)
         reference = {
             "slug": slug,
             "season": ref.season,
             "episode": ref.episode,
             "absolute": ref.absolute,
+            "partial": partial,
         }
         if located is None:
             self._log.info("aniworld_episode_not_located", rows=len(index), **reference)

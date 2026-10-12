@@ -96,7 +96,7 @@ Entities and value types are implemented as `@dataclass` classes.
 | `TorznabIndexInfo` | `entities/torznab.py` | Indexer info for listing (name, version, mode) |
 | `CrawlJob` | `entities/crawljob.py` | Immutable (`frozen=True`) JDownloader `.crawljob` representation with TTL (`is_expired()`) and serialization (`to_crawljob_format()`); `resolve_plugin` names the plugin that resolves its links at grab time |
 | `SearchResult` | `plugins/base.py` | Normalized (mutable) scraping result with download links and metadata |
-| `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamLanguage`, `TitleMatchInfo`, `CachedStreamLink`, `ResolvedStream` | `entities/stremio.py` | Frozen Stremio types: parsed request, output stream, catalog preview, ranked candidate, language, title info, cached hoster link, resolved video URL |
+| `StremioStreamRequest`, `StremioStream`, `StremioMetaPreview`, `RankedStream`, `StreamLanguage`, `TitleMatchInfo`, `TitleMatches`, `EpisodeRef`, `CachedStreamLink`, `ResolvedStream` | `entities/stremio.py` | Frozen Stremio types: parsed request, output stream, catalog preview, ranked candidate, language, title info, the title matcher's kept and partial results, the episode reference of the locating plugins, cached hoster link, resolved video URL; `is_partial_title()`, the one test for a title that is only a shorter form of the request's |
 | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` | `entities/scoring.py` | Frozen plugin-scoring types (probe outcome, EWMA state, per-plugin score snapshot) |
 
 `plugins/base.py` also defines `PluginProtocol` (`name`, `provides`, `async search(query, category, season, episode)`), `PluginProvides = Literal["stream", "download", "both"]` and the optional, `runtime_checkable` capability `GrabResolvingPlugin` (`async resolve_download(url) -> list[str]`, links resolved when a CrawlJob is grabbed).
@@ -185,7 +185,7 @@ Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 - `queries.py` — search query normalization (`build_search_query`, `build_search_queries`) and multi-language title references.
 - `stream_builder.py` — `format_stream`, `deduplicate_by_hoster` (only without resolver; with one, resolution picks one stream per hoster), `is_direct_video_url`, behavior hints and cache/proxy link building.
 - `search_cache.py` — `SearchCache`: the title-filtered plugin results per title (`cache.search_ttl_seconds`, stale-while-revalidate); an entry names the plugins whose search had not finished when it was written (`missing`), and `merge()` replaces one plugin's results in an entry. Resolved streams are not cached with them: hoster stream URLs expire, and some are bound to the resolving IP.
-- `search_progress.py` — `SearchProgress`: the title-matching results of a running search so far, shared by every request waiting on it (single-flight).
+- `search_progress.py` — `SearchProgress`: the title-matching results of a running search so far, shared by every request waiting on it (single-flight); a plugin's partial matches wait for its end and yield to its other match.
 - `resolution.py` — `HosterResolution`: one request's resolutions; each hoster resolves its best-ranked link, the next only after that one failed. `ResolveFlow`: when the answer is due (`resolve_target_count` hosters with a video, everything done, or the deadline); a search from the cache answers with the resolver's cached outcomes and resolves its other links in the background, one title at a time.
 
 #### TorznabSearchUseCase — the central orchestrator

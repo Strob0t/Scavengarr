@@ -15,11 +15,16 @@ import asyncio
 import contextlib
 import math
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 
+import structlog
+
 from scavengarr.application.stremio.search_cache import CachedSearch, merge
 from scavengarr.domain.plugins.base import ResultKey, SearchResult, result_key
+
+log = structlog.get_logger(__name__)
 
 # Stores the search's entry (the search cache, under the search's key)
 StoreFn = Callable[[CachedSearch], Awaitable[None]]
@@ -40,6 +45,13 @@ class SearchProgress:
     search completes the base entry: it keeps the entry's age, and its end
     clears ``missing`` whatever each plugin's outcome (one completion per
     entry).
+
+    A partial match (``TitleMatches.partial``: a series named only by a
+    shorter form of the request's titles) waits for its plugin's end. It
+    counts only where the plugin gave no other match: the full and the base
+    title run at once, and "Naruto" beside "Naruto Shippuden" is the parent
+    series of "Naruto: Shippūden", while "Naruto" alone may be the site's
+    name for it.
     """
 
     def __init__(
@@ -68,6 +80,10 @@ class SearchProgress:
         self._writing = asyncio.Lock()  # writes land in order
         self._matching: set[ResultKey] = set()
         self._found: set[ResultKey] = set()
+        # Per plugin: its partial matches waiting for its end, and whether
+        # it gave another match
+        self._held: dict[str, list[SearchResult]] = {}
+        self._matched: set[str] = set()
         self._listeners: set[asyncio.Event] = set()
         self._ended = asyncio.Event()
 
@@ -101,6 +117,7 @@ class SearchProgress:
         its results replace its earlier ones, its name leaves ``missing``.
         """
         self.dropped += dropped
+        self._release(name)
         if not finished:
             return
         self._finished.add(name)
@@ -108,19 +125,58 @@ class SearchProgress:
         if self._written:
             await self.write()
 
-    def add(self, found: list[SearchResult], matching: list[SearchResult]) -> None:
-        """A plugin's results (*found*) and those of them matching the title."""
+    def add(
+        self,
+        found: list[SearchResult],
+        matching: list[SearchResult],
+        partial: Iterable[SearchResult] = (),
+    ) -> None:
+        """A plugin's results (*found*), those of them matching the title, and
+        its *partial* matches, which wait for the plugin's end."""
         keys = {result_key(r) for r in found} - self._found
         self._found |= keys
         self.total += len(keys)
+        dropped: Counter[str] = Counter()
         for result in matching:
-            if (key := result_key(result)) not in self._matching:
-                self._matching.add(key)
-                self.results.append(result)
+            plugin = _plugin(result)
+            self._matched.add(plugin)
+            dropped[plugin] += len(self._held.pop(plugin, ()))
+            self._keep(result)
+        for result in partial:
+            plugin = _plugin(result)
+            if plugin in self._matched:
+                dropped[plugin] += 1
+            else:
+                self._held.setdefault(plugin, []).append(result)
+        for plugin, count in dropped.items():
+            if count:
+                log.info(
+                    "stremio_partial_matches_dropped",
+                    plugin=plugin,
+                    results_count=count,
+                )
         self._changed = True
         self._notify()
 
+    def _keep(self, result: SearchResult) -> None:
+        if (key := result_key(result)) not in self._matching:
+            self._matching.add(key)
+            self.results.append(result)
+
+    def _release(self, plugin: str) -> None:
+        """*plugin* ended without another match: its partial matches count."""
+        held = self._held.pop(plugin, [])
+        for result in held:
+            self._keep(result)
+        if held:
+            self._changed = True
+            self._notify()
+
     def finish(self) -> None:
+        # A standby's results carry its own name, its end is reported under
+        # its mirror group's member: what still waits counts now
+        for plugin in list(self._held):
+            self._release(plugin)
         self.done = True
         if self._completes:
             self._changed = True  # the end clears ``missing``
@@ -147,7 +203,7 @@ class SearchProgress:
         return replace(entry, stored_at=self.started, missing=missing)
 
     def _results_of(self, plugin: str) -> list[SearchResult]:
-        return [r for r in self.results if r.metadata.get("source_plugin") == plugin]
+        return [r for r in self.results if _plugin(r) == plugin]
 
     async def write(self) -> None:
         """Store the entry through the search's store when it changed since
@@ -186,3 +242,8 @@ class SearchProgress:
     def _notify(self) -> None:
         for event in self._listeners:
             event.set()
+
+
+def _plugin(result: SearchResult) -> str:
+    """The plugin that gave *result* (``source_plugin``, set by the runner)."""
+    return str(result.metadata.get("source_plugin", ""))

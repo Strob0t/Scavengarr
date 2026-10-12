@@ -38,6 +38,7 @@ from scavengarr.infrastructure.plugins.episode_index import (
     Located,
     RowSelectors,
     episode_index,
+    is_partial_series,
     locate,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -730,7 +731,7 @@ class StoPlugin(HttpxPluginBase):
         request's season and episode, and the site's as ``site_season`` and
         ``site_episode`` with the evidence as ``episode_located_by``; no row
         means no result."""
-        located = await self._locate_episode(slug, detail.seasons, ref)
+        located = await self._locate_episode(slug, detail.seasons, ref, detail.title)
         if located is None:
             return []
         row = located.row
@@ -761,10 +762,13 @@ class StoPlugin(HttpxPluginBase):
         return results
 
     async def _locate_episode(
-        self, slug: str, seasons: list[int], ref: EpisodeRef
+        self, slug: str, seasons: list[int], ref: EpisodeRef, name: str
     ) -> Located | None:
         """The row of the series' season pages *ref* means (the index is
-        cached per series); ``None``, logged, when no row matches."""
+        cached per series); ``None``, logged, when no row matches. On a
+        series whose *name* is only a shorter form of the request's titles
+        (``is_partial_series``) the title alone places it, and the anime
+        rows, which show the number alone, place nothing."""
         index = await episode_index(
             cache=self._cache,
             key=f"sto:episodes:v1:{slug}",
@@ -774,12 +778,14 @@ class StoPlugin(HttpxPluginBase):
             selectors=_ROW_SELECTORS,
             semaphore=self._new_semaphore(),
         )
-        located = locate(index, ref)
+        partial = is_partial_series([name], ref)
+        located = locate(index, ref, partial=partial)
         reference = {
             "slug": slug,
             "season": ref.season,
             "episode": ref.episode,
             "absolute": ref.absolute,
+            "partial": partial,
         }
         if located is None:
             self._log.info("sto_episode_not_located", rows=len(index), **reference)

@@ -30,16 +30,21 @@ aniworld's episode index as the app does: the series the plugin's search
 gives Cinemeta's name (the closest relevant hit, as the plugin takes it;
 ``--slug IMDB=SLUG`` names the series page instead), its season pages read
 once through the plugin's own fetcher, the reference ``episode_ref`` builds
-with the app's Kitsu number, and ``locate``. Per series (default: the
-dub-titled series below and the long-runners by the addon's IMDb id) it
-prints the rows, the episodes, the placements at the row with the
-reference's number, at a neighbour (with the offsets), by title alone,
-nowhere although that row has an English title (N26; in brackets those
-whose row is the best title match near the number) and nowhere, the
+with the app's Kitsu number and the request's series titles (from the title
+client the configuration gives, TMDB or IMDb's suggest API, in the stream
+plugins' languages), and ``locate``, by title alone on a partial series (row
+92: the site names it, by the hit's name or the page's heading for a
+``--slug``, only by a shorter form of those titles). Per series (default:
+the dub-titled series below and the long-runners by the addon's IMDb id) it
+prints whether it is partial, the rows, the episodes, the placements at the
+row with the reference's number, at a neighbour (with the offsets), by title
+alone, nowhere although that row has an English title (N26; in brackets
+those whose row is the best title match near the number) and nowhere, the
 title-confirmed placements and those at another row than the number's (in
 brackets the ties: the number's row matches as well), the share over the
 series, and ``--cases`` of each series' N26 cases and placements at another
-row. It also reads the aniworld site; nothing is stored.
+row. It also reads the title client and the aniworld site; nothing is
+stored.
 """
 
 from __future__ import annotations
@@ -56,6 +61,7 @@ from typing import Any, Literal
 
 import httpx
 import structlog
+from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.application.stremio.title_resolution import TitleResolver
 from scavengarr.domain.entities.stremio import (
@@ -63,6 +69,7 @@ from scavengarr.domain.entities.stremio import (
     SeriesMeta,
     StremioStreamRequest,
 )
+from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.anime import kitsu_addon
 from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
 from scavengarr.infrastructure.anime.kitsu_addon import (
@@ -80,6 +87,7 @@ from scavengarr.infrastructure.plugins.episode_index import (
     LocatedBy,
     _best,
     episode_index,
+    is_partial_series,
     locate,
     normalize_title,
 )
@@ -91,6 +99,7 @@ from scavengarr.infrastructure.plugins.relevance import (
 )
 from scavengarr.infrastructure.stremio import cinemeta
 from scavengarr.infrastructure.stremio.cinemeta import CINEMETA_URL
+from scavengarr.interfaces.composition import build_tmdb_client
 
 # Long-runners whose Kitsu entry spans the series, by Kitsu id with the name
 # the addon gives (checked against its search catalog, 2026-10-11)
@@ -357,8 +366,11 @@ def _score(row: EpisodeRow | None, title: str) -> float | None:
     return scored[1] if scored is not None else None
 
 
-def place(index: list[EpisodeRow], ref: EpisodeRef) -> Verdict:
-    """*ref* placed on *index* by the app's ``locate``."""
+def place(
+    index: list[EpisodeRow], ref: EpisodeRef, *, partial: bool = False
+) -> Verdict:
+    """*ref* placed on *index* by the app's ``locate`` (on a *partial*
+    series by title alone)."""
     title = normalize_title(ref.title) if ref.title else ""
     exact: EpisodeRow | None = None
     near: tuple[EpisodeRow, float] | None = None
@@ -373,7 +385,7 @@ def place(index: list[EpisodeRow], ref: EpisodeRef) -> Verdict:
         if title:
             near = _best(numbered, title)
     exact_score = _score(exact, title)
-    located = locate(index, ref)
+    located = locate(index, ref, partial=partial)
     if located is None:
         kind: Placed = "unconfirmed" if exact_score is not None else "nothing"
         return Verdict(kind, exact=exact, exact_score=exact_score, near=near)
@@ -404,6 +416,7 @@ class SiteCounts:
 
     name: str
     slug: str
+    partial: bool = False  # the site names it by a shorter title (row 92)
     rows: int = 0
     numbered_rows: int = 0  # rows that show an absolute number
     episodes: int = 0  # regular Cinemeta episodes (season and episode 1 and up)
@@ -438,11 +451,15 @@ def tally(
     index: list[EpisodeRow],
     meta: SeriesMeta,
     numbers: Mapping[tuple[int, int], int] | None = None,
+    *,
+    site_name: str = "",
+    titles: tuple[str, ...] = (),
 ) -> SiteCounts:
     """Each regular episode of *meta*, Cinemeta's list of *imdb_id*, placed
     on *index* by the reference the app builds for an IMDb request, with
     the Kitsu *numbers* its look-up gave (IMDb season and episode -> Kitsu
-    number)."""
+    number) and the request's series *titles*: by title alone where
+    *site_name*, the site's name of the series, is partial against them."""
     counts = SiteCounts(
         name,
         slug,
@@ -459,10 +476,11 @@ def tally(
         request = StremioStreamRequest(
             imdb_id, "series", season=entry.season, episode=entry.episode
         )
-        ref = TitleResolver.episode_ref(request, meta, absolute=absolute)
+        ref = TitleResolver.episode_ref(request, meta, absolute=absolute, titles=titles)
         if ref is None:  # never for a listed entry
             continue
-        verdict = place(index, ref)
+        counts.partial = is_partial_series([site_name], ref)
+        verdict = place(index, ref, partial=counts.partial)
         counts.kinds[verdict.kind] += 1
         if verdict.kind == "neighbour" and verdict.offset is not None:
             counts.offsets[verdict.offset] += 1
@@ -476,10 +494,10 @@ def tally(
 
 
 _SITE_HEADER = (
-    "| Series | IMDb | aniworld | Rows | Numbered rows | Episodes | Kitsu numbered"
-    " | Exact | Neighbour | Title | N26 (exact best) | Nothing | Confirmed"
-    " | Elsewhere (ties) |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    "| Series | IMDb | aniworld | Partial | Rows | Numbered rows | Episodes"
+    " | Kitsu numbered | Exact | Neighbour | Title | N26 (exact best) | Nothing"
+    " | Confirmed | Elsewhere (ties) |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 )
 
 
@@ -492,6 +510,7 @@ def site_row(imdb_id: str, counts: SiteCounts) -> str:
         counts.name,
         imdb_id,
         counts.slug,
+        "yes" if counts.partial else "no",
         counts.rows,
         counts.numbered_rows,
         counts.episodes,
@@ -557,11 +576,23 @@ def spread(items: list[Any], count: int) -> list[Any]:
     return [items[i * len(items) // count] for i in range(count)]
 
 
+class _Heading:
+    """A series page's own name: its heading."""
+
+    def __init__(self) -> None:
+        self.text = ""
+
+    def feed(self, html: str) -> None:
+        node = LexborHTMLParser(html).css_first('h1[itemprop="name"] span')
+        self.text = node.text(strip=True) if node is not None else ""
+
+
 async def site_index(
     plugin: Any, query: str, slug: str | None = None
-) -> tuple[str, list[str], list[EpisodeRow]] | None:
+) -> tuple[str, str, list[str], list[EpisodeRow]] | None:
     """The series aniworld's search gives *query* (the closest relevant
-    hit, as the plugin takes it) or the one under *slug*: its slug, the
+    hit, as the plugin takes it) or the one under *slug*: its slug, its
+    name (the hit's, as the plugin takes it, or the page's heading), the
     titles of the relevant hits and the rows of its season pages, each
     page read once through the plugin's fetcher; ``None`` without a hit
     or a series page."""
@@ -583,6 +614,7 @@ async def site_index(
     if resp is None:
         return None
     detail = await parse_page(names["_DetailPageParser"](plugin.base_url), resp.text)
+    name = titles[0] if titles else (await parse_page(_Heading(), resp.text)).text
     rows = await episode_index(
         cache=None,
         key=f"probe:{slug}",
@@ -592,7 +624,7 @@ async def site_index(
         selectors=names["_ROW_SELECTORS"],
         semaphore=plugin._new_semaphore(),
     )
-    return slug, titles, rows
+    return slug, name, titles, rows
 
 
 async def aniworld_series(
@@ -601,10 +633,12 @@ async def aniworld_series(
     resolver: KitsuAnimeIdResolver | None,
     imdb_id: str,
     slug: str | None = None,
+    titles: tuple[str, ...] = (),
 ) -> tuple[SiteCounts | None, str]:
     """The series' regular episodes placed on aniworld's index (the series
-    its search gives Cinemeta's name, or the one under *slug*) and a note:
-    the search's relevant hits, or why there are no counts."""
+    its search gives Cinemeta's name, or the one under *slug*), with the
+    request's series *titles*, and a note: the search's relevant hits, or
+    why there are no counts."""
     listed = await _meta(http, f"{CINEMETA_URL}/meta/series/{imdb_id}.json")
     meta = cinemeta._reduce(listed) if listed is not None else None
     if meta is None:
@@ -612,7 +646,7 @@ async def aniworld_series(
     found = await site_index(plugin, meta.name, slug)
     if found is None:
         return None, f"aniworld lists no series for {meta.name!r}"
-    slug, titles, index = found
+    slug, site_name, titles_found, index = found
     numbers = None
     if resolver is not None:
         places = [
@@ -621,11 +655,35 @@ async def aniworld_series(
             if e.season >= 1 and e.episode >= 1
         ]
         numbers = await kitsu_numbers(resolver, imdb_id, places)
-    if titles:
-        note = f"search {meta.name!r}: " + ", ".join(repr(t) for t in titles)
+    if titles_found:
+        note = f"search {meta.name!r}: " + ", ".join(map(repr, titles_found))
     else:
-        note = f"slug {slug} given"
-    return tally(meta.name, slug, imdb_id, index, meta, numbers), note
+        note = f"slug {slug} given ({site_name!r})"
+    counts = tally(
+        meta.name,
+        slug,
+        imdb_id,
+        index,
+        meta,
+        numbers,
+        site_name=site_name,
+        titles=titles,
+    )
+    if counts.partial:
+        note += "; partial against " + ", ".join(map(repr, titles))
+    return counts, note
+
+
+async def request_titles(
+    tmdb: TmdbClientPort, imdb_id: str, languages: list[str]
+) -> tuple[str, ...]:
+    """The request's series titles as the app builds them
+    (``EpisodeRef.titles``): the title client's title and alternatives in
+    each of *languages*."""
+    infos = await asyncio.gather(
+        *(tmdb.get_title_and_year(imdb_id, language=lang) for lang in languages)
+    )
+    return TitleResolver.series_titles(dict(zip(languages, infos)), languages)
 
 
 async def _site_counts(
@@ -634,10 +692,14 @@ async def _site_counts(
     resolver: KitsuAnimeIdResolver | None,
     imdb_id: str,
     slug: str | None,
+    tmdb: TmdbClientPort,
+    languages: list[str],
 ) -> tuple[SiteCounts | None, str]:
-    """``aniworld_series``, a failed read named in the note."""
+    """``aniworld_series`` with the request's titles, a failed read named
+    in the note."""
     try:
-        return await aniworld_series(http, plugin, resolver, imdb_id, slug)
+        titles = await request_titles(tmdb, imdb_id, languages)
+        return await aniworld_series(http, plugin, resolver, imdb_id, slug, titles)
     except (httpx.HTTPError, ValueError) as exc:
         return None, f"failed ({type(exc).__name__})"
 
@@ -664,6 +726,14 @@ async def aniworld_main(
     registry = PluginRegistry(config.plugin_dir)
     registry.discover()
     plugin: Any = registry.get("aniworld")
+    # The languages a request's titles come in: every stream plugin's
+    languages = sorted(
+        {
+            lang
+            for name in registry.get_by_provides("stream")
+            for lang in registry.get_languages(name)
+        }
+    )
     found: list[tuple[str, SiteCounts]] = []
     notes: list[str] = []
     try:
@@ -672,6 +742,7 @@ async def aniworld_main(
         headers = {"User-Agent": DEFAULT_USER_AGENT}
         async with httpx.AsyncClient(headers=headers) as http:
             resolver = await numbering(http)
+            tmdb = build_tmdb_client(config, http, MemoryCache())
             if resolver is None:
                 notes.append("the id list did not load: the position alone")
             if not imdb_ids:
@@ -680,7 +751,13 @@ async def aniworld_main(
             # One series at a time: its season pages under the plugin's bound
             for imdb_id in imdb_ids:
                 counts, note = await _site_counts(
-                    http, plugin, resolver, imdb_id, slugs.get(imdb_id)
+                    http,
+                    plugin,
+                    resolver,
+                    imdb_id,
+                    slugs.get(imdb_id),
+                    tmdb,
+                    languages,
                 )
                 if counts is not None:
                     found.append((imdb_id, counts))
