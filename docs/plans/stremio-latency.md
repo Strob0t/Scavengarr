@@ -827,6 +827,22 @@ The 165 fetches took 947.8 s in all (5.7 s each on average, three in flight per 
 
 **The challenge counter (row 70), live.** The digest at 14:35 UTC: kinoger 10 challenges, 1 of them unsolved; moflix 5, none unsolved. N20's line reads `kinoger 1 of 188 searches (0.5 %)`, far below the 5 % rule; the 7-day reading is due on 2026-10-18.
 
+### Thirteenth round, quick (2026-10-12, production rebuilt 15:11 UTC from `staging` 1d79ec7)
+
+The build of rows 94 and 95 (the read-ahead keeps a paused playback's segment order; an unchecked episode position keeps the title check), the maintainer's end-to-end request after it. Four titles from the dev container, 15:19 to 15:24 UTC: two of the post-deploy check's anime (One Piece S22E04 by its IMDb id, Demon Slayer) and its movie, all searched by the check minutes before (so no `stremio_round.py`), plus Breaking Bad; one stream request each and `stremio_playcheck.py --base https://scavengarr.lan --insecure` on its streams. Interstellar's and Demon Slayer's answer columns are from a stream request after their play checks (15:24).
+
+| Title | Answer | Streams | X-Cache | Complete | Playable | Findings |
+|---|---|---|---|---|---|---|
+| One Piece S22E04 (`series/tt0388629:22:4`) | 0.2 s | 8 | HIT | true | 8 of 8 | – |
+| Interstellar (`movie/tt0816692`) | 0.1 s | 10, 11 at 15:24 | HIT | true | 9 of 10, 10 of 10 again | VIDSONIC once |
+| Demon Slayer S02E01 (`series/tt9335498:2:1`) | 0.0 s | 3, 4 at 15:24 | HIT | true | 3 of 3 | – |
+| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 20.2 s | 2 | MISS | true | 2 of 2 | – |
+
+- **Episode placement (row 95):** the check's `series/kitsu:12:1089` (15:14:00): `aniworld_episode_located site_season=22 site_episode=1 located_by=number absolute=1089 absolute_source=kitsu`, the same on s.to (`sto_episode_located`), and aniworld's `one-piece-2025` not located. The IMDb request `tt0388629:22:4` (15:19:32): `anime_kitsu_number kitsu_id=12 kitsu_episode=1089`, answered from that entry. Demon Slayer S02E01 (no Kitsu number): `absolute=27 absolute_source=position` placed `located_by=title` on both sites. The check's One Piece S05E02: Kitsu #62, aniworld's season 2 episode 1 by number.
+- **Plays:** 22 of 23 on the first pass, 18 HLS (VOE, VidMoly, FireStream, VidHide, GXPlayer, StrmUp, VidSonic) and 5 address-bound files through `/proxy/<id>/file` (DoodStream 3, FSST, Vinovo; each seek answered 206). VIDSONIC on Interstellar failed once (`FAIL variant 502` after 15.3 s; `hls_proxy_network_error cdn=vidsonic` at 15:21:32, the proxy's 15 s toward the CDN, as in the twelfth round) and played at 15:23 (3.8 s).
+- **Filemoon:** none in the first answers, its breaker open since the check's cold captures (`docs/plans/challenge-reactions.md` → R4, the restart of 15:11:28). Its trial at 15:22:19 met the captcha, R2's completion found Demon Slayer's stream (FILEMOON · aniworld, 15:22:34), and the warm capture after it Interstellar's (FILEMOON · filmo, 15:23:13; 4 and 11 streams at 15:24).
+- **Dropload:** `hoster_resolve_challenge hoster=dr0pstream kind=turnstile cooldown_s=60` at 15:21:01 (hdfilme, Interstellar), with dr0pstream.com's state kept at 15:14:22: no Dropload stream (its player sits behind a Turnstile play button, `docs/features/hoster-resolvers.md`).
+
 ### N25: stale answers without a stream (2026-10-11 to 2026-10-18)
 
 The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose only link had died since, while the refresh it started found 2 within 31 s. The maintainer's decision of 2026-10-11 16:40 UTC: measure before a change (backlog N25). Before each deploy (the counter lives as long as its container), Mr. Fable reads production's `scavengarr_stremio_request_total` with `source="stale"` (all outcomes, and `outcome="empty"`), and for each empty answer its log line (`stremio_stream_response streams_returned=0 source=stale`) and whether the refresh filled the entry (the next answer for the same request with streams). After the week, the share decides between N25's candidate (such an answer waits for the refresh up to the answer budget) and nothing.
