@@ -167,6 +167,92 @@ Nothing in `_domains` or the plugins was changed. The decision is the maintainer
 
 **What this adds to the record.** fireani, kinox and kinoking fail from home the way the section above saw them from the Pi (kinoking got worse: the search itself times out now). megakino_to and movie4k are new on the unreachable list: both share `DataApiPluginBase`, and none of their five domains answered the check. boerse is the one plugin whose failure is in our code's reach: the login form is not where `boerse.py` looks for it after the Cloudflare page. animeloads needs a second look at its domain check only. The resolver suite has no cases, so the hoster picture comes from the end-to-end runs alone: 9 resolutions over 2 titles, supervideo's `PrivateAddressError` and dr0pstream's `ConnectError` are the two resolver-side failures, and moflix's upns and rpmplay are hosters without a resolver.
 
+## Live suite (2026-10-12)
+
+Staging 229d833 (rows 87, 89, 90, 91, 92 and 93 of the day: the hoster registry's challenge outcomes and background completion, the stealth pool's kept capture state and its warm-up, the episode placement). First `scripts/probes/resolver_urls.py` (12:39 to 12:47 UTC: 19 titles, 261 results, 737 claimed links, 20 resolvers; its failed searches: cineby, megakino_to and movie4k `PluginUnreachableError` 22 each, kinoking timeout 9), then `PYTHONPATH=src xvfb-run -a poetry run pytest -m live -q -p no:cacheprovider -rA --tb=line` from the dev container (the home connection), 12:47 to 12:56 UTC, 8.9 min: **65 passed, 12 failed, 3 skipped** of 80. The 2026-10-09 run had 41 tests because the resolver cases had no links then; the resolvers' baseline is row 47's run (2026-10-10, section "upns and rpmplay" below: 35 of 40). **No failure is a code regression:** the three plugins fail at their sites, and the nine resolver failures are dead files, CDNs that refuse or time out from this network, and two known cases. None of the failing resolvers' modules, `_verify.py` or the registry's playback check changed since row 47 (`git log` since 2026-10-10 12:00 names only `registry.py`, whose row 89 and 90 diff touches no check or verify line). The resolver suite raises the app's log to errors, so the resolver reasons come from a rerun of the nine live links through the app's registry with the log captured (after the run, before 13:00 UTC; event names and fixed fields only).
+
+**Plugins** (`tests/live/test_plugin_smoke.py`):
+
+| Plugin | Base | 2026-10-09 | 2026-10-12 | Reason (2026-10-12) |
+|---|---|---|---|---|
+| aniworld | httpx | passed | passed | |
+| burningseries | httpx | passed | passed | |
+| byte | httpx | passed | skipped | site: "Network error reaching byte"; `domains.py --plugins byte` after the run: HEAD `ReadTimeout` after 5.1 s, GET 200 through Cloudflare after 5.1 s, a slow site |
+| cine | httpx | passed | passed | |
+| dataload | httpx | passed | passed | |
+| einschalten | httpx | passed | passed | |
+| filmfans | httpx | passed | passed | |
+| filmo | httpx | – | passed | new in the suite since 2026-10-09 |
+| filmpalast | httpx | passed | passed | |
+| fireani | httpx | **failed** | passed | the search answered this time |
+| haschcon | httpx | passed | passed | |
+| hdfilme | httpx | passed | passed | |
+| hdworld | httpx | passed | passed | |
+| kinoger | httpx | passed | passed | |
+| kinoking | httpx | **failed** | passed | the search answered this time (the probe before the run still saw 9 timeouts) |
+| kinox | httpx | **failed** | **failed** | site: `Plugin 'kinox' returned 0 results`; domain, search and detail page answer (`kinox_domain_found`, `kinox_detail` 7), every mirror ends at kinox's captcha redirect (over the whole run, the end-to-end titles included: `kinox_no_redirect` 6, `kinox_no_hoster_links` 7, `kinox_http_error` 10): the finding of row 73 below, no longer "no domain reachable" |
+| megakino | httpx | passed | passed | |
+| megakino_to | httpx | **failed** | **failed** | site: `PluginUnreachableError: megakino_to: no domain reachable` |
+| moflix | httpx | passed | passed | |
+| movie2k | httpx | passed | passed | |
+| movie4k | httpx | **failed** | **failed** | site: `PluginUnreachableError: movie4k: no domain reachable` (`movie4k_domain_check_failed` for movie4k.ag and movie4k.stream) |
+| myboerse | httpx | skipped | skipped | no credentials in the dev container |
+| nima4k | httpx | passed | passed | |
+| nox | httpx | passed | passed | |
+| scnlog | httpx | passed | passed | |
+| serienfans | httpx | passed | passed | |
+| sto | httpx | passed | passed | |
+| streamcloud | httpx | passed | passed | |
+| streamkiste | httpx | passed | passed | |
+| warezomen | httpx | passed | passed | |
+| animeloads | Playwright | **failed** | passed | the domain check answered this time |
+| boerse | Playwright | **failed** | passed | the forum answered again: step 38 below found its origin down behind Cloudflare (522), not a markup change |
+| ddlspot | Playwright | passed | passed | |
+| ddlvalley | Playwright | passed | passed | |
+| mygully | Playwright | skipped | skipped | no credentials in the dev container |
+| scnsrc | Playwright | passed | passed | |
+
+**Resolvers** (`tests/live/test_resolver_live.py`, one link per resolver from the probe above; "before" is row 47's run of 2026-10-10):
+
+| Resolver | Links found | Live before | Live | Dead before | Dead | Reason (2026-10-12) |
+|---|---|---|---|---|---|---|
+| doodstream | 122 | passed | passed | passed | passed | |
+| dropload | 83 | **failed** | **failed** | passed | passed | network, as before: the captcha capture finds the stream (`dropload_captcha_browser_fallback`, `dropload_browser_stream`, `capture_state_saved`), then its CDN check fails with `hoster_resolve_check_error error=ConnectTimeout` (step 40: `ConnectError`) |
+| filemoon | 34 | passed | passed | passed | passed | |
+| firestream | 16 | passed | **failed** | passed | passed | site: `firestream_resolved`, then `playback_check_failed reason='status 502'` and `hoster_resolve_unplayable`: the CDN answers 502 for this file |
+| fsst | 19 | passed | passed | passed | passed | |
+| gxplayer | 8 | passed | passed | passed | passed | |
+| mixdrop | 68 | passed | passed | passed | passed | |
+| playmate | 6 | passed | **failed** | passed | passed | dead link: `playmate_resolved`, then `playback_check_failed reason='status 404'`, `hoster_resolve_unplayable`; step 42's removed-file case (the stream API hands out a 404 placeholder) |
+| rpmplay | 14 | **failed** | **failed** | passed | passed | dead link, as before: `rpmplay_file_offline` |
+| streamtape | 1 | passed | passed | passed | passed | |
+| strmup | 31 | passed | passed | passed | passed | |
+| supervideo | 63 | **failed** | **failed** | passed | passed | site, as before: Cloudflare 403 (`supervideo_cloudflare_detected status=403`), the browser captures a stream (`supervideo_browser_stream`), its CDN answers HTML to the check (`playback_check_failed reason='html'`) |
+| upns | 14 | **failed** | **failed** | passed | passed | dead link, as before: `upns_file_offline` |
+| veev | 27 | passed | **failed** | passed | passed | network: `veev_resolved`, then the stream check times out (`hoster_resolve_check_error error=ConnectTimeout`), twice in two reruns (6.7 s each) |
+| vidhide | 22 | passed | **failed** | passed | passed | network: the link is moflix's vidhide mirror (`moflix-stream`, an XFS config); its video check against the CDN `acek-cdn` ends in an HTTP error after 8.8 s, the verify timeout of 8 s (`vidhide_video_verify_error cdn=acek-cdn`) |
+| vidoza | 2 | **failed** | **failed** | passed | passed | network, as before: `private_address_refused` (the dev container's resolver, the cineby section below) |
+| vidsonic | 9 | passed | passed | passed | passed | |
+| vinovo | 14 | passed | passed | passed | passed | |
+| vixeo | 5 | passed | passed | passed | passed | |
+| voe | 179 | passed | passed | passed | passed | |
+
+**Grabs** (`tests/live/test_grab_resolve_live.py`):
+
+| Test | 2026-10-09 | 2026-10-12 |
+|---|---|---|
+| nox, Iron Man | passed | passed |
+| animeloads, One Punch Man | passed | passed |
+
+**Stremio end to end** (`tests/live/test_stremio_e2e_live.py`):
+
+| Title | 2026-10-09 | 2026-10-12 | Streams (2026-10-12) | Resolved (2026-10-12) |
+|---|---|---|---|---|
+| Oppenheimer (2023) | passed, 5 of 13 links | passed | 5 returned of 18 links (7 attempted, 13 unresolved at the budget; 5 plugins missing: cineby, kinoger, kinoking, megakino_to, movie4k) | voe (filmpalast, HLS), mixdrop (its mxdrop domain, hdfilme), vinovo (movie2k), gxplayer (megakino, HLS), voe (filmo, HLS). Not resolved: upns and rpmplay (moflix), `hoster_resolve_failed`, the offline files of row 47 |
+| Breaking Bad S01E01 | passed, 4 of 6 links | passed | 2 returned of 5 links (3 attempted; 3 plugins missing: cineby, megakino_to, movie4k) | voe (filmpalast, HLS), voe (sto, HLS). Not resolved: dr0pstream (hdfilme) `hoster_resolve_check_error error=ConnectError`, as on 2026-10-09 |
+
+**Reading.** Against 2026-10-09 the plugins improved: fireani, kinoking, animeloads and boerse pass, filmo is new and passes, byte skipped on a slow answer. The three failures are dead-site plugins failing at their sites (megakino_to and movie4k: no domain; kinox: the captcha redirect of row 73). Against row 47 the resolvers lost four live cases (firestream, playmate, veev, vidhide) and all twenty dead cases pass. Each of the four ends after the resolver found its stream, at the playback or video check: a 502 and a 404 from the CDN, and two network timeouts from this network. One link per resolver, one network: a second link of each, or the same links from the Pi, would tell a dead file from a CDN that refuses the dev container; that is not tested here. The two end-to-end titles pass with fewer streams than on 2026-10-09 (Breaking Bad 2 instead of 4: of its 5 links 3 were attempted and 2 resolved; on 2026-10-09 kinoger's own player and fsst resolved, this time kinoger's one result brought no stream, and the log does not say why its links were not attempted), and no resolution in either met a challenge (`challenge=None` on all seven).
+
 ## boerse (2026-10-09, step 38)
 
 **Question.** The live suite above called boerse a parser miss: Cloudflare solved, then `no login form` on five domains. Step 38 asked for the login page the plugin sees after the solve, compared with the parser's selectors.
