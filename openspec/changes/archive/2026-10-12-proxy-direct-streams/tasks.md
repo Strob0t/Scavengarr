@@ -38,4 +38,4 @@ from `origin/staging`, after step 21 is complete and before step 19.
 
 ## 6. Acceptance
 
-- [ ] 6.1 After the deploy: `scripts/stremio_round.py` from the dev container against production for the seventh round's ids; the DoodStream, MixDrop, Vinovo and FSST streams play; the table under the seventh round in `docs/plans/stremio-latency.md`, failures by hoster and error class.
+- [x] 6.1 After the deploy: `scripts/stremio_round.py` from the dev container against production for the seventh round's ids; the DoodStream, MixDrop, Vinovo and FSST streams play; the table under the seventh round in `docs/plans/stremio-latency.md`, failures by hoster and error class. Done in the eleventh round (2026-10-11, `docs/plans/stremio-latency.md` → Eleventh round): the address-bound files through `/proxy/<id>/file` played in 9 of 9 checks, seekable; in the twelfth none of the proxied files (DoodStream, MixDrop, Vinovo, FSST) failed.

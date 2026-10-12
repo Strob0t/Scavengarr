@@ -20,4 +20,4 @@
 ## 4. Docs
 
 - [x] 4.1 `docs/features/hoster-resolvers.md` (resolution cache: what persists, the snapshot key, how to reset), the circuit breaker section of `docs/features/stremio-addon.md`, `docs/features/observability.md` (the two events), `CHANGELOG.md`.
-- [ ] 4.2 Production check after deploy: `prodctl.py logs --grep hoster_state_restored` after a restart shows non-zero counts; record in `docs/plans/ideas-backlog.md` (I10 row).
+- [x] 4.2 Production check after deploy: `prodctl.py logs --grep hoster_state_restored` after a restart shows non-zero counts; record in `docs/plans/ideas-backlog.md` (I10 row). Done by the post-deploy check's `hoster_state_restored` (`scripts/prodctl.py check`): breakers 5 at the start of 2026-10-11 10:58 UTC, 6 at 16:31:37 UTC and 6 at 2026-10-12 06:30:51 UTC. Resolutions and redirects read 0 at each start, since production was quiet in the hour before each rebuild, so their restore rests on the unit tests.

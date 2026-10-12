@@ -126,12 +126,10 @@ OpenSpec changes live in `openspec/changes/<change-id>/`:
 ### Changes
 
 Open (`openspec list`):
-- `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06)
-- `add-container-image` – A published multi-arch container image (approved 2026-10-06)
-- `persist-resolver-state` – Hoster resolutions and circuit breakers that survive a restart (approved 2026-10-06)
-- `add-anime-ids` – `kitsu:` stream requests (approved 2026-10-06)
+- `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06; shipped in v0.4.0, task 3.2's production reading open)
+- `add-container-image` – A published multi-arch container image (approved 2026-10-06; task 2.3 waits for the Pi's switch to the published image)
 
-Archived after its release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`.
+Archived after their release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`; on 2026-10-12, shipped in v0.4.0: `add-anime-ids` (`specs/stremio-anime-ids/`), `continue-cut-searches` (`specs/stremio-search-continuation/`), `series-identity` (`specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; its task 6.3, fireani's episode location, deferred while the site does not answer), `proxy-direct-streams` (`specs/stremio-file-proxy/`) and `persist-resolver-state` (`specs/hoster-resolution-persistence/`).
 
 Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [ideas-backlog.md](../docs/plans/ideas-backlog.md) I16):
 - `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it
