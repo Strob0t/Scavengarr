@@ -100,7 +100,8 @@ _HEADER = (
     + " | ".join(name for _, name in CLASSES)
     + " | known | size |"
 )
-_RULE = "|---" * (6 + len(CLASSES)) + "|"
+# One delimiter cell per header cell, so the two cannot drift apart
+_RULE = "|---" * (_HEADER.count("|") - 1) + "|"
 
 
 def _row(resolver: str, tally: Counts) -> str:

@@ -130,6 +130,13 @@ class TestReport:
         # The self-named table comes after the measured one
         assert text.index("| voe |") > text.index("| vidhide |")
 
+    def test_the_header_the_rule_and_the_rows_have_the_same_cells(self) -> None:
+        lines = _mod.report_lines(_SNAPSHOT, now=1_090.0)
+        table = [line for line in lines if line.startswith("|")]
+
+        assert {line.count("|") for line in table} == {_mod._HEADER.count("|")}
+        assert _mod._RULE in table
+
     def test_nothing_secret_is_printed(self) -> None:
         text = "\n".join(_mod.report_lines(_SNAPSHOT, now=1_090.0))
 
