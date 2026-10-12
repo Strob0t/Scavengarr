@@ -103,6 +103,9 @@ _KEEP_INTERVAL_S = 600.0
 # resolution waits for the read: at most this long, and not at all when
 # its resolve bound has less left (code review 2026-10-12, finding 6)
 _KEEP_BOUND_S = 0.5
+# A frame's read ends sooner, so that a frame that navigates, detaches or
+# dawdles meanwhile (an ad's) costs its own host only (row 97's review)
+_FRAME_READ_S = 0.4
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
 # Dead-file notices of player pages, matched against the visible text only
@@ -386,26 +389,53 @@ async def _start_player(
     return None
 
 
-async def collect_capture_state(page: Page, hosts: Collection[str]) -> dict[str, Any]:
+async def collect_capture_state(
+    page: Page, hosts: Collection[str]
+) -> tuple[dict[str, Any], dict[str, str]]:
     """The state of *hosts* in the form of ``storage_state()``, read from
     *page* itself: its context's cookies, and the localStorage and
     IndexedDB of each origin one of its frames has on one of *hosts*, read
     in that frame (once per origin). Unlike ``storage_state()`` it visits
     no other origin: no hidden page outside the page gate, no race with
     the browser's recycle, no popup lost to it (code review 2026-10-12,
-    finding 6)."""
-    frames: dict[str, Frame] = {}
+    finding 6).
+
+    A frame whose read fails or runs past ``_FRAME_READ_S`` costs its own
+    host only: the second value names each host left out, with its error's
+    type, and the state holds none of their origins (row 97's review)."""
+    frames: dict[str, tuple[str, Frame]] = {}
     for frame in page.frames:
         parts = urlparse(frame.url)
-        if parts.hostname in hosts:
-            frames.setdefault(f"{parts.scheme}://{parts.netloc}", frame)
-    reads = [frame.evaluate(_COLLECT_STATE_JS) for frame in frames.values()]
-    cookies, origins = await asyncio.gather(
-        page.context.cookies(), asyncio.gather(*reads)
+        if (host := parts.hostname) is not None and host in hosts:
+            frames.setdefault(f"{parts.scheme}://{parts.netloc}", (host, frame))
+    deadline = asyncio.get_running_loop().time() + _FRAME_READ_S
+    cookies = await page.context.cookies()
+    reads = await asyncio.gather(
+        *(_origin_state(frame, deadline) for _, frame in frames.values()),
+        return_exceptions=True,
     )
-    # As storage_state(): no origin without storage
-    kept = [o for o in origins if o and (o["localStorage"] or o["indexedDB"])]
-    return {"cookies": cookies, "origins": kept}
+    read_hosts = [host for host, _ in frames.values()]
+    missed: dict[str, str] = {}
+    for host, read in zip(read_hosts, reads, strict=True):
+        if isinstance(read, BaseException):
+            missed.setdefault(host, type(read).__name__)
+    # As storage_state(): no origin without storage. A host whose entry
+    # would lack an origin the read missed is left out whole: the store
+    # replaces a host's entry
+    kept = [
+        read
+        for host, read in zip(read_hosts, reads, strict=True)
+        if host not in missed
+        and isinstance(read, dict)
+        and (read["localStorage"] or read["indexedDB"])
+    ]
+    return {"cookies": cookies, "origins": kept}, missed
+
+
+async def _origin_state(frame: Frame, deadline: float) -> dict[str, Any] | None:
+    """The storage of *frame*'s origin, read in it until *deadline*."""
+    async with asyncio.timeout_at(deadline):
+        return await frame.evaluate(_COLLECT_STATE_JS)
 
 
 async def _created(browser: Browser, state: StorageState) -> BrowserContext | None:
@@ -521,16 +551,17 @@ class StealthPool:
         """A context started from the kept clearance cookies and capture
         states (localStorage and IndexedDB can be set only at creation),
         logged once it exists. A browser that refuses the state gets the
-        cookies alone, and the store drops the kept origins so that later
-        contexts do not fail the same way; one that refuses the cookies too
-        gets none (code review 2026-10-12, finding 8)."""
+        cookies alone, none if there are none, and the store drops the kept
+        origins so that later contexts do not fail the same way; one that
+        refuses the cookies too gets none (code review 2026-10-12, finding
+        8)."""
         store = self._clearance_store
         creation = None if store is None else await store.creation_state()
         if store is None or creation is None:
             return await browser.new_context(service_workers="block")
         state = creation.state
         context = await _created(browser, state)
-        if context is None and state.get("origins") and state.get("cookies"):
+        if context is None and state.get("origins"):
             state = creation.cookies_only()
             context = await _created(browser, state)
             if context is not None:
@@ -538,7 +569,7 @@ class StealthPool:
                 await store.drop_capture_origins()
         if context is None:
             return await browser.new_context(service_workers="block")
-        if creation.hosts:
+        if creation.hosts and (state.get("cookies") or state.get("origins")):
             log.info(
                 "capture_state_restored",
                 hosts=creation.hosts,
@@ -781,7 +812,8 @@ class StealthPool:
         most once per ``_KEEP_INTERVAL_S``: read from the page before it
         closes (``collect_capture_state()``, at most ``_KEEP_BOUND_S``; not
         when the resolve bound has less left, so the read never costs the
-        stream), written by the store in the background."""
+        stream), written by the store in the background. A host whose read
+        failed is tried again at the next stream."""
         if self._clearance_store is None or _time_left() < _KEEP_BOUND_S:
             return
         now = time.monotonic()
@@ -798,7 +830,7 @@ class StealthPool:
         self._kept.update(dict.fromkeys(hosts, now))
         try:
             async with asyncio.timeout(_KEEP_BOUND_S):
-                state = await collect_capture_state(page, hosts)
+                state, missed = await collect_capture_state(page, hosts)
         except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001  (costs a challenge after a restart)
             self._forget(hosts)
             if isinstance(exc, asyncio.CancelledError):
@@ -806,6 +838,12 @@ class StealthPool:
             log.warning(
                 "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
             )
+            return
+        for host, error in sorted(missed.items()):
+            log.warning("capture_state_save_failed", hosts=[host], error=error)
+        self._forget(missed)
+        hosts = [host for host in hosts if host not in missed]
+        if not hosts:
             return
         duration_ms = int((time.monotonic() - now) * 1000)
         task = asyncio.create_task(self._save_state(hosts, state, duration_ms))

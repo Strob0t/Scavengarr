@@ -1586,7 +1586,9 @@ class TestCreationState:
         assert failed["error"] == "Error"
         store.drop_capture_origins.assert_awaited_once_with()
 
-    async def test_without_cookies_the_fallback_is_plain(self) -> None:
+    async def test_without_cookies_the_origins_are_dropped_too(self) -> None:
+        """A kept host may hold origins alone (Filemoon's embed host): kept,
+        they failed every later context the same way (row 97's review)."""
         shared_pool, browser, context = _mock_pool_stack()
         browser.new_context = AsyncMock(
             side_effect=[PlaywrightError("Error setting storage state"), context]
@@ -1599,8 +1601,10 @@ class TestCreationState:
         assert await pool._ensure_context() is context
 
         assert browser.new_context.await_args_list[-1].kwargs == {
-            "service_workers": "block"
+            "service_workers": "block",
+            "storage_state": {"cookies": [], "origins": []},
         }
+        store.drop_capture_origins.assert_awaited_once_with()
 
     async def test_a_failed_fallback_creates_a_plain_context(self) -> None:
         shared_pool, browser, context = _mock_pool_stack()
@@ -1893,6 +1897,102 @@ class TestCaptureKeepsItsState:
         assert failed["error"] == "TimeoutError"
         store.keep_capture_state.assert_not_awaited()
         assert not pool._kept  # the next stream tries again
+
+    async def test_a_frame_that_fails_costs_its_own_host_only(self) -> None:
+        """A frame that navigates or detaches during the read (an ad's)
+        leaves the player's host kept (row 97's review)."""
+
+        def _frames() -> list[MagicMock]:
+            widget = _frame("https://challenges.cloudflare.com/cdn-cgi/x")
+            widget.evaluate = AsyncMock(
+                side_effect=PlaywrightError("Frame was detached")
+            )
+            return [_frame("https://dr0pstream.com/e/abc", _PLAYER), widget]
+
+        pool, _, store, _ = self._setup(frames=_frames)
+
+        with structlog.testing.capture_logs() as logs:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            await self._settle(pool)
+
+        store.keep_capture_state.assert_awaited_once_with(
+            ["dr0pstream.com"],
+            {"cookies": [_KEPT_COOKIE], "origins": [_PLAYER]},
+            duration_ms=ANY,
+        )
+        (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
+        assert failed == {
+            "event": "capture_state_save_failed",
+            "log_level": "warning",
+            "hosts": ["challenges.cloudflare.com"],
+            "error": "Error",
+        }
+        assert set(pool._kept) == {"dr0pstream.com"}  # the next stream tries again
+
+    async def test_a_frame_that_dawdles_costs_its_own_host_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        assert mod._FRAME_READ_S < mod._KEEP_BOUND_S
+        monkeypatch.setattr(mod, "_FRAME_READ_S", 0.01)
+
+        async def _never(*_: object) -> None:
+            await asyncio.Event().wait()
+
+        def _frames() -> list[MagicMock]:
+            ad = _frame("https://ads.example/slot")
+            ad.evaluate = AsyncMock(side_effect=_never)
+            return [_frame("https://dr0pstream.com/e/abc", _PLAYER), ad]
+
+        pool, _, store, _ = self._setup(frames=_frames)
+
+        with structlog.testing.capture_logs() as logs:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            await self._settle(pool)
+
+        assert store.keep_capture_state.await_args.args[0] == ["dr0pstream.com"]
+        (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
+        assert (failed["hosts"], failed["error"]) == (["ads.example"], "TimeoutError")
+
+    async def test_a_host_with_a_missed_origin_is_left_out_whole(self) -> None:
+        """The store replaces a host's entry whole, so a partial one would
+        lose the origin the read missed."""
+
+        def _frames() -> list[MagicMock]:
+            other = _frame("https://dr0pstream.com:8443/x")
+            other.evaluate = AsyncMock(
+                side_effect=PlaywrightError("Frame was detached")
+            )
+            return [
+                _frame("https://dr0pstream.com/e/abc", _PLAYER),
+                other,
+                _frame("https://challenges.cloudflare.com/cdn-cgi/x", _WIDGET),
+            ]
+
+        pool, _, store, _ = self._setup(frames=_frames)
+
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+
+        store.keep_capture_state.assert_awaited_once_with(
+            ["challenges.cloudflare.com"],
+            {"cookies": [_KEPT_COOKIE], "origins": [_WIDGET]},
+            duration_ms=ANY,
+        )
+
+    async def test_a_failed_cookie_read_keeps_nothing(self) -> None:
+        pool, context, store, _ = self._setup()
+        context.cookies = AsyncMock(side_effect=PlaywrightError("Target closed"))
+
+        with structlog.testing.capture_logs() as logs:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            await self._settle(pool)
+
+        (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
+        assert failed["hosts"] == ["challenges.cloudflare.com", "dr0pstream.com"]
+        store.keep_capture_state.assert_not_awaited()
+        assert not pool._kept
 
     async def test_nothing_is_read_when_the_bound_ends_sooner(self) -> None:
         """A stream found within ``_KEEP_BOUND_S`` of the resolve bound goes

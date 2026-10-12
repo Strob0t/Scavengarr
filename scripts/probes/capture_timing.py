@@ -579,12 +579,14 @@ def note_keeps(pool: TimedStealthPool) -> None:
     module)."""
     collect = stealth.collect_capture_state
 
-    async def noted(page: Any, hosts: Collection[str]) -> dict[str, Any]:
+    async def noted(
+        page: Any, hosts: Collection[str]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         started = time.monotonic()
-        state = await collect(page, hosts)
+        read = await collect(page, hosts)
         if pool.run is not None:
             pool.run.keep = (len(hosts), time.monotonic() - started)
-        return state
+        return read
 
     stealth.collect_capture_state = noted
 

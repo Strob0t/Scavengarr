@@ -248,6 +248,15 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       - **Kept:** a database with only plain records (4 stores, 8 records, a compound key path and a unique index) was kept whole. A database with one plain record beside five others (dates, NaN, a typed array, a date key) was left out, and so was one with a File value and a unique index over invalid dates.
       - **Restore:** a new context created from the read state read every kept record back. The context from `storage_state()`'s state failed: `Error setting storage state` (finding 8, reproduced).
     - **The restore's log lines (row 97):** `capture_state_restored` now follows the creation and names how many origins the context took, so after the next restart it means that the context took the state (the restart of 15:11:28 above could not tell). A refused state falls back to the cookies and drops the kept origins (`capture_state_origins_dropped`).
+    - **A frame's failed read (row 97, Mr. Fable's review; dev container, 17:46 to 17:47 UTC):** a synthetic page in real Chromium (the top page and two frames on three hosts, routed, no network), the read as the capture runs it, against c16c84c's one-gather read:
+
+      | Ad frame | c16c84c | Now |
+      |---|---|---|
+      | answers | 3 hosts kept, 4 ms | 3 hosts kept, 5 to 6 ms |
+      | detaches during the read | whole read failed (`Error`), 2 ms | 2 hosts kept, the ad's missed, 4 ms |
+      | its main thread blocked for 5 s | whole read failed (`TimeoutError`), 503 ms | nothing kept, every host missed (`TimeoutError`), 403 to 404 ms |
+
+      The blocked frame shares its renderer with the top page here (`--renderer-process-limit=2` in the app), so the top page's read waited too. Limits: one run per case, a synthetic page.
     - **The recycle's relaunch (row 97, V15; dev container, 17:23 to 17:24 UTC):** the shared browser's restart after 200 pages now launches the new browser, bounded to 30 s, and an operation waits for it with its resolve bound stopped. Before, the next operation launched it inside its own bound: 6 to 11 s on the Pi at the app's starts, against the 10 s bound. Real Chromium under Xvfb, the restart after 1 page, 5 rounds per row, the next operation under a 10 s work clock:
 
       | Pool | Next operation | To its page (median) | Bound spent (median) |

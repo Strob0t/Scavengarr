@@ -36,6 +36,11 @@ The stealth pool SHALL read the state it keeps from the capture's own page befor
 - **WHEN** a frame's IndexedDB database holds a record with a date, a file or a typed array
 - **THEN** that database is not kept, and the rest of the state is
 
+#### Scenario: A frame that fails its read
+- **WHEN** a frame navigates, detaches or does not answer within 0.4 seconds while its origin is read
+- **THEN** its host is not kept, its kept entry stays as it was, and it is read again at its next stream
+- **AND** the other hosts are kept
+
 ### Requirement: Every New Context Starts With The Kept State
 The stealth pool SHALL create each new browser context (at the start, after a recycle, after a relaunch) with the unexpired clearance cookies and every kept host's unexpired cookies, localStorage and IndexedDB, the newest winning per cookie, whether the clearance cookies or a kept state hold it, and per origin. A kept state older than 24 hours SHALL NOT be restored. The restore SHALL be logged once the context exists.
 
@@ -57,7 +62,7 @@ The stealth pool SHALL create each new browser context (at the start, after a re
 - **THEN** the next context is created without it
 
 ### Requirement: A Refused State Keeps The Cookies
-When the browser refuses a context with the kept state, the stealth pool SHALL create it with the cookies alone and the store SHALL drop the kept origins, so that later contexts do not fail the same way. When the browser refuses the cookies too, the context SHALL be created without the state. Each refusal SHALL be logged and SHALL NOT fail a capture.
+When the browser refuses a context with the kept state, the stealth pool SHALL create it with the cookies alone, an empty state when there are none, and the store SHALL drop the kept origins, so that later contexts do not fail the same way. When the browser refuses the cookies too, the context SHALL be created without the state. Each refusal SHALL be logged and SHALL NOT fail a capture.
 
 #### Scenario: A failed restore
 - **WHEN** the creation of a context with the kept state fails (an IndexedDB record the browser cannot restore)

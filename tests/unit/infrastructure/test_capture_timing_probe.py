@@ -759,8 +759,10 @@ class TestState:
     async def test_the_capture_reads_its_state_timed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def collect(_page: object, hosts: object) -> dict[str, Any]:
-            return {"cookies": [], "origins": []}
+        async def collect(
+            _page: object, hosts: object
+        ) -> tuple[dict[str, Any], dict[str, str]]:
+            return {"cookies": [], "origins": []}, {}
 
         # restores the module's own function after the test
         monkeypatch.setattr(stealth, "collect_capture_state", collect)
@@ -768,11 +770,11 @@ class TestState:
         pool.run = _mod.Run(time.monotonic())
         _mod.note_keeps(pool)
 
-        state = await stealth.collect_capture_state(
+        read = await stealth.collect_capture_state(
             MagicMock(), ["a.example", "b.example"]
         )
 
-        assert state == {"cookies": [], "origins": []}
+        assert read == ({"cookies": [], "origins": []}, {})
         assert pool.run.keep is not None
         assert pool.run.keep[0] == 2
 
