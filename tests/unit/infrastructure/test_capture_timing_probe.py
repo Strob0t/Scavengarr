@@ -177,10 +177,11 @@ class TestReport:
 
     def test_a_relaunched_run_names_its_challenges(self) -> None:
         run = _mod.Run(0.0, took=20.8)
-        run.challenges.extend(["captcha", "captcha/verify"])
+        run.challenges.extend([("captcha", 9.04), ("captcha/verify", 12.34)])
 
         assert _mod.report_row("control", run) == (
-            "| control | none | – | none | captcha, captcha/verify | 20.8 s (nothing) |"
+            "| control | none | – | none | captcha 9.0 s, captcha/verify 12.3 s"
+            " | 20.8 s (nothing) |"
         )
 
 
@@ -641,19 +642,24 @@ class TestChallenges:
         assert _mod.challenge_mark(frame, None, passive_widget=True) is None
         assert _mod.challenge_mark(frame, None) == "turnstile"
 
-    def test_a_run_notes_each_challenge_once_in_order(self) -> None:
-        page, run = _Page(), _mod.Run(0.0)
+    def test_a_run_notes_each_challenge_once_in_order_with_its_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [0.0]
+        monkeypatch.setattr(_mod.time, "monotonic", lambda: now[0])
+        page, run = _Page(), _mod.Run(100.0)
         _mod.watch_challenges(page, run, lambda: _CAPTCHA_REQUESTS)
 
-        for url in (
-            "https://byse.example/e/abc",
-            "https://byse.example/api/videos/x1y2/captcha",
-            "https://byse.example/api/videos/x1y2/captcha/verify",
-            "https://byse.example/api/videos/x1y2/captcha",
+        for at, url in (
+            (101.0, "https://byse.example/e/abc"),
+            (109.0, "https://byse.example/api/videos/x1y2/captcha"),
+            (112.5, "https://byse.example/api/videos/x1y2/captcha/verify"),
+            (113.0, "https://byse.example/api/videos/x1y2/captcha"),
         ):
+            now[0] = at
             page.emit("request", _Request(url))
 
-        assert run.challenges == ["captcha", "captcha/verify"]
+        assert run.challenges == [("captcha", 9.0), ("captcha/verify", 12.5)]
 
     async def test_a_page_is_watched_for_challenges_without_the_diagnosis(
         self, monkeypatch: pytest.MonkeyPatch
@@ -674,7 +680,7 @@ class TestChallenges:
             _Request("https://challenges.cloudflare.com/turnstile", "document"),
         )
 
-        assert pool.run.challenges == ["turnstile"]
+        assert [kind for kind, _ in pool.run.challenges] == ["turnstile"]
         assert "popup" not in page.handlers
 
     async def test_the_pool_takes_the_resolvers_captcha_pattern(

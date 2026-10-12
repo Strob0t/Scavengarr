@@ -25,7 +25,8 @@ long it took), the clicks on the player, when the stream was captured (its
 CDN's domain), the challenges the run met by the app's rule (a captcha
 provider's challenge frame such as ``turnstile``, or a request the resolver
 names as its hoster's captcha, split into ``captcha`` and
-``captcha/verify``) and the resolver's whole time, then production's two
+``captcha/verify``, each with when it was first met) and the resolver's
+whole time, then production's two
 bounds. ``--restore`` adds two runs after the others: it takes their
 context's state (cookies, local storage and IndexedDB) and prints its
 make-up (the cookies' names per domain, ids masked, and the keys and
@@ -358,7 +359,8 @@ class Run:
     requests: list[RequestNote] = field(default_factory=list)
     frames: list[FrameNote] = field(default_factory=list)
     popups: int = 0
-    challenges: list[str] = field(default_factory=list)  # challenge_mark()s
+    # challenge_mark()s, each with when it was first met
+    challenges: list[tuple[str, float]] = field(default_factory=list)
 
 
 def challenge_mark(
@@ -382,14 +384,15 @@ def watch_challenges(
     named: Callable[[], re.Pattern[str] | None],
     passive: Callable[[], bool] = lambda: False,
 ) -> None:
-    """Note in *run* each challenge *page* meets, once, in order; *named*
-    gives the running resolver's captcha pattern, *passive* whether its
-    widget is passive (``passive_widget``)."""
+    """Note in *run* each challenge *page* meets, once, in order, with the
+    seconds into the run of its first request; *named* gives the running
+    resolver's captcha pattern, *passive* whether its widget is passive
+    (``passive_widget``)."""
 
     def requested(request: Any) -> None:
         mark = challenge_mark(request, named(), passive_widget=passive())
-        if mark is not None and mark not in run.challenges:
-            run.challenges.append(mark)
+        if mark is not None and all(mark != kind for kind, _ in run.challenges):
+            run.challenges.append((mark, time.monotonic() - run.started))
 
     page.on("request", requested)
 
@@ -617,7 +620,9 @@ def report_row(label: int | str, run: Run) -> str:
     took = f"cut at {run.took:.0f} s" if run.cut else f"{run.took:.1f} s"
     if not run.cut and not run.resolved:
         took += " (nothing)"
-    challenges = ", ".join(run.challenges) or "none"
+    challenges = (
+        ", ".join(f"{kind} {at:.1f} s" for kind, at in run.challenges) or "none"
+    )
     return (
         f"| {label} | {pages or 'none'} | {clicks + ' s' if clicks else '–'}"
         f" | {stream} | {challenges} | {took} |"
@@ -727,7 +732,8 @@ async def _close(label: str, closing: Any) -> None:
 
 
 _TABLE = (
-    "| run | pages (path: start, load) | clicks at | stream at | challenge | resolve |",
+    "| run | pages (path: start, load) | clicks at | stream at | challenge at"
+    " | resolve |",
     "|---|---|---|---|---|---|",
 )
 

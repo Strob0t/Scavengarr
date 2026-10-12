@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Capture Probe Times Each Challenge
+- `scripts/probes/capture_timing.py` prints when each challenge was first met, in seconds into the run, beside the page loads and clicks (`captcha 4.1 s, captcha/verify 4.8 s`; the column is `challenge at`). Six cold Filemoon runs in the dev container met the captcha 3.8 to 4.2 s in, 0.1 to 0.5 s after the first click, and found the stream by 7.2 s (`docs/plans/challenge-reactions.md` → R4, the restart of 15:11:28).
+
 ### Fixed: A Dead Link-Out Behind a Passed Challenge Is No Unsolved Challenge
 - `BrowserFetcherPort.resolve_redirect()` answers a `Redirect` (`domain/ports/browser_fetcher.py`): the `target` and whether the browser got past the site's challenge (`passed`). The stealth pool passes on a target, a page without a challenge (an error page too) and a cleared challenge, not on a broken navigation, no page in time or a challenge that stayed; the solver on any solution; the chain when any fetcher did, the first target winning. The httpx base settles a link-out's challenge by `passed` (`settle_challenge()`), so a dead link-out behind a passed challenge counts as solved; a link-out served from the challenge memo counts nothing, as before.
 - Why: code review 2026-10-12, finding 14. A link-out behind a challenge that the browser passed and that answered a same-host 404 (an expired hash) or, for sto, no redirect without its Referer, flagged the whole search as unsolved: one dead link-out inflated the plugin record's `challenges_unsolved`, which N20's 5 % rule for a solver trial reads (sto, byte and kinox; filmfans and serienfans through `_resolve_result_links`).
