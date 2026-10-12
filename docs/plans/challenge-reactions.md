@@ -151,6 +151,17 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
   - 08:55:37: `hoster_resolve_timeout` at the 10 s bound, and the breaker reopens for 3600 s. Dropload's trial (08:55:39 to 08:55:52, the browser already up) and SuperVideo's failed too, both reopened for 3600 s.
   - Until about 09:55 every Filemoon and Dropload link is refused (circuit open), so no capture can keep a state in this container before then (Mr. Normal's check, 09:04).
   - So a kept state cannot make the first capture after a restart warm while that capture waits for the launch. The fix is backlog row 93 (`keep-capture-state` → "The Browser Starts With The App"): the browser and the stealth pool's context start once the app is ready. Task 3.2 follows it.
+- **Row 93 built (2026-10-12): the browser starts with the app.** Once the app reports ready, its lifespan runs `StealthPool.warmup()` in the background: the shared browser's launch, then the stealth context with the kept state. Dev server (`PYTHONPATH=src`, port 7981, its cache a copy of the Filemoon proof's above, `SCAVENGARR_ENVIRONMENT=prod` so that the start does not clear it), no request made:
+
+  | Time (UTC) | Line |
+  |---|---|
+  | 09:20:47.557 | `app_startup_complete` |
+  | 09:20:47.840 | `shared_browser_launched` |
+  | 09:20:47.841 | `capture_state_restored` moflix-stream.link, n1mwq.org |
+  | 09:20:47.918 | `stealth_pool_started` |
+
+  - The launch took 0.3 s in the dev container (about 9 s on the Pi). A run with an empty cache logged the launch and `stealth_pool_started` 0.7 s after `app_startup_complete` and no restore line; a run whose port was taken shut down during the warm-up without an error.
+  - Production: the first capture after the next restart, with these lines before it.
 
 ### R5: warm-up after a start (gap 5)
 

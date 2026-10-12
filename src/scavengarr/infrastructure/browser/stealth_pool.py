@@ -329,6 +329,17 @@ class StealthPool:
             log.info("stealth_pool_started")
             return self._context
 
+    async def warmup(self) -> None:
+        """Launch the browser and create the context, with the kept state, at
+        the app's start, so the first capture does not wait for the launch.
+
+        A failure is logged and leaves the launch to the first capture.
+        """
+        try:
+            await self._ensure_context()
+        except Exception as exc:  # noqa: BLE001  (the first capture launches it)
+            log.warning("browser_warmup_failed", error=type(exc).__name__)
+
     async def _new_context(self, browser: Browser) -> BrowserContext:
         """A context started from the kept clearance cookies and capture
         states (localStorage and IndexedDB can be set only at creation)."""

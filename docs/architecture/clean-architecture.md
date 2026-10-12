@@ -357,6 +357,7 @@ The composition root is where concrete implementations are wired together. It ru
 15. KitsuAnimeIdResolver (the anime catalogs' ids)
 16. StremioStreamUseCase + StremioCatalogUseCase
     → GracefulShutdown.mark_ready()
+17. StealthPool.warmup() task (the shared browser and the stealth context with the kept state, in the background; readiness does not wait for it)
 ```
 
 ### Cleanup Order
@@ -366,7 +367,7 @@ The composition root is where concrete implementations are wired together. It ru
 2. StremioStreamUseCase.aclose(), StremioLinks.aclose(), HosterResolverRegistry.aclose()
    (background searches and resolutions, half-open hoster probes)
    then HosterStateStore.aclose() and PluginHistory.aclose() (the last snapshot and counts, before the cache closes)
-3. Cancel the scoring, plugin-health and loop-lag tasks
+3. Cancel the scoring, plugin-health, loop-lag, page-budget and browser warm-up tasks
 4. StealthPool.cleanup() (its context lives on the shared browser)
 5. SharedBrowserPool.cleanup()
 6. HosterResolverRegistry.cleanup()

@@ -757,6 +757,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Mark the application as ready for traffic
     state.graceful_shutdown.mark_ready()
     log.info("app_startup_complete", **build_identity())
+    # The browser and the stealth context with the kept state, so the first
+    # capture (a breaker trial after a restart) does not pay for the launch
+    state._browser_warmup_task = asyncio.create_task(state.stealth_pool.warmup())
 
     try:
         yield
@@ -797,6 +800,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state._page_budget_task.cancel()
         with suppress(asyncio.CancelledError):
             await state._page_budget_task
+
+        state._browser_warmup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._browser_warmup_task
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:

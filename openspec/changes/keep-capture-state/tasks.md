@@ -37,11 +37,11 @@
 
 ## 5. The browser starts with the app (backlog row 93)
 
-- [ ] 5.1 Tests:
+- [x] 5.1 Tests:
   - the lifespan starts `StealthPool.warmup()` after `app_startup_complete`, and readiness does not wait for it;
   - the warm-up creates the context once: a capture after it reuses the context, and one during it waits on the pool's lock;
   - a failed warm-up logs `browser_warmup_failed` with the error type, and the next capture launches the browser;
   - shutdown cancels a running warm-up before the pools close.
-- [ ] 5.2 Implementation: `StealthPool.warmup()`, and the task in `composition.py`'s lifespan.
-- [ ] 5.3 Live, dev server (`PYTHONPATH=src`): `shared_browser_launched` and `stealth_pool_started` come before the first request, and so does `capture_state_restored` with a kept state. Then the startup's lines go into `docs/plans/challenge-reactions.md` → R4 built.
-- [ ] 5.4 Docs: the shared browser's lifecycle in `docs/features/` (where the warm-up is described), `CHANGELOG.md`.
+- [x] 5.2 Implementation: `StealthPool.warmup()`, and the task in `composition.py`'s lifespan.
+- [x] 5.3 Live, dev server (`PYTHONPATH=src`): `shared_browser_launched` and `stealth_pool_started` come before the first request, and so does `capture_state_restored` with a kept state. Then the startup's lines go into `docs/plans/challenge-reactions.md` → R4 built.
+- [x] 5.4 Docs: the shared browser's lifecycle in `docs/features/` (where the warm-up is described), `CHANGELOG.md`.

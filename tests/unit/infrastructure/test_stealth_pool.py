@@ -1499,3 +1499,84 @@ class TestCaptureKeepsItsState:
         assert task.cancelled()
         assert not pool._keep_tasks
         store.keep_capture_state.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# The warm-up at the app's start (keep-capture-state, row 93)
+# ------------------------------------------------------------------
+
+
+class TestWarmup:
+    async def test_the_warmup_creates_the_context_a_capture_reuses(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+        pool = StealthPool(browser_pool=shared_pool)
+
+        await pool.warmup()
+
+        assert await pool._ensure_context() is context
+        shared_pool.warmup.assert_awaited_once()
+        browser.new_context.assert_awaited_once()
+
+    async def test_a_capture_during_the_warmup_waits_for_its_context(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+        launched = asyncio.Event()
+
+        async def _slow_launch() -> tuple[AsyncMock, MagicMock]:
+            await launched.wait()
+            return browser, MagicMock()
+
+        shared_pool.warmup = AsyncMock(side_effect=_slow_launch)
+        pool = StealthPool(browser_pool=shared_pool)
+
+        warming = asyncio.create_task(pool.warmup())
+        await asyncio.sleep(0)
+        capture = asyncio.create_task(pool._ensure_context())
+        await asyncio.sleep(0)
+        assert not capture.done()  # held by the pool's lock
+        launched.set()
+        await warming
+
+        assert await capture is context
+        shared_pool.warmup.assert_awaited_once()
+        browser.new_context.assert_awaited_once()
+
+    async def test_a_failed_warmup_is_logged_and_the_capture_launches(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        working = shared_pool.warmup
+        shared_pool.warmup = AsyncMock(side_effect=PlaywrightError("launch failed"))
+        pool = StealthPool(browser_pool=shared_pool)
+
+        with structlog.testing.capture_logs() as logs:
+            await pool.warmup()  # does not raise
+
+        (failed,) = [e for e in logs if e["event"] == "browser_warmup_failed"]
+        assert failed["error"] == "Error"
+        shared_pool.warmup = working
+        assert await pool._ensure_context() is context
+        working.assert_awaited_once()
+
+    async def test_the_warmup_starts_from_the_kept_state(self) -> None:
+        shared_pool, browser, _ = _mock_pool_stack()
+        store = AsyncMock()
+        state = {"cookies": [], "origins": []}
+        store.creation_state = AsyncMock(return_value=state)
+
+        await StealthPool(browser_pool=shared_pool, clearance_store=store).warmup()
+
+        browser.new_context.assert_awaited_once_with(
+            service_workers="block", storage_state=state
+        )
+
+    async def test_a_cancelled_warmup_ends(self) -> None:
+        shared_pool, _, _ = _mock_pool_stack()
+
+        async def _never() -> None:
+            await asyncio.Event().wait()
+
+        shared_pool.warmup = AsyncMock(side_effect=_never)
+        warming = asyncio.create_task(StealthPool(browser_pool=shared_pool).warmup())
+        await asyncio.sleep(0)
+
+        warming.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await warming

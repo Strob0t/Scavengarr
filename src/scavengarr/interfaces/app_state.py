@@ -119,3 +119,6 @@ class AppState(State):
 
     # Adapts the stealth browser's page limit (PageBudget)
     _page_budget_task: asyncio.Task[None]
+
+    # Launches the stealth browser after the app reported ready
+    _browser_warmup_task: asyncio.Task[None]
