@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Challenge Completions Leave a Browser Page Free
+- The background completions of challenged captures hold at most the stealth browser's page limit − 1 pages together (the composition hands the registry the page gate, `pages`). A capture cut after its challenge while they hold the rest is cancelled at the cut and ends as `challenge` with its cooldown; on a single page none runs on.
+- Why: code review 2026-10-12, finding 12. Completions were capped at one per hoster only: a Filemoon and a Dropload completion held both of the 2 pages for up to 20 s, and a /play resolution waited for a page until it ended `PageBusy` and fell back to the stale link.
+
 ### Fixed: A Request Joins Its Link's Running Completion
 - A request for a link whose challenged capture runs on in the background no longer starts a second capture: it waits for the completion, at most the resolve bound, and answers the stream the completion cached (`hoster_resolve_joined`, the `hoster_resolve` outcome `joined`), `None` without one in time. The completions are kept by their link too (`_completing`), and `_complete()` returns the stream it cached.
 - Why: code review 2026-10-12, finding 9. With the cooldown over (or ended by another link's stream), a second capture of a link whose completion still ran ended without the first's challenge and cached the link as dead over the completion's stream for 15 minutes.

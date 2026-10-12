@@ -628,6 +628,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         verify_playback=config.stremio.verify_streams,
         circuit_breaker=hoster_breaker,
         telemetry=state.telemetry,
+        pages=pages,
     )
     log.info(
         "hoster_resolver_registry_initialized",

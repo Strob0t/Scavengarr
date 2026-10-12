@@ -35,3 +35,4 @@
 - [x] 3.4 Docs: `docs/features/hoster-resolvers.md`, `docs/features/observability.md`, `CHANGELOG.md`.
 - [x] 3.5 Tests and implementation: a play-time refresh passes the challenge cooldown, an open breaker still refuses it (finding 5); docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.
 - [x] 3.6 Tests and implementation: a request for a link whose completion runs joins it and answers its stream, no second capture; the join waits at most the resolve bound; a joined refresh never answers the refused stream; the outcome `joined` (finding 9). Docs in `docs/features/hoster-resolvers.md`, `docs/features/observability.md` and `CHANGELOG.md`.
+- [x] 3.7 Tests and implementation: the completions leave one of the page gate's pages free, and a single page hands nothing over; the composition hands the registry the gate (finding 12). Docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.

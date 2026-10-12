@@ -27,6 +27,7 @@ from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.browser.page_gate import (
     ChallengeMark,
     PageBusy,
+    PageGate,
     ResolutionChallenge,
     challenge_mark,
     work_clock,
@@ -163,8 +164,9 @@ class HosterResolverRegistry:
     resolver's links wait out a challenge cooldown (``ChallengeCooldown``),
     and the breaker does not count it. A capture the bound cut after its
     challenge runs on in the background and leaves its stream in the cache
-    (``_complete``). Every resolution is recorded in *telemetry* by resolver
-    name (``direct`` for a probe).
+    (``_complete``), on a page of the stealth browser's *pages* (a page
+    stays free for the others). Every resolution is recorded in *telemetry*
+    by resolver name (``direct`` for a probe).
     """
 
     def __init__(
@@ -175,6 +177,7 @@ class HosterResolverRegistry:
         verify_playback: bool = False,
         circuit_breaker: PluginCircuitBreaker | None = None,
         telemetry: TelemetryPort = NO_TELEMETRY,
+        pages: PageGate | None = None,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
@@ -183,6 +186,7 @@ class HosterResolverRegistry:
         self._resolve_timeout = resolve_timeout
         self._circuit_breaker = circuit_breaker
         self._telemetry = telemetry
+        self._pages = pages
         # Resolver results must also pass check_playable (needs http_client)
         self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
@@ -872,10 +876,15 @@ class HosterResolverRegistry:
         """Let *work*, a capture the bound cut, run on in the background
         (``_complete``) when it met a challenge: only a resolution whose
         outcome is cached (*cache_key*; a player's own is not), one per
-        resolver at a time (each holds a browser page); requests for the
-        link join it (``_joined``). Whether it runs on."""
+        resolver at a time; requests for the link join it (``_joined``).
+        Each holds a browser page, so they leave one of the gate's pages
+        free: a /play resolution waited for one until it gave up (code
+        review 2026-10-12, finding 12), and on a single page nothing runs
+        on. Whether it runs on."""
         name = resolver.name
         if mark.kind is None or cache_key is None or name in self._completions:
+            return False
+        if self._pages is not None and len(self._completions) >= self._pages.limit - 1:
             return False
         completion = asyncio.ensure_future(
             self._complete(work, resolver, hoster_name, url, cache_key, mark, started)

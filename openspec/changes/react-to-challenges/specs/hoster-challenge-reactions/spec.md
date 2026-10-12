@@ -92,6 +92,18 @@ When the resolve bound cuts a capture that showed a challenge, the registry SHAL
 - **WHEN** the app shuts down while a completion runs
 - **THEN** the registry's `aclose()` cancels it and its page closes
 
+### Requirement: Completions Leave A Page Free
+The background completions SHALL together hold at most one page fewer than the stealth browser's page limit. A capture cut after a challenge while they hold the rest SHALL be cancelled at the cut and end as `challenge` with its cooldown.
+
+#### Scenario: Two challenged hosters on two pages
+- **WHEN** a Filemoon and a Dropload capture are cut after their challenges and the browser has 2 pages
+- **THEN** Filemoon's capture runs on, Dropload's is cancelled at the cut
+- **AND** a /play resolution finds a free page
+
+#### Scenario: A single page
+- **WHEN** the browser has 1 page and a capture is cut after its challenge
+- **THEN** it is cancelled at the cut and ends as `challenge` with its cooldown
+
 ### Requirement: A Request Joins Its Link's Completion
 A request for a link whose challenged capture runs on in the background SHALL NOT start a second capture of it. It SHALL wait for the completion, at most the resolve bound, and SHALL answer the stream the completion cached, or nothing when none came in time; the wait SHALL leave the completion running.
 

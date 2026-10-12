@@ -2127,6 +2127,67 @@ class TestChallenge:
         assert self._completion(telemetry, "stream") == 1
         assert sum(registry.cached(self._url(link))[0] for link in "ab") == 1
 
+    @staticmethod
+    def _gated(
+        gate: PageGate, **resolve: Callable[[str], Awaitable[ResolvedStream | None]]
+    ) -> tuple[HosterResolverRegistry, Telemetry]:
+        """A registry of the resolvers named in *resolve* on the pages of
+        *gate*."""
+        resolvers = []
+        for name, answer in resolve.items():
+            resolver = MagicMock()
+            resolver.name = name
+            resolver.resolve = AsyncMock(side_effect=answer)
+            resolvers.append(resolver)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(
+            resolvers=resolvers, resolve_timeout=0.05, telemetry=telemetry, pages=gate
+        )
+        return registry, telemetry
+
+    @pytest.mark.usefixtures("clock")
+    async def test_completions_leave_a_page_free(self) -> None:
+        """The review's case (code review 2026-10-12, finding 12): a Filemoon
+        and a Dropload capture are cut after their challenges on the 2 pages
+        of the gate. Their completions held both, and a /play resolution
+        waited for a page until it gave up. Completions leave one page free:
+        the second capture is cancelled at the cut."""
+        gate = PageGate(limit=2)
+        registry, telemetry = self._gated(
+            gate,
+            filemoon=self._capture(gate, after=0.2),
+            dropload=self._capture(gate, after=0.2),
+        )
+
+        await registry.resolve("https://filemoon.sx/e/a")
+        await registry.resolve("https://dropload.io/e/b")
+
+        assert list(registry._completions) == ["filemoon"]
+        assert gate.in_use == 1
+        assert telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "dropload", "outcome": "challenge"},
+        )
+        await self._completed(registry)
+        assert gate.in_use == 0
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_single_page_hands_nothing_over(self) -> None:
+        """On a gate of 1 page a completion would hold the only one: the cut
+        ends as ``challenge`` with its cooldown, and the capture ends."""
+        gate = PageGate(limit=1)
+        registry, telemetry = self._gated(gate, filemoon=self._capture(gate, after=0.2))
+
+        assert await registry.resolve("https://filemoon.sx/e/a") is None
+
+        assert registry._completions == {}
+        assert gate.in_use == 0
+        assert registry._challenges.left("filemoon") == 60
+        assert telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "filemoon", "outcome": "challenge"},
+        )
+
     @pytest.mark.usefixtures("clock")
     async def test_the_deadline_cancels_a_completion(
         self, monkeypatch: pytest.MonkeyPatch
