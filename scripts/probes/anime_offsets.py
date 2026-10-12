@@ -1,8 +1,8 @@
 """How many episodes of long-running anime an IMDb request numbers wrong.
 
-    PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py
+    PYTHONPATH=src poetry run python scripts/probes/anime_offsets.py
         [--kitsu 12,210,...] [--position]
-    PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py
+    PYTHONPATH=src poetry run python scripts/probes/anime_offsets.py
         --aniworld [--imdb tt0249327,...] [--slug IMDB=SLUG ...] [--cases 5]
 
 Runs in the dev container: it reads two public catalogs, Cinemeta and the

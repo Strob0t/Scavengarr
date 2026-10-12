@@ -1,8 +1,8 @@
 """Read-only look into the app's Redis cache.
 
-    probe redis keys PATTERN [LIMIT]   matching keys with type and TTL (SCAN)
-    probe redis ttl KEY                seconds left (-1: none, -2: missing)
-    probe redis get KEY                the value's type, size and first 2000 bytes
+    probe redis_cache keys PATTERN [LIMIT]  matching keys with type and TTL (SCAN)
+    probe redis_cache ttl KEY               seconds left (-1: none, -2: missing)
+    probe redis_cache get KEY               the value's type, size, first 2000 bytes
 
 Only SCAN, TYPE, TTL, STRLEN and GET: nothing is written. prodctl masks the
 output (values hold video URLs and the client's address).

@@ -24,7 +24,7 @@ _PROBES = Path(__file__).resolve().parents[3] / "scripts" / "probes"
 
 
 def _load() -> ModuleType:
-    # By path: on sys.path the probes' redis.py would shadow the redis package
+    # By path: scripts/probes/ is no package
     spec = importlib.util.spec_from_file_location(
         "capture_timing_probe", _PROBES / "capture_timing.py"
     )

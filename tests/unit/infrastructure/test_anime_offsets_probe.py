@@ -40,7 +40,7 @@ _FIXTURES = Path(__file__).parents[2] / "fixtures" / "json"
 
 
 def _load() -> ModuleType:
-    # By path: on sys.path the probes' redis.py would shadow the redis package
+    # By path: scripts/probes/ is no package
     spec = importlib.util.spec_from_file_location(
         "anime_offsets_probe", _PROBES / "anime_offsets.py"
     )

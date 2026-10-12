@@ -1,7 +1,7 @@
 """Stored resolutions from the player's side: which CDNs need the playback headers.
 
-Usage (dev container; ``-P`` because this directory shadows the redis package):
-    PYTHONPATH=src xvfb-run -a poetry run python -P scripts/probes/header_binding.py
+Usage (dev container):
+    PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/header_binding.py
     ... --source dev|production|both --hosters voe,vidoza --since 3600
     ... --ids ID ... --urls .cache/live/resolver-urls.json --out FILE
 

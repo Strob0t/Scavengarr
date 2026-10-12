@@ -1,9 +1,8 @@
 """Title matching per plugin: the queries sent, the raw titles, the verdicts.
 
-``poetry run python -P scripts/probes/title_match.py [--json FILE]
+``poetry run python scripts/probes/title_match.py [--json FILE]
 [--plugins a,b] ID [ID ...]`` (ids as Stremio paths: ``movie/tt0133093``,
-``series/tt5753856:1:1``; ``-P``: the sibling probe ``redis.py`` would shadow
-the package; ``xvfb-run -a`` without a display: the browser fallback runs
+``series/tt5753856:1:1``; ``xvfb-run -a`` without a display: the browser fallback runs
 headful) starts the app's composition (plugins, browser fallback, title
 lookup) and runs every stream plugin's search directly, once per query its
 language group gets (``application/stremio/queries.py``), with the request's

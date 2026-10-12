@@ -6,10 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Redis Probe Is redis_cache
+- `scripts/probes/redis.py` is now `scripts/probes/redis_cache.py` (`prodctl.py probe redis_cache keys|ttl|get`): its old name shadowed the redis package for every script started from that directory, so the dev-container probes no longer need `python -P`. Their usage lines and AGENTS.md drop the flag.
+
 ### Fixed: A Link-Out the Browser Resolves No Longer Counts as an Unsolved Challenge
 - `HttpxPluginBase._resolve_redirect()` hands a link-out that meets a Cloudflare challenge to the browser fetcher; it marked the challenge but never settled it, so every such search counted in `challenges_unsolved`, whatever the browser did. It now settles with the browser's outcome: solved when the browser returned the target, unsolved without one (as `_fetch_via_browser()` does for pages). Affects sto (its own link-outs) and byte and kinox (through `_resolve_own_links()`); their `challenges_unsolved` counts from before this fix overstate the misses.
-
----
 
 ## v0.4.0 - 2026-10-12
 

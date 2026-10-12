@@ -10,8 +10,8 @@ the first link per resolver. Writes ``.cache/live/resolver-urls.json``
 names and counts only: a hoster page URL is a link to a third-party page and
 stays out of the output.
 
-Usage (dev container; ``-P`` because this directory shadows the redis package):
-    PYTHONPATH=src xvfb-run -a poetry run python -P scripts/probes/resolver_urls.py
+Usage (dev container):
+    PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/resolver_urls.py
     ... --plugins kinoger,sto --titles docs/plans/round-titles.txt --out <file>
 """
 
@@ -44,7 +44,7 @@ from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
 
 # title_match.py is a sibling, not a package: appended, so that nothing in
-# this directory (redis.py) shadows an installed package
+# this directory shadows an installed package
 sys.path.append(str(Path(__file__).resolve().parent))
 from title_match import (  # noqa: E402  # pyright: ignore[reportMissingImports]
     _search,

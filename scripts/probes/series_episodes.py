@@ -1,8 +1,7 @@
 """Series episodes per plugin: what the episode filter keeps, and its leaks.
 
-``poetry run python -P scripts/probes/series_episodes.py [--json FILE] [ID ...]``
-(``-P``: the sibling probe ``redis.py`` would shadow the package;
-``xvfb-run -a`` without a display: the browser fallback runs headful)
+``poetry run python scripts/probes/series_episodes.py [--json FILE] [ID ...]``
+(``xvfb-run -a`` without a display: the browser fallback runs headful)
 starts the app's composition (plugins, browser fallback, title lookup)
 and runs every stream plugin's search directly, with the queries, the
 category, season and episode of a Stremio request, under the plugin
