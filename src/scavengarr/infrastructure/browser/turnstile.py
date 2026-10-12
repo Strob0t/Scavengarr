@@ -17,7 +17,10 @@ from typing import TypeVar
 import structlog
 from patchright.async_api import Locator, Page
 
-from scavengarr.infrastructure.browser.page_gate import mark_resolution_challenge
+from scavengarr.infrastructure.browser.page_gate import (
+    mark_resolution_challenge,
+    mark_resolution_passed,
+)
 from scavengarr.infrastructure.captcha.altcha import AltchaError, solve_altcha
 
 T = TypeVar("T")
@@ -171,7 +174,8 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
     (``_solve_altcha_widget``; raises ``AltchaError`` when it cannot be).
     Returns False at once when no widget is shown, and when no token
     arrived within *timeout_ms*. A widget shown marks the running hoster
-    resolution (``mark_resolution_challenge``).
+    resolution (``mark_resolution_challenge``), its token passes the mark
+    (``mark_resolution_passed``): the submit comes only after it.
     """
     if not await page.locator(_WIDGET_TOKEN).count():
         return False
@@ -189,6 +193,7 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
                 log.warning("altcha_widget_unsolved", url=page.url, error=str(exc))
                 raise
             await form.evaluate(_SUBMIT_JS)
+            mark_resolution_passed()
             log.info(
                 "turnstile_widget_passed",
                 url=page.url,
@@ -209,7 +214,9 @@ async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
 
     Returns True when the page is (or becomes) a normal page, False when the
     challenge is still shown after *timeout_ms*. A challenge shown marks the
-    running hoster resolution (``mark_resolution_challenge``).
+    running hoster resolution (``mark_resolution_challenge``), and once it
+    cleared passes the mark (``mark_resolution_passed``); a page without one
+    passes nothing.
     """
     if not await is_challenge_page(page):
         return True
@@ -229,5 +236,6 @@ async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
         await page.wait_for_timeout(_POLL_MS)
         if not await is_challenge_page(page):
             await _settle(page)
+            mark_resolution_passed()
             log.info("cloudflare_solved", url=page.url, clicked=last_click is not None)
             return True

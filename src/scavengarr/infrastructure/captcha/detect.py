@@ -80,14 +80,20 @@ def detect_challenge(
 
 def challenge_frame(url: str) -> ChallengeKind | None:
     """The captcha provider whose challenge frame *url* loads, ``None`` for
-    any other URL. An invisible reCAPTCHA's frame (v3's score) shows nothing
-    to pass and counts as none."""
+    any other URL. reCAPTCHA counts by its anchor frame (the checkbox): an
+    invisible one (v3's score) shows nothing to pass and counts as none, and
+    its puzzle frame (``bframe``) loads hidden with every widget, the
+    invisible one too (code review 2026-10-12, finding 3)."""
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     for kind, frame_host in _FRAME_HOSTS:
         if host == frame_host or host.endswith(f".{frame_host}"):
             return kind
-    if host in _RECAPTCHA_HOSTS and parts.path.startswith("/recaptcha/"):
+    if (
+        host in _RECAPTCHA_HOSTS
+        and parts.path.startswith("/recaptcha/")
+        and parts.path.endswith("/anchor")
+    ):
         if parse_qs(parts.query).get("size") == ["invisible"]:
             return None
         return "recaptcha"

@@ -19,6 +19,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     PageGate,
     challenge_mark,
     mark_resolution_challenge,
+    mark_resolution_passed,
 )
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers import (
@@ -1603,21 +1604,31 @@ class TestChallenge:
         then no stream), "passed" (the captcha, then a stream), "hang",
         "dead", "stream", "slow" (a stream after 0.1 s), or 0.1 s after the
         captcha, past the bound of 0.05 s: "late" (a stream), "lost" (no
-        stream) or "broken" (an error)."""
+        stream) or "broken" (an error). An interstitial got past
+        (``mark_resolution_passed``): "gone" (then no stream: a dead link),
+        "past_late" (then a stream 0.1 s on) and "past_hang" (then nothing
+        for 10 s); "late_gone" gets past it 0.1 s on, then no stream."""
         queue = list(answers)
-        late = ("late", "lost", "broken")
+        late = ("late", "lost", "broken", "late_gone")
+        past = ("gone", "past_late", "past_hang")
 
         async def _resolve(url: str) -> ResolvedStream | None:
             answer = queue.pop(0)
             if answer in ("challenge", "challenged", "passed", *late):
                 mark_resolution_challenge("hoster_captcha")
-            if answer in ("challenge", "hang"):
+            if answer in (*past, "late_gone"):
+                mark_resolution_challenge("cloudflare_page")
+            if answer in past:
+                mark_resolution_passed()
+            if answer in ("challenge", "hang", "past_hang"):
                 await asyncio.sleep(10)
-            if answer in ("slow", *late):
+            if answer in ("slow", "past_late", *late):
                 await asyncio.sleep(0.1)
+            if answer == "late_gone":
+                mark_resolution_passed()
             if answer == "broken":
                 raise RuntimeError("player gone")
-            if answer in ("stream", "slow", "passed", "late"):
+            if answer in ("stream", "slow", "passed", "late", "past_late"):
                 return ResolvedStream(video_url=cls._MP4)
             return None
 
@@ -1738,6 +1749,81 @@ class TestChallenge:
 
         success = next(e for e in logs if e["event"] == "hoster_resolve_success")
         assert 100 <= success["duration_ms"] < 1000
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_dead_link_behind_a_passed_challenge_is_dead(self) -> None:
+        """The review's case (code review 2026-10-12, finding 2): two Dropload
+        links, the dead one first, on a cold context. The capture gets past
+        the interstitial and finds the file gone: a dead link, cached as one,
+        and the live second link is resolved, not skipped by a cooldown."""
+        registry, resolver, telemetry = self._registry(self._answers("gone", "stream"))
+
+        assert await registry.resolve(self._url("a")) is None
+        assert await registry.resolve(self._url("b")) is not None
+
+        assert registry.cached(self._url("a")) == (True, None)
+        assert self._outcome(telemetry, "dead") == 1
+        assert self._outcome(telemetry, "challenge") is None
+        assert self._outcome(telemetry, "challenge_cooldown") is None
+        assert resolver.resolve.await_count == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_past_a_challenge_runs_on_without_a_cooldown(self) -> None:
+        """The cold path cost the bound, so the cut stays a ``challenge`` (no
+        breaker failure) and the capture runs on; but the challenge was got
+        past and the context is warm: the hoster's next link is resolved."""
+        registry, resolver, telemetry = self._registry(
+            self._answers("past_late", "stream")
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            assert await registry.resolve(self._url("a")) is None
+
+        assert self._outcome(telemetry, "challenge") == 1
+        assert self._breaker(registry).snapshot() == {}
+        event = next(e for e in logs if e["event"] == "hoster_resolve_challenge")
+        assert (event["kind"], event["passed"], event["cooldown_s"]) == (
+            "cloudflare_page",
+            True,
+            0,
+        )
+        assert await registry.resolve(self._url("b")) is not None
+        await self._completed(registry)
+        found, stream = registry.cached(self._url("a"))
+        assert found and stream is not None
+        assert resolver.resolve.await_count == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completion_past_its_challenge_finds_a_dead_link(self) -> None:
+        """Cut while its challenge stood, the capture gets past it in the
+        background and finds the file gone: dead, cached, and no step up."""
+        registry, _, telemetry = self._registry(self._answers("late_gone"))
+        await registry.resolve(self._url("a"))
+
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert registry.cached(self._url("a")) == (True, None)
+        assert self._completion(telemetry, "none") == 1
+        assert not any(e["event"] == "hoster_challenge_unsolved" for e in logs)
+        # The cut's own step, not the next one
+        assert registry._challenges.left("filemoon") == 60
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completions_deadline_past_its_challenge_steps_nothing_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry_module, "_COMPLETION_S", 0.05)
+        registry, _, telemetry = self._registry(self._answers("past_hang"))
+        await registry.resolve(self._url("a"))
+
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert self._completion(telemetry, "cancelled") == 1
+        assert registry.cached(self._url("a")) == (False, None)
+        assert not any(e["event"] == "hoster_challenge_unsolved" for e in logs)
+        assert registry._challenges.left("filemoon") == 0
 
     @pytest.mark.usefixtures("clock")
     async def test_a_cut_without_a_challenge_stays_a_timeout(self) -> None:

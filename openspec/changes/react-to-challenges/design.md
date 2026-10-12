@@ -33,6 +33,16 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
 - **The outcome.**
   - At the cut: the mark set → `challenge`; unset → `timeout`, as today.
   - A resolver's `None` with the mark set → `challenge`, not `dead`. It is not cached, and the breaker neither counts nor resets.
+- **The pass (row 96, code review 2026-10-12, finding 2).**
+  - The mark keeps the first challenge's kind and whether one still stands (`open`). The browser passes it when its page got past the challenge: `solve_cloudflare()` after a shown interstitial cleared, `pass_turnstile_widget()` after the widget's token came and the form went out, and the capture when the page shows the hoster's offline notice. A later challenge marks it again.
+  - A resolver's `None` after a pass is judged as without a challenge (`dead`, cached): the page gave its verdict on the link. Before, a dead link behind a cleared interstitial ended as `challenge`, and its cooldown skipped the hoster's live next link.
+  - A cut after any challenge stays `challenge` (the cold path cost the bound) and runs on, but starts a cooldown only while the challenge stands. A completion past its challenge that finds no stream caches the link as dead; an error or the deadline past it gives no verdict and steps nothing up.
+  - Residuals: a completion that gets past a challenge which stood at the cut and finds the link dead leaves the cut's cooldown step to run out (a pass ends no cooldown, a stream does). The hoster's own captcha (Filemoon's `captcha`, `captcha/verify`) and Dropload's gate frame give no pass signal before the stream, so a dead link behind them stays `challenge`.
+  - Alternative: pass on any later page without a challenge. Rejected: a gate page that moved on says nothing about the file.
+- **The passive widget (row 96, finding 3).**
+  - Provider frames mark by default. A resolver whose player loads a widget that does not gate the stream passes `passive_widget=True` to `capture_stream()`; only DoodStream does (dev, 2026-10-12: its invisible Turnstile's token came 1 s after the stream).
+  - reCAPTCHA counts by its checkbox frame (`anchor`): its puzzle frame (`bframe`) loads hidden with every widget, the invisible one too.
+  - Alternative: provider frames mark only on resolvers that declare a gate. Rejected: a new gate on an undeclared hoster would go unseen, and a wrong mark costs less (see Risks).
 - **The cooldown.**
   - It lives in the registry beside the breaker: per resolver name, the step reached and the time it ends. The steps are 60, 300, 900, then 1800 s, staying at 1800. A stream ends the cooldown and resets the steps.
   - `_guarded()` checks the cooldown before `breaker.allow()`, so a skipped link never claims a half-open trial's slot.

@@ -15,6 +15,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     PageGate,
     challenge_mark,
     mark_resolution_challenge,
+    mark_resolution_passed,
     work_clock,
 )
 from scavengarr.infrastructure.telemetry import Telemetry
@@ -307,8 +308,25 @@ class TestChallengeMark:
         outside = contextvars.Context()
 
         outside.run(mark_resolution_challenge, "turnstile")
+        outside.run(mark_resolution_passed)
 
         assert outside.run(challenge_mark.get) is None
+
+    async def test_a_challenge_stands_until_it_is_passed(self) -> None:
+        """A page past its challenge gives a verdict on the link (code review
+        2026-10-12, finding 2): a dead link behind it is dead. The first
+        challenge stays the one noted; a later one stands again."""
+        mark = ChallengeMark()
+        challenge_mark.set(mark)
+        assert (mark.kind, mark.open) == (None, False)
+
+        mark_resolution_challenge("cloudflare_page")
+        assert (mark.kind, mark.open) == ("cloudflare_page", True)
+        mark_resolution_passed()
+        assert (mark.kind, mark.open) == ("cloudflare_page", False)
+        mark_resolution_challenge("turnstile")
+
+        assert (mark.kind, mark.open) == ("cloudflare_page", True)
 
 
 async def _claimed_hold(

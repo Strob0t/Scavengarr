@@ -327,25 +327,26 @@ def _in_resolution() -> ChallengeMark:
 
 class TestChallengeMarks:
     """A challenge a page shows marks the resolution that runs
-    (react-to-challenges, R7), whether or not it is passed."""
+    (react-to-challenges, R7), whether or not it is passed; a challenge got
+    past is passed in the mark (code review 2026-10-12, finding 2)."""
 
-    async def test_an_interstitial_marks(self) -> None:
+    async def test_an_interstitial_marks_and_passes(self) -> None:
         mark = _in_resolution()
 
         assert await solve_cloudflare(
             _page(["Just a moment...", "Player"]), timeout_ms=10_000
         )
 
-        assert mark.kind == "cloudflare_page"
+        assert (mark.kind, mark.open) == ("cloudflare_page", False)
 
-    async def test_an_unsolved_interstitial_marks(self) -> None:
+    async def test_an_unsolved_interstitial_stands(self) -> None:
         mark = _in_resolution()
 
         assert not await solve_cloudflare(
             _page(["Just a moment..."]), timeout_ms=10_000
         )
 
-        assert mark.kind == "cloudflare_page"
+        assert (mark.kind, mark.open) == ("cloudflare_page", True)
 
     async def test_a_normal_page_marks_nothing(self) -> None:
         mark = _in_resolution()
@@ -354,13 +355,43 @@ class TestChallengeMarks:
 
         assert mark.kind is None
 
-    async def test_a_widget_marks(self) -> None:
+    async def test_a_normal_page_passes_nothing(self) -> None:
+        """No interstitial shown, none passed: the hoster's own captcha
+        noted before still stands."""
+        mark = _in_resolution()
+        mark.note("hoster_captcha")
+
+        assert await solve_cloudflare(_page(["Player"]), timeout_ms=10_000)
+
+        assert mark.open
+
+    async def test_a_widget_marks_and_passes_with_its_token(self) -> None:
         mark = _in_resolution()
         page, _ = _widget_page(["", "token"])
 
         assert await pass_turnstile_widget(page, timeout_ms=10_000)
 
-        assert mark.kind == "turnstile"
+        assert (mark.kind, mark.open) == ("turnstile", False)
+
+    async def test_a_widget_without_a_token_stands(self) -> None:
+        """No token, no submit: the widget was not got past, so a None
+        after it stays a challenge, never a dead link."""
+        mark = _in_resolution()
+        page, form = _widget_page([""])
+
+        assert not await pass_turnstile_widget(page, timeout_ms=10_000)
+
+        form.evaluate.assert_not_awaited()
+        assert (mark.kind, mark.open) == ("turnstile", True)
+
+    async def test_a_widget_whose_altcha_fails_stands(self) -> None:
+        mark = _in_resolution()
+        page, _ = _widget_page(["token"], altcha=None, altcha_shown=True)
+
+        with pytest.raises(AltchaError):
+            await pass_turnstile_widget(page, timeout_ms=10_000)
+
+        assert mark.open
 
     async def test_no_widget_marks_nothing(self) -> None:
         mark = _in_resolution()

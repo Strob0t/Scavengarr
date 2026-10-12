@@ -95,15 +95,15 @@ class TestChallengeFrame:
                 "recaptcha",
             ),
             (
-                "https://www.recaptcha.net/recaptcha/api2/bframe?hl=en&k=6Le",
-                "recaptcha",
-            ),
-            (
                 "https://www.google.com/recaptcha/enterprise/anchor?k=6Le&size=compact",
                 "recaptcha",
             ),
             # An invisible reCAPTCHA (v3's score) shows nothing to pass
             ("https://www.google.com/recaptcha/api2/anchor?k=6Le&size=invisible", None),
+            # The puzzle frame loads hidden with every widget, the invisible
+            # one too (code review 2026-10-12, finding 3): the anchor tells
+            ("https://www.recaptcha.net/recaptcha/api2/bframe?hl=en&k=6Le", None),
+            ("https://www.google.com/recaptcha/enterprise/bframe?k=6Le", None),
             ("https://www.google.com/search?q=recaptcha", None),
             ("https://hcaptcha.com.example.org/captcha", None),
             ("https://player.example/e/challenges.cloudflare.com", None),

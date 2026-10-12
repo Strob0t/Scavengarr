@@ -1081,7 +1081,10 @@ class TestStealthPoolCaptureChallengeMark:
 
     @staticmethod
     async def _capture(
-        page: MagicMock, *, challenge_requests: re.Pattern[str] | None = None
+        page: MagicMock,
+        *,
+        challenge_requests: re.Pattern[str] | None = None,
+        passive_widget: bool = False,
     ) -> tuple[object, ChallengeMark]:
         shared_pool, _, context = _mock_pool_stack()
         context.new_page = AsyncMock(return_value=page)
@@ -1091,6 +1094,7 @@ class TestStealthPoolCaptureChallengeMark:
             "https://byse.example/e/abc",
             timeout=10,
             challenge_requests=challenge_requests,
+            passive_widget=passive_widget,
         )
         return media, mark
 
@@ -1104,7 +1108,62 @@ class TestStealthPoolCaptureChallengeMark:
         media, mark = await self._capture(page)
 
         assert media is not None
-        assert mark.kind == "turnstile"
+        assert (mark.kind, mark.open) == ("turnstile", True)
+
+    async def test_a_passive_widgets_frame_marks_nothing(self) -> None:
+        """DoodStream's player loads an invisible Turnstile on every capture,
+        cold or warm, and streams before its token (code review 2026-10-12,
+        finding 3): its frame is part of the player, no challenge."""
+        page = _player_page(
+            on_load=[_TURNSTILE_FRAME],
+            on_click=[["https://cdn.example/hls/master.m3u8"]],
+            documents=frozenset({_TURNSTILE_FRAME}),
+        )
+
+        media, mark = await self._capture(page, passive_widget=True)
+
+        assert media is not None
+        assert mark.kind is None
+
+    async def test_a_passive_widget_leaves_an_interstitial_marked(self) -> None:
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+        titles = iter(["Just a moment..."])
+        page.title = AsyncMock(side_effect=lambda: next(titles, "Player"))
+
+        _, mark = await self._capture(page, passive_widget=True)
+
+        assert mark.kind == "cloudflare_page"
+
+    async def test_a_dead_file_behind_a_passed_interstitial_is_passed(self) -> None:
+        """The review's Dropload case (finding 2): the capture gets past the
+        interstitial and the page says the file is gone. A verdict on the
+        link, not a challenge."""
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+        titles = iter(["Just a moment..."])
+        page.title = AsyncMock(side_effect=lambda: next(titles, "Player"))
+        page.evaluate = AsyncMock(return_value="Video not found")
+
+        media, mark = await self._capture(page)
+
+        assert media is None
+        assert (mark.kind, mark.open) == ("cloudflare_page", False)
+
+    @pytest.mark.parametrize("after_click", [False, True])
+    async def test_an_offline_notice_passes_a_standing_challenge(
+        self, after_click: bool
+    ) -> None:
+        """The page's own verdict: whatever challenge came before, the file
+        is gone (some players tell only after the click)."""
+        page = _player_page(
+            on_load=[_TURNSTILE_FRAME], documents=frozenset({_TURNSTILE_FRAME})
+        )
+        gone = "File is no longer available as it expired or has been deleted."
+        page.evaluate = AsyncMock(side_effect=["Play", gone] if after_click else [gone])
+
+        media, mark = await self._capture(page)
+
+        assert media is None
+        assert (mark.kind, mark.open) == ("turnstile", False)
 
     async def test_a_providers_script_alone_marks_nothing(self) -> None:
         """Loading the widget's script shows no challenge yet."""
@@ -1150,7 +1209,7 @@ class TestStealthPoolCaptureChallengeMark:
         media, mark = await self._capture(page)
 
         assert media is not None
-        assert mark.kind == "cloudflare_page"
+        assert (mark.kind, mark.open) == ("cloudflare_page", False)
 
     async def test_a_plain_player_marks_nothing(self) -> None:
         page = _player_page(

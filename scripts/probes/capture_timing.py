@@ -361,12 +361,15 @@ class Run:
     challenges: list[str] = field(default_factory=list)  # challenge_mark()s
 
 
-def challenge_mark(request: Any, named: re.Pattern[str] | None) -> str | None:
+def challenge_mark(
+    request: Any, named: re.Pattern[str] | None, *, passive_widget: bool = False
+) -> str | None:
     """The challenge *request* shows by the app's rule (``_challenge_of``):
-    a captcha provider's frame (``turnstile``, ``hcaptcha``, ``recaptcha``),
+    a captcha provider's frame (``turnstile``, ``hcaptcha``, ``recaptcha``)
+    unless the resolver's widget is passive (*passive_widget*, DoodStream),
     or a request *named* as the hoster's captcha, ``captcha`` or
     ``captcha/verify``; None for any other request."""
-    kind = stealth._challenge_of(request, named)
+    kind = stealth._challenge_of(request, named, passive_widget=passive_widget)
     if kind != "hoster_captcha":
         return kind
     verify = _CAPTCHA_VERIFY in urlsplit(request.url).path
@@ -374,13 +377,17 @@ def challenge_mark(request: Any, named: re.Pattern[str] | None) -> str | None:
 
 
 def watch_challenges(
-    page: Any, run: Run, named: Callable[[], re.Pattern[str] | None]
+    page: Any,
+    run: Run,
+    named: Callable[[], re.Pattern[str] | None],
+    passive: Callable[[], bool] = lambda: False,
 ) -> None:
     """Note in *run* each challenge *page* meets, once, in order; *named*
-    gives the running resolver's captcha pattern."""
+    gives the running resolver's captcha pattern, *passive* whether its
+    widget is passive (``passive_widget``)."""
 
     def requested(request: Any) -> None:
-        mark = challenge_mark(request, named())
+        mark = challenge_mark(request, named(), passive_widget=passive())
         if mark is not None and mark not in run.challenges:
             run.challenges.append(mark)
 
@@ -481,8 +488,10 @@ class TimedStealthPool(StealthPool):
     run: Run | None = None
     diagnose: bool = False
     blocked: tuple[str, ...] = ()
-    # The running resolver's captcha pattern (``challenge_requests``)
+    # The running resolver's captcha pattern (``challenge_requests``) and
+    # whether its widget is passive (``passive_widget``)
     named: re.Pattern[str] | None = None
+    passive_widget: bool = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -525,7 +534,9 @@ class TimedStealthPool(StealthPool):
 
     async def _prepare(self, page: Any) -> None:
         if self.run is not None:
-            watch_challenges(page, self.run, lambda: self.named)
+            watch_challenges(
+                page, self.run, lambda: self.named, lambda: self.passive_widget
+            )
             if self.diagnose:
                 watch_requests(page, self.run)
                 count_popups(page, self.run)
@@ -543,6 +554,7 @@ class TimedStealthPool(StealthPool):
     async def capture_media(self, url: str, **kwargs: Any) -> CapturedMedia | None:
         # The image's own parameters, whichever version runs the probe
         self.named = kwargs.get("challenge_requests")
+        self.passive_widget = kwargs.get("passive_widget", False)
         media = await super().capture_media(url, **kwargs)
         if self.run is not None and media is not None:
             self.run.stream_at = time.monotonic() - self.run.started

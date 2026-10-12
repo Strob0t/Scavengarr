@@ -29,6 +29,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     PageGate,
     ResolutionChallenge,
     challenge_mark,
+    mark_resolution_passed,
 )
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
@@ -158,11 +159,20 @@ def _foreign_script(resource_type: str, url: str, frame_urls: Iterable[str]) -> 
 
 
 def _challenge_of(
-    request: Request, named: re.Pattern[str] | None
+    request: Request,
+    named: re.Pattern[str] | None,
+    *,
+    passive_widget: bool = False,
 ) -> ResolutionChallenge | None:
-    """The challenge *request* shows: a captcha provider's frame, or a
-    request the resolver names as its hoster's own captcha (*named*)."""
-    if request.resource_type == "document" and (kind := challenge_frame(request.url)):
+    """The challenge *request* shows: a captcha provider's frame, unless the
+    resolver knows its player's widget does not gate the stream
+    (*passive_widget*), or a request the resolver names as its hoster's own
+    captcha (*named*)."""
+    if (
+        not passive_widget
+        and request.resource_type == "document"
+        and (kind := challenge_frame(request.url))
+    ):
         return kind
     if named is not None and named.search(request.url):
         return "hoster_captcha"
@@ -173,13 +183,17 @@ def _capture_listener(
     found: asyncio.Future[CapturedMedia],
     mark: ChallengeMark | None,
     named: re.Pattern[str] | None,
+    *,
+    passive_widget: bool,
 ) -> Callable[[Request], None]:
     """A capture's request listener: the first stream request settles
     *found*, a challenge (``_challenge_of``) marks the hoster resolution's
     *mark*."""
 
     def _on_request(request: Request) -> None:
-        if mark is not None and (kind := _challenge_of(request, named)):
+        if mark is not None and (
+            kind := _challenge_of(request, named, passive_widget=passive_widget)
+        ):
             mark.note(kind)
         # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
         # ``…~abc?token=``) by the video element's request type
@@ -294,6 +308,8 @@ async def _start_player(
             pass
         if attempt and await _shows_offline_notice(page):
             log.info("stealth_capture_offline", url=page.url, clicks=attempt)
+            # The page's verdict on the link, past any challenge before it
+            mark_resolution_passed()
             return None
     return None
 
@@ -546,6 +562,7 @@ class StealthPool:
         player: str | None = None,
         own_scripts_only: bool = False,
         challenge_requests: re.Pattern[str] | None = None,
+        passive_widget: bool = False,
     ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
@@ -565,7 +582,10 @@ class StealthPool:
         an ad tag that takes the clicks. A captcha provider's frame and a
         request that *challenge_requests* matches (the hoster's own captcha)
         mark the hoster resolution the capture runs in (``challenge_mark``),
-        as an interstitial does.
+        as an interstitial does; *passive_widget* says the player's widget
+        does not gate its stream, so its frame marks nothing (DoodStream). A
+        page that says the file is gone passes the mark: its verdict on the
+        link, whatever challenge came before.
         """
         if timeout is None:
             timeout = self._timeout_ms / 1000
@@ -582,7 +602,12 @@ class StealthPool:
                 found: asyncio.Future[CapturedMedia] = (
                     asyncio.get_running_loop().create_future()
                 )
-                page.on("request", _capture_listener(found, mark, challenge_requests))
+                page.on(
+                    "request",
+                    _capture_listener(
+                        found, mark, challenge_requests, passive_widget=passive_widget
+                    ),
+                )
                 page.on("popup", _close_popup)
                 await page.route(
                     "**/*",
@@ -604,6 +629,7 @@ class StealthPool:
                     await self._remember(page)
                     if await _shows_offline_notice(page):
                         log.info("stealth_capture_offline", url=url)
+                        mark_resolution_passed()
                         return None
                 media = await _start_player(page, found, player)
                 log.debug("stealth_capture", url=url, found=media is not None)

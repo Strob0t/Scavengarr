@@ -9,7 +9,8 @@ background work only while nobody else waits; a running page is never
 taken away. Work that cannot start ``_MIN_WORK_S`` before it is due gets
 no page (``PageBusy``), and the timeout of a resolution (``work_clock``)
 stops while it waits. A page that shows a challenge marks the resolution
-it works for (``challenge_mark``). The wait for a page and the work on it
+it works for (``challenge_mark``), and passes it once it got past. The
+wait for a page and the work on it
 are recorded by kind (``browser_page_wait``, ``browser_page``).
 ``PageBudget`` changes the limit while pages are in use. See
 ``docs/plans/browser-page-budget.md``.
@@ -49,14 +50,23 @@ type ResolutionChallenge = ChallengeKind | Literal["hoster_captcha"]
 
 @dataclass
 class ChallengeMark:
-    """The challenge a resolution's pages showed, the first one noted."""
+    """The challenge a resolution's pages showed, the first one noted, and
+    whether one still stands: noted and not got past since (``open``). A
+    page past its challenge gives a verdict on the link, so a dead link
+    behind it is dead, not a challenge (code review 2026-10-12, finding 2)."""
 
     kind: ResolutionChallenge | None = None
+    open: bool = False
 
     def note(self, kind: ResolutionChallenge) -> None:
-        """Note *kind* unless a challenge is noted already."""
+        """Note *kind* (the first one stays the kind); it stands."""
         if self.kind is None:
             self.kind = kind
+        self.open = True
+
+    def passed(self) -> None:
+        """The page got past the challenge that stood."""
+        self.open = False
 
 
 # The mark of the resolution that runs (the registry's attempt): set by the
@@ -73,6 +83,15 @@ def mark_resolution_challenge(kind: ResolutionChallenge) -> None:
     mark = challenge_mark.get()
     if mark is not None:
         mark.note(kind)
+
+
+def mark_resolution_passed() -> None:
+    """The running resolution's page got past its challenge (an interstitial
+    cleared, a widget's token came) or showed its verdict on the link (the
+    file is gone); outside one nothing."""
+    mark = challenge_mark.get()
+    if mark is not None:
+        mark.passed()
 
 
 class PageBusy(Exception):

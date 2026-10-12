@@ -702,15 +702,19 @@ class HosterResolverRegistry:
         (code review, 2026-10-06). Neither does a capture that got no
         browser page before its request was due (``busy``).
 
-        A timeout or a resolution without a stream whose pages showed a
-        challenge (``challenge_mark``: an interstitial, a Turnstile widget,
-        a captcha provider's frame, the hoster's own captcha) ends as
-        ``challenge``: the hoster wants a warm browser context, it is not
+        A resolution without a stream whose challenge still stands
+        (``challenge_mark``: an interstitial, a Turnstile widget, a captcha
+        provider's frame, the hoster's own captcha, not got past since) ends
+        as ``challenge``: the hoster wants a warm browser context, it is not
         broken. Neither cached nor counted; the resolver's links wait out
-        the challenge cooldown. A capture the bound cuts after its challenge
-        runs on in the background when its outcome is cached under
-        *cache_key* (``_hand_over``); a cut request (the answer went out)
-        cancels it, as it cancels a capture without a challenge.
+        the challenge cooldown. A page past its challenge gave a verdict on
+        the link: no stream there is a dead link (code review 2026-10-12,
+        finding 2). A timeout after any challenge ends as ``challenge`` too
+        (the cold path cost the bound), its cooldown only while the
+        challenge stands. A capture the bound cuts after its challenge runs
+        on in the background when its outcome is cached under *cache_key*
+        (``_hand_over``); a cut request (the answer went out) cancels it, as
+        it cancels a capture without a challenge.
         """
         mark = ChallengeMark()
         started = time.monotonic()
@@ -740,10 +744,8 @@ class HosterResolverRegistry:
                         ):
                             await _cancelled(work)
                         raise
-                if result is None and mark.kind is not None:
-                    stage.outcome = self._challenged(
-                        resolver, hoster_name, url, mark.kind
-                    )
+                if result is None and mark.open:
+                    stage.outcome = self._challenged(resolver, hoster_name, url, mark)
                     return None, False
                 stage.outcome, stream, cacheable = await self._judge(
                     resolver,
@@ -760,9 +762,7 @@ class HosterResolverRegistry:
                 return None, False
             except (TimeoutError, httpx.TimeoutException):
                 if mark.kind is not None:
-                    stage.outcome = self._challenged(
-                        resolver, hoster_name, url, mark.kind
-                    )
+                    stage.outcome = self._challenged(resolver, hoster_name, url, mark)
                     return None, False
                 log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
@@ -795,16 +795,18 @@ class HosterResolverRegistry:
         resolver: HosterResolverPort,
         hoster_name: str,
         url: str,
-        kind: ResolutionChallenge,
+        mark: ChallengeMark,
     ) -> str:
         """A resolution that met a challenge and found no stream: start the
-        resolver's next cooldown step; returns the outcome."""
-        cooldown = self._challenges.challenged(resolver.name)
+        resolver's next cooldown step while the challenge stands (a cut past
+        it starts none: the context is warm); returns the outcome."""
+        cooldown = self._challenges.challenged(resolver.name) if mark.open else 0.0
         log.info(
             "hoster_resolve_challenge",
             hoster=hoster_name,
             url=url,
-            kind=kind,
+            kind=mark.kind,
+            passed=not mark.open,
             cooldown_s=round(cooldown),
         )
         return "challenge"
@@ -827,9 +829,7 @@ class HosterResolverRegistry:
         if mark.kind is None or cache_key is None or name in self._completions:
             return False
         completion = asyncio.ensure_future(
-            self._complete(
-                work, resolver, hoster_name, url, cache_key, mark.kind, started
-            )
+            self._complete(work, resolver, hoster_name, url, cache_key, mark, started)
         )
         self._completions[name] = (completion, work)
         # A completion cancelled before its first step never awaited the
@@ -845,7 +845,7 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         cache_key: str,
-        kind: ResolutionChallenge,
+        mark: ChallengeMark,
         started: float,
     ) -> None:
         """Await a capture the bound cut after a challenge for up to
@@ -853,12 +853,15 @@ class HosterResolverRegistry:
 
         Its stream is judged and cached under *cache_key* as the attempt's
         own: it ends the resolver's challenge cooldown, closes a half-open
-        breaker, and the next request finds it in the cache. Without a
-        stream (none, an error, the deadline, which cancels the capture) the
-        challenge stands as in ``_try_resolver``: nothing is cached or
-        counted, and the resolver's next cooldown step starts now. Recorded
-        as the stage ``hoster_challenge_completion`` from the cut; shutdown
-        cancels it (``aclose``).
+        breaker, and the next request finds it in the cache. No stream from
+        a page past its challenge (*mark*) is a dead link, judged and cached
+        as one. Without a stream while the challenge stands (none, an error,
+        the deadline, which cancels the capture) it stands as in
+        ``_try_resolver``: nothing is cached or counted, and the resolver's
+        next cooldown step starts now; past it, an error or the deadline
+        gives no verdict and steps nothing up. Recorded as the stage
+        ``hoster_challenge_completion`` from the cut; shutdown cancels it
+        (``aclose``).
         """
         deadline = asyncio.timeout(_COMPLETION_S)
         with self._telemetry.stage(
@@ -871,17 +874,24 @@ class HosterResolverRegistry:
                     result = await work
             except Exception:
                 if not deadline.expired():
+                    stage.outcome = "none"
                     log.exception(
                         "hoster_challenge_completion_error", hoster=hoster_name, url=url
                     )
-                result = None
-            if result is None:
-                if not deadline.expired():
-                    stage.outcome = "none"
+                if mark.open:
+                    self._unsolved(resolver, hoster_name, url)
+                return
+            if result is None and mark.open:
+                stage.outcome = "none"
                 self._unsolved(resolver, hoster_name, url)
                 return
             _, stream, cacheable = await self._judge(
-                resolver, hoster_name, url, result, started=started, challenge=kind
+                resolver,
+                hoster_name,
+                url,
+                result,
+                started=started,
+                challenge=mark.kind,
             )
             if cacheable:
                 self._cache_result(cache_key, stream, resolver.name)

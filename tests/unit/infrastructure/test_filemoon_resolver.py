@@ -517,6 +517,7 @@ class _FakePool:
         player: str | None = None,
         own_scripts_only: bool = False,
         challenge_requests: re.Pattern[str] | None = None,
+        passive_widget: bool = False,
     ) -> CapturedMedia | None:
         self.urls.append(url)
         self.players.append(player)

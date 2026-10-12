@@ -26,3 +26,10 @@
   - `docs/features/observability.md`: the stage;
   - `CHANGELOG.md`.
 - [ ] 2.7 Production after the deploy: the first challenged Filemoon and Dropload captures after the restart finish in the background, and the next captures run warm within 10 s. Recorded in `docs/plans/challenge-reactions.md`.
+
+## 3. Row 96: the challenge findings of the code review of 2026-10-12
+
+- [x] 3.1 Tests: a dead link behind a passed challenge is cached as dead and the hoster's next link resolves; a cut past its challenge stays `challenge` without a cooldown; a completion past its challenge caches a dead link without a step up, and its deadline steps nothing up; the browser passes the mark on a cleared interstitial, a widget's token and an offline notice (finding 2).
+- [x] 3.2 Tests: DoodStream's capture declares its passive widget and its frames mark nothing; an interstitial still marks; reCAPTCHA's `bframe` marks nothing (finding 3).
+- [x] 3.3 Implementation: `ChallengeMark.open`, `mark_resolution_passed()`, the passes in `turnstile.py` and `capture_media()`, `passive_widget` through `capture_stream()`, the registry's rules, and the capture timing probe's `passive_widget`.
+- [x] 3.4 Docs: `docs/features/hoster-resolvers.md`, `docs/features/observability.md`, `CHANGELOG.md`.

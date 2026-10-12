@@ -633,6 +633,14 @@ class TestChallenges:
 
         assert _mod.challenge_mark(request, None) is None
 
+    def test_a_passive_widgets_frame_is_no_challenge(self) -> None:
+        """DoodStream's invisible Turnstile (code review 2026-10-12,
+        finding 3): the resolver says its widget does not gate the stream."""
+        frame = _Request("https://challenges.cloudflare.com/turnstile", "document")
+
+        assert _mod.challenge_mark(frame, None, passive_widget=True) is None
+        assert _mod.challenge_mark(frame, None) == "turnstile"
+
     def test_a_run_notes_each_challenge_once_in_order(self) -> None:
         page, run = _Page(), _mod.Run(0.0)
         _mod.watch_challenges(page, run, lambda: _CAPTCHA_REQUESTS)
@@ -683,6 +691,9 @@ class TestChallenges:
         )
 
         assert pool.named is _CAPTCHA_REQUESTS
+        assert pool.passive_widget is False
+        await pool.capture_media("https://dood.example/e/abc", passive_widget=True)
+        assert (pool.named, pool.passive_widget) == (None, True)
 
 
 _STATE: dict[str, Any] = {

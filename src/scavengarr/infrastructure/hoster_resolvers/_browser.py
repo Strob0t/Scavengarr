@@ -29,6 +29,7 @@ async def capture_stream(
     player: str | None = None,
     own_scripts_only: bool = False,
     challenge_requests: re.Pattern[str] | None = None,
+    passive_widget: bool = False,
 ) -> ResolvedStream | None:
     """Run the hoster's player in the stealth browser, take its stream request.
 
@@ -40,7 +41,9 @@ async def capture_stream(
     *own_scripts_only* keeps the scripts of other sites than the page's and
     its frames' out (an ad tag that takes the clicks). *challenge_requests*
     names the hoster's own captcha requests: one of them marks the
-    resolution as challenged, as a Cloudflare challenge does.
+    resolution as challenged, as a Cloudflare challenge and a captcha
+    provider's frame do. *passive_widget* says the player's captcha widget
+    does not gate its stream, so its frame marks nothing (DoodStream).
     """
     if stealth_pool is None:
         log.info(f"{hoster}_no_browser", url=embed_url)
@@ -50,6 +53,7 @@ async def capture_stream(
         player=player,
         own_scripts_only=own_scripts_only,
         challenge_requests=challenge_requests,
+        passive_widget=passive_widget,
     )
     if media is None:
         log.info(f"{hoster}_browser_no_stream", url=embed_url)

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: A Challenge Is Its Own Resolution Outcome
-The hoster resolver registry SHALL end a resolution as `challenge` when its capture showed a challenge (Cloudflare's interstitial or Turnstile widget, a captcha provider's frame, or a request its resolver names as the hoster's captcha) and the resolve bound cut it or it ended without a stream. A `challenge` SHALL neither count for nor reset the hoster's circuit breaker, and SHALL not be cached.
+The hoster resolver registry SHALL end a resolution as `challenge` when its capture showed a challenge (Cloudflare's interstitial or Turnstile widget, a captcha provider's frame, or a request its resolver names as the hoster's captcha) and the resolve bound cut it, or it ended without a stream while the challenge stood. A `challenge` SHALL neither count for nor reset the hoster's circuit breaker, and SHALL not be cached.
 
 #### Scenario: Cut after the hoster's captcha
 - **WHEN** Filemoon's capture requests the player's `captcha` and the 10 s resolve bound cuts it
@@ -21,8 +21,21 @@ The hoster resolver registry SHALL end a resolution as `challenge` when its capt
 - **WHEN** the half-open trial of a hoster's breaker ends as `challenge`
 - **THEN** the trial's slot is freed and the breaker stays half-open
 
+### Requirement: A Page Past Its Challenge Gives A Verdict
+A page that got past its challenge (an interstitial that cleared, a widget whose token came, the hoster's offline notice) SHALL give its verdict on the link: a resolution that ends without a stream after it SHALL be judged as one without a challenge (`dead`), until a later challenge stands again. A cut after a passed challenge SHALL end as `challenge` and SHALL start no cooldown.
+
+#### Scenario: A dead link behind a passed challenge
+- **WHEN** Dropload's capture clears the interstitial on a cold context and the page shows "File not found"
+- **THEN** the resolution ends as `dead` and is cached as dead
+- **AND** Dropload's next link is resolved without a cooldown
+
+#### Scenario: A cut past its challenge
+- **WHEN** the bound cuts a capture after it cleared its interstitial
+- **THEN** the resolution ends as `challenge` and runs on in the background
+- **AND** no cooldown starts
+
 ### Requirement: The Challenge Cooldown
-After a `challenge` the registry SHALL skip the hoster's links for 1 minute, and for 5, 15 and then 30 minutes after each further consecutive `challenge`, staying at 30. A stream from the hoster SHALL end the cooldown and reset its steps. A skipped link SHALL be logged as `hoster_resolve_challenge_cooldown`, counted, and not cached. The cooldown SHALL be checked before the breaker and SHALL NOT outlive a restart.
+After a `challenge` whose challenge stood the registry SHALL skip the hoster's links for 1 minute, and for 5, 15 and then 30 minutes after each further consecutive one, staying at 30. A stream from the hoster SHALL end the cooldown and reset its steps; a passed challenge SHALL NOT end it. A skipped link SHALL be logged as `hoster_resolve_challenge_cooldown`, counted, and not cached. The cooldown SHALL be checked before the breaker and SHALL NOT outlive a restart.
 
 #### Scenario: The first challenge
 - **WHEN** Filemoon's resolution ends as `challenge` at 12:00:00
@@ -55,9 +68,14 @@ When the resolve bound cuts a capture that showed a challenge, the registry SHAL
 - **THEN** the second capture is cancelled at the cut and ends as `challenge`
 
 #### Scenario: The deadline
-- **WHEN** a completion has no stream 20 s after the cut
+- **WHEN** a completion whose challenge still stands has no stream 20 s after the cut
 - **THEN** it is cancelled and its page closes
 - **AND** the hoster's cooldown steps up
+
+#### Scenario: A completion past its challenge finds a dead link
+- **WHEN** a completion gets past its interstitial and the page shows the hoster's offline notice
+- **THEN** the link is cached as dead
+- **AND** the hoster's cooldown does not step up
 
 #### Scenario: Shutdown
 - **WHEN** the app shuts down while a completion runs
@@ -74,3 +92,19 @@ A stream a background completion finds SHALL pass the registry's judgement as a 
 #### Scenario: A player's own resolution
 - **WHEN** a resolution for one player's headers (`resolve_for_client`) is cut after a challenge
 - **THEN** it ends as `challenge` without a background completion
+
+### Requirement: A Passive Widget Marks Nothing
+A resolver whose player loads a captcha widget that does not gate its stream SHALL declare it (`passive_widget`), and a captcha provider's frame SHALL NOT mark its resolutions; an interstitial and the hoster's own captcha still SHALL. Every other capture SHALL be marked by a provider's frame. reCAPTCHA SHALL count by its checkbox frame (`anchor`) only: its invisible widget and its puzzle frame (`bframe`), which loads hidden with every widget, SHALL NOT mark.
+
+#### Scenario: DoodStream's invisible Turnstile
+- **WHEN** DoodStream's capture loads its player's Turnstile frame and ends without a stream
+- **THEN** the resolution is judged as without a challenge
+- **AND** no cooldown starts
+
+#### Scenario: A gate in front of the player
+- **WHEN** an XFS hoster's page has no video and shows a captcha widget in front of the player (Dropload)
+- **THEN** the widget's frame marks the resolution
+
+#### Scenario: reCAPTCHA's puzzle frame
+- **WHEN** a page loads reCAPTCHA's `bframe` and no visible checkbox frame
+- **THEN** the resolution is not marked
