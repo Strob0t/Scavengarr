@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Segment the CDN Cuts Mid-Body
+- The HLS proxy let a transport error from a segment's body escape uncaught (production 2026-10-12 17:59:20 UTC: acek-cdn's `httpx.ReadTimeout` during a VidHide play, uvicorn's "Exception in ASGI application" with httpx's traceback and no CDN). A segment now gets the file proxy's handling, in one body generator for both (`_cdn_body` in `infrastructure/stremio/hls_proxy.py`): a transport error mid-body, or a clean end short of the promised `Content-Length`, is resumed once with a `Range` request from the next byte when the answer is unencoded (`hls_proxy_segment_resumed`); otherwise, or when the resume fails, `SegmentCut` aborts the transfer with one `hls_proxy_segment_cut` warning (CDN, error type, bytes sent and promised, whether a resume ran), so the player asks again instead of taking a truncated segment as whole. The file cut's warning names the error type too. Live proof (dev container, Dune: Part Two's VIDHIDE · moflix on acek-cdn): the CDN answers a segment's `Range` with 206; a segment cut after 64 KiB was resumed from byte 65536 and arrived whole (313,208 bytes, identical to the CDN's); a play through the dev server's proxy went playlist, variant, segment with all 200.
+
 ### Changed: The Capture Probe Sets the Autoplay Wait
 - `scripts/probes/capture_timing.py --autoplay-wait S` sets the capture's wait for a player that starts itself, before its first click (`_MEDIA_AUTOPLAY_WAIT_S`, 3 s in the app), for the probe's runs, and the header names the wait. It measures what a shorter wait gains per hoster before the app changes it: Filemoon's player starts only on a click, so a warm capture on the Pi spends 3 of its 10 s bound waiting (`docs/plans/pi-performance.md`, row 103).
 
