@@ -54,6 +54,7 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
   - `_try_resolver()` runs the resolver's coroutine as a task and waits for it under the bound through `asyncio.shield`. On the bound:
     - With the mark set and no completion running for the hoster, the task goes to the registry's completions, one per resolver name. The attempt answers `challenge` at once.
     - Otherwise the task is cancelled, as the bound cancels it today.
+    - The bound's cancel must be the only new one on the request's task (`Task.cancelling()` against its count at the attempt's start): a request cut in the bound's loop iteration (the answer went out) cancels the capture too (row 96, finding 15).
   - A completion awaits the task for at most 20 s after the cut. With production's bound of 10 s that is 30 s of work, past the Pi's cold paths of 13.3 to 17.8 s.
   - With a result it runs the attempt's own steps: `_judge()`, `_cache_result()` under the attempt's cache key, `_record()`. The stream ends the cooldown and closes a half-open breaker; `unplayable` counts as today.
   - Without a stream by the deadline the task is cancelled. The capture's `finally` closes the page, and the cooldown steps up.

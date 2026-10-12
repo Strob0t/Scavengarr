@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -20,6 +21,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     challenge_mark,
     mark_resolution_challenge,
     mark_resolution_passed,
+    work_clock,
 )
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers import (
@@ -2234,6 +2236,76 @@ class TestChallenge:
 
         assert gate.in_use == 0
         assert registry._completions == {}
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_request_cut_at_the_bound_cancels_the_capture(self) -> None:
+        """The review's case (code review 2026-10-12, finding 15): the answer
+        goes out in the loop iteration in which the bound fires, so the
+        request's cancel lands with the bound's. The request's own cancel
+        wins: the capture is cancelled, nothing runs on in the background,
+        and the attempt counts as cut."""
+        requests: list[asyncio.Task[ResolvedStream | None]] = []
+        cancelled = asyncio.Event()
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            mark_resolution_challenge("hoster_captcha")
+            clock = work_clock.get()
+            assert clock is not None
+            when = clock.when()
+            assert when is not None
+            asyncio.get_running_loop().call_at(when, requests[0].cancel)
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return None
+
+        registry, _, telemetry = self._registry(_resolve)
+        requests.append(asyncio.ensure_future(registry.resolve(self._url("a"))))
+
+        with pytest.raises(asyncio.CancelledError):
+            await requests[0]
+
+        assert cancelled.is_set()
+        assert registry._completions == {}
+        assert self._outcome(telemetry, "cut") == 1
+        assert self._outcome(telemetry, "challenge") is None
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completions_check_error_is_logged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """V29 (code review 2026-10-12): the completion judged its stream
+        outside its try, so an unexpected error of the playback check was
+        never retrieved. It is logged; nothing is cached or stepped up."""
+
+        async def _broken(client: httpx.AsyncClient, stream: ResolvedStream) -> Any:
+            raise RuntimeError("check broke")
+
+        monkeypatch.setattr(registry_module, "check_playable", _broken)
+        resolver = MagicMock()
+        resolver.name = "filemoon"
+        resolver.resolve = AsyncMock(side_effect=self._answers("late"))
+        telemetry = Telemetry()
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[resolver],
+                http_client=client,
+                resolve_timeout=0.05,
+                verify_playback=True,
+                telemetry=telemetry,
+            )
+            await registry.resolve(self._url("a"))
+            completion, _ = registry._completions["filemoon"]
+            with structlog.testing.capture_logs() as logs:
+                await asyncio.gather(completion, return_exceptions=True)
+
+        assert completion.exception() is None
+        assert any(e["event"] == "hoster_challenge_completion_error" for e in logs)
+        assert not any(e["event"] == "hoster_challenge_unsolved" for e in logs)
+        assert self._completion(telemetry, "none") == 1
+        assert registry.cached(self._url("a")) == (False, None)
 
     @pytest.mark.usefixtures("clock")
     async def test_a_cut_without_a_challenge_cancels_the_capture(self) -> None:

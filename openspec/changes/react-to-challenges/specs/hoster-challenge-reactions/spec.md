@@ -88,6 +88,10 @@ When the resolve bound cuts a capture that showed a challenge, the registry SHAL
 - **THEN** the link is cached as dead
 - **AND** the hoster's cooldown does not step up
 
+#### Scenario: The request's own cut at the bound
+- **WHEN** the request is cut in the loop iteration in which the bound fires
+- **THEN** the capture is cancelled and nothing runs on in the background
+
 #### Scenario: Shutdown
 - **WHEN** the app shuts down while a completion runs
 - **THEN** the registry's `aclose()` cancels it and its page closes

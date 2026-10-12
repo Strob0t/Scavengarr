@@ -129,6 +129,12 @@ def _started(
         challenge_mark.reset(mark_token)
 
 
+def _cancels() -> int:
+    """The cancel requests pending on the running task (``cancelling()``)."""
+    task = asyncio.current_task()
+    return 0 if task is None else task.cancelling()
+
+
 async def _cancelled(task: asyncio.Task[Any]) -> None:
     """Cancel *task* and wait for its cleanup (a capture closes its page),
     whatever it ends with."""
@@ -770,6 +776,7 @@ class HosterResolverRegistry:
         """
         mark = ChallengeMark()
         started = time.monotonic()
+        cancels = _cancels()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
                 async with asyncio.timeout(self._resolve_timeout) as clock:
@@ -779,11 +786,15 @@ class HosterResolverRegistry:
                     try:
                         result = await asyncio.shield(work)
                     except asyncio.CancelledError:
-                        # Cut by the bound (its clock expired) or the request.
-                        # The work ends inside the bound: the page gate gives
-                        # a stopped clock its time back, an exited one refuses
+                        # Cut by the bound (its clock expired, its cancel the
+                        # only new one) or the request, also when the request
+                        # cancels in the bound's loop iteration (code review
+                        # 2026-10-12, finding 15). The work ends inside the
+                        # bound: the page gate gives a stopped clock its time
+                        # back, an exited one refuses
                         if not (
                             clock.expired()
+                            and _cancels() == cancels + 1
                             and self._hand_over(
                                 work,
                                 resolver,
@@ -946,14 +957,23 @@ class HosterResolverRegistry:
                 stage.outcome = "none"
                 self._unsolved(resolver, hoster_name, url)
                 return None
-            _, stream, cacheable = await self._judge(
-                resolver,
-                hoster_name,
-                url,
-                result,
-                started=started,
-                challenge=mark.kind,
-            )
+            try:
+                _, stream, cacheable = await self._judge(
+                    resolver,
+                    hoster_name,
+                    url,
+                    result,
+                    started=started,
+                    challenge=mark.kind,
+                )
+            except Exception:
+                # The capture got its stream, the check broke: no verdict on
+                # the link or its challenge (code review 2026-10-12, V29)
+                stage.outcome = "none"
+                log.exception(
+                    "hoster_challenge_completion_error", hoster=hoster_name, url=url
+                )
+                return None
             if not cacheable:
                 stage.outcome = "none"
                 return None

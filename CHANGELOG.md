@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Request's Own Cut at the Bound Cancels Its Capture; a Completion's Check Error Is Logged
+- A challenged capture runs on in the background only when the bound's cancel is the only new one on the request's task (`Task.cancelling()` against its count at the attempt's start). A request cut in the loop iteration in which the bound fires (the answer went out) cancels the capture and counts as `cut`, as any request cut does.
+- A completion judges its stream inside a try: an unexpected error of the playback check logs `hoster_challenge_completion_error` (outcome `none`), caches nothing and does not step the cooldown up.
+- Why: code review 2026-10-12, finding 15 and V29. `clock.expired()` alone was also true when both cancels landed together: the capture was handed over, kept its page up to 20 s after the answer went out, and no cooldown started at the cut. The check's error was never retrieved.
+
 ### Fixed: Challenge Completions Leave a Browser Page Free
 - The background completions of challenged captures hold at most the stealth browser's page limit − 1 pages together (the composition hands the registry the page gate, `pages`). A capture cut after its challenge while they hold the rest is cancelled at the cut and ends as `challenge` with its cooldown; on a single page none runs on.
 - Why: code review 2026-10-12, finding 12. Completions were capped at one per hoster only: a Filemoon and a Dropload completion held both of the 2 pages for up to 20 s, and a /play resolution waited for a page until it ended `PageBusy` and fell back to the stale link.
