@@ -128,7 +128,7 @@ OpenSpec changes live in `openspec/changes/<change-id>/`:
 Open (`openspec list`):
 - `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06; shipped in v0.4.0, task 3.2's production reading open)
 - `add-container-image` – A published multi-arch container image (approved 2026-10-06; task 2.3 waits for the Pi's switch to the published image)
-- `aniworld-number-first` – The row with the reference's absolute number is the episode (the maintainer's decision of 2026-10-12, backlog row 87)
+- `place-episodes-by-number-first` – The row with the reference's absolute number is the episode (the maintainer's decision of 2026-10-12, backlog row 87)
 - `react-to-challenges` – A capture that meets a challenge is an outcome of its own, with a cooldown instead of the breaker, and finishes in the background (the maintainer's decision of 2026-10-12, backlog rows 89 and 90)
 - `keep-capture-state` – A capture hoster's storage state outlives restarts, recycles and relaunches (R4, the maintainer's decision of 2026-10-12, measured by backlog row 91)
 
