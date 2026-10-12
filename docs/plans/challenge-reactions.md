@@ -122,7 +122,7 @@ Findings:
 3. **Not separated:** which store carries the warmth (cookies, localStorage or IndexedDB). R4 keeps the whole state per host, so this does not change the form.
 4. **Limits:** one link and one run per condition and place; the state was restored seconds after it was taken. How long a restored state stays warm is unmeasured: R5 stays for a state that turns out to expire.
 
-**Verdict:** control cold and restored warm, the first branch of row 91. R4 keeps a capture hoster's storage state in the cache backend beside `ClearanceStore` and restores it into each new context (start, recycle, relaunch). R5 is needed only where a restored state expires.
+**Verdict:** control cold and restored warm, the first branch of row 91. R4 keeps a capture hoster's storage state in the cache backend beside `ClearanceStore` and restores it into each new context (start, recycle, relaunch). R5 is needed only where a restored state expires. R4's build: the OpenSpec change `keep-capture-state` (row 91).
 
 ### R5: warm-up after a start (gap 5)
 

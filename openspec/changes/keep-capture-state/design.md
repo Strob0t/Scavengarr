@@ -1,0 +1,59 @@
+## Context
+
+`StealthPool._ensure_context()` creates one context per browser lifetime with `new_context(service_workers="block")`, routes heavy resources and adds the stored clearance cookies (`ClearanceStore.restore()`, `add_cookies`).
+
+`capture_media()` keeps the clearance cookies after `solve_cloudflare()` (`_remember`), before the player starts, so nothing the player sets is kept. Its page closes in a `finally`.
+
+Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB only through `new_context(storage_state=...)`. `context.storage_state(indexed_db=True)` serializes the whole context, every origin, and has no filter. Row 91's probe restored such a state into a fresh context in a relaunched browser, and the capture ran warm.
+
+## Goals / Non-Goals
+
+- **Goals:**
+  - A capture hoster that passed once stays warm across restarts, recycles and relaunches.
+  - No resolution waits for the state.
+  - Only the capture's own hosts are kept.
+- **Non-Goals:**
+  - R5's warm-up captures.
+  - Separating which store carries the warmth (cookies, localStorage, IndexedDB); the form keeps all three.
+  - Plugin pages' state beyond the clearance cookies.
+  - A setting.
+
+## Decisions
+
+- **One store.**
+  - `ClearanceStore` keeps the capture states beside the clearance cookies. They are two cache keys of one class, since both answer "what lets a new context skip a challenge".
+  - The capture states live under `browser:capture_state:v1`: one JSON object, host → `{saved_at, cookies, origins}`.
+  - The key's TTL is 24 hours from the newest entry's `saved_at`, and entries older than 24 hours are dropped at load.
+- **Restore at creation.**
+  - `_ensure_context()` asks the store for one storage state: the unexpired clearance cookies, plus every kept host's unexpired cookies and origins. Cookies are de-duplicated by name, domain and path; origins by origin. The newest wins.
+  - It creates the context with it.
+  - When the creation with a state fails, the context is created without one, logged as `capture_state_restore_failed`.
+  - The stealth pool no longer calls `restore()` (cookies after creation), since its cookies travel in the creation state. `restore()` stays for the Playwright plugins' own contexts (`PlaywrightPluginBase._configure_context()`), which get the clearance cookies as today and no capture state.
+- **The hosts.** When the capture has its stream, it notes the page's host and its frames' hosts, before the page closes:
+  - a cookie is kept when its domain, without the leading dot, is one of these hosts or a parent domain of one;
+  - an origin is kept when its host is one of them.
+  - Ad domains that set cookies without a frame on the page stay out (the Pi's `GL_UI4`).
+- **In the background.**
+  - After `capture_media()` returned its stream, one task per host takes `storage_state(indexed_db=True)`, filters it and writes it, unless that host's state was kept within the last 10 minutes (in memory).
+  - A recycle or relaunch in between makes the task fail quietly (`capture_state_save_failed`). The tasks end at the pool's cleanup.
+  - The resolution never waits: the serialization covers every origin of the shared context.
+- **Bounds.**
+  - A host's filtered state above 512 KiB is not kept (`capture_state_too_large`, with the host and the size).
+  - A corrupt key is dropped with a warning (`capture_state_corrupt`).
+  - Logs name hosts and counts (cookies, origins, bytes), never names of values or values.
+- **R5 stays out.** With a kept state, a restart's first capture runs warm while the state holds. If R7's outcomes after a deploy show a cold capture despite a kept state, R5 follows: a warm-up capture with a recent link.
+
+## Risks / Trade-offs
+
+- **A stale state** (the hoster rotates what it trusts) costs a challenge, as a fresh context does, and the next pass replaces it.
+- **The serialization's cost** grows with the shared context's origins. It runs in the browser process, once per host per 10 minutes, off the resolution path.
+- **The cache holds session-like cookies and storage of hoster pages**, as it holds clearance cookies today. The cache backend is the app's own (diskcache or Redis), and nothing is logged.
+- **A hoster whose warmth lives in sessionStorage**, which `storage_state` does not cover, stays cold. Row 91 found none.
+
+## Migration Plan
+
+None. The new key starts empty, and the clearance cookies keep their key. Rollback is a revert; the new key ages out within 24 hours.
+
+## Open Questions
+
+- How long a kept state stays warm: R7's numbers after the deploys, or a pause test of `capture_timing --restore` on the maintainer's request.
