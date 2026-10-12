@@ -162,7 +162,7 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
   | 09:20:47.918 | `stealth_pool_started` |
 
   - The launch took 0.3 s in the dev container (about 9 s on the Pi). A run with an empty cache logged the launch and `stealth_pool_started` 0.7 s after `app_startup_complete` and no restore line; a run whose port was taken shut down during the warm-up without an error.
-  - Production: the first capture after the next restart, with these lines before it.
+  - **Production (10d43f4, deployed 2026-10-12 10:11:59 UTC):** `app_startup_complete` 10:11:59, `shared_browser_launched` and `stealth_pool_started` 10:12:06 (7 s on the Pi), the first Stremio request 10:12:25 (the post-deploy check), so no capture waited for the launch. No `capture_state_restored`: no capture has kept a state yet. The restore brought Filemoon's breaker back open (`hoster_resolve_circuit_open` from 10:12:26, due at about 10:57:20), so its next trial is the first with the browser up since the start.
 
 ### R5: warm-up after a start (gap 5)
 
@@ -204,6 +204,8 @@ Dev proof with the app's registry and resolvers (a fresh context per attempt, on
 | Filemoon | 0.3 s | none (no page yet) | `timeout` | opened | - |
 
 One more Filemoon run with a 20 s bound met no captcha and found no stream in 18.7 s: `dead`, cached for 15 minutes, as before (no mark, nothing for R1 to tell). The 4.2 s run is the design's known limit: a captcha requested after the cut leaves the attempt a `timeout`. The 0.3 s control is production's case after a restart (08:55, 2026-10-12): a trial cut while the browser launches has shown nothing and stays a `timeout`. Limits: the dev container, one link per hoster. Production's outcomes over a day after the deploy are task 1.10.
+
+**Deployed 2026-10-12 10:11:59 UTC (10d43f4, with `duration_ms` from c161bfb).** The first production challenge came 94 s after the start: hdfilme's Dropload link fell back to the browser at 10:12:57 (`dropload_captcha_browser_fallback`), met a Turnstile and ended at 10:13:33 as `challenge` (`kind=turnstile`, cooldown 60 s). No `circuit_breaker_*` line for Dropload followed, and its next link (10:13:34) was skipped by the cooldown (`left_s=59`); before row 89 the same attempt was a `timeout`, which the breaker counts (Dropload's trial at 08:55:52 reopened it for 3600 s). The 36 s from the fallback to the outcome are wall time; the resolve bound counts work time only (the page gate's wait stops `work_clock`). SuperVideo's restored trial failed without a mark and reopened for 3600 s (10:12:58), as before. The same two minutes' 25 streams took 0.9 to 3.7 s (`duration_ms`; VOE, Vidmoly, Playmogo, FSST and others). Reading the lines for task 1.10: an attempt's lines (`hoster_resolve_challenge`, `hoster_resolve_success`, `hoster_resolve_timeout`) name the link's host (`dr0pstream`), the guard's lines (`hoster_resolve_challenge_cooldown`, `hoster_resolve_circuit_open`) the resolver (`dropload`).
 
 ### R8: plugin-side fixes (gap 6)
 
