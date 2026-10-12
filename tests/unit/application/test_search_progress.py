@@ -17,6 +17,13 @@ def _sr(link: str, plugin: str = "a") -> SearchResult:
     )
 
 
+def _standby(link: str) -> SearchResult:
+    """streamcloud's result, standing in for hdfilme's search."""
+    result = _sr(link, "streamcloud")
+    result.metadata["standby_for"] = "hdfilme"
+    return result
+
+
 class TestSearchProgress:
     def test_keeps_matching_results_once(self) -> None:
         """The full and the base title find many links twice."""
@@ -244,6 +251,20 @@ class TestMergingIntoABase:
         assert [r.download_link for r in entry.results] == ["h1", "s1", "s2"]
         assert entry.missing == ("kinoger", "sto")
 
+    async def test_a_standbys_results_outlast_its_own_end(self) -> None:
+        """hdfilme's search answered by its standby streamcloud: the results
+        replace hdfilme's, and streamcloud's own end (the mirror group asked
+        hdfilme) takes none of them away."""
+        progress = SearchProgress(base=_base())
+        progress.expect(["hdfilme", "streamcloud"])
+        await progress.plugin_done("streamcloud", True)
+        progress.add([_standby("c1")], [_standby("c1")])
+        await progress.plugin_done("hdfilme", True)
+
+        entry = progress.entry()
+
+        assert [r.download_link for r in entry.results] == ["s1", "s2", "c1"]
+
     def test_a_refresh_ages_from_its_own_start(self) -> None:
         progress = SearchProgress(base=_base())
 
@@ -326,6 +347,35 @@ class TestPartialMatches:
         await progress.plugin_done("a", False)
 
         assert [r.download_link for r in progress.results] == ["naruto"]
+
+    async def test_a_standbys_partial_match_is_dropped_beside_its_member(
+        self,
+    ) -> None:
+        """The review's case (code review 2026-10-12, finding 4): hdfilme
+        finds "Naruto Shippuden" on the full title and fails on the base
+        title "Naruto", for which streamcloud stands in and finds the parent
+        "Naruto". Beside the member's match it is the parent series."""
+        progress = SearchProgress()
+
+        progress.add([_sr("shippuden", "hdfilme")], [_sr("shippuden", "hdfilme")])
+        progress.add([_standby("naruto")], [], [_standby("naruto")])
+        await progress.plugin_done("hdfilme", True)
+        progress.finish()
+
+        assert [r.download_link for r in progress.results] == ["shippuden"]
+
+    async def test_a_standbys_partial_match_counts_at_its_members_end(
+        self,
+    ) -> None:
+        """Alone, it counts once the member's search ended, in time for the
+        answer at the budget, not only at the search's end."""
+        progress = SearchProgress()
+
+        progress.add([_standby("bleach")], [], [_standby("bleach")])
+        await progress.plugin_done("hdfilme", True)
+
+        assert [r.download_link for r in progress.results] == ["bleach"]
+        assert not progress.done
 
     def test_the_search_end_releases_the_rest(self) -> None:
         """A standby's results carry its own name, while its end is reported

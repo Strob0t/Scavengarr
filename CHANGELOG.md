@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Mirror Standby's Partial Matches Go With Its Member's Search
+- The search runner marks a standby's results with the member it stood in for (`standby_for`); `SearchProgress` holds and drops partial matches, and the search cache merges results, by the plugin whose search gave them (`asked_plugin()` in `application/stremio/search_cache.py`).
+- Why: code review 2026-10-12, finding 4. A standby's run ends under the member's name, while its results carried only its own: hdfilme's "Naruto Shippuden" did not drop streamcloud's "Naruto" (found standing in for hdfilme's base-title query), so the parent series was served and cached, and a standby's lone partial match ("Bleach" for "Bleach: Thousand-Year Blood War") waited for the search's end and missed the answer at the budget.
+
 ### Changed: The Capture Probe Times Each Challenge
 - `scripts/probes/capture_timing.py` prints when each challenge was first met, in seconds into the run, beside the page loads and clicks (`captcha 4.1 s, captcha/verify 4.8 s`; the column is `challenge at`). Six cold Filemoon runs in the dev container met the captcha 3.8 to 4.2 s in, 0.1 to 0.5 s after the first click, and found the stream by 7.2 s (`docs/plans/challenge-reactions.md` → R4, the restart of 15:11:28).
 

@@ -46,18 +46,28 @@ class CachedSearch:
         self.__dict__.update(state)
 
 
+def asked_plugin(result: SearchResult) -> str:
+    """The plugin whose search gave *result*: the mirror group member a
+    standby stood in for (``standby_for``), else the one that found it
+    (``source_plugin``). A search's plugins end under these names."""
+    return str(
+        result.metadata.get("standby_for") or result.metadata.get("source_plugin", "")
+    )
+
+
 def merge(
     entry: CachedSearch, plugin: str, results: list[SearchResult]
 ) -> CachedSearch:
     """*entry* with *plugin*'s results replaced by *results* (its finished
-    run) and its name gone from ``missing``.
+    run, a standby's answer for it included: ``asked_plugin``) and its name
+    gone from ``missing``.
 
     The other plugins' results stay, so a merge never thins an entry: a
     plugin that did not finish keeps its earlier results. ``total`` counts
     the plugin's new matching results in place of its old ones (an entry
     keeps no raw count per plugin).
     """
-    kept = [r for r in entry.results if r.metadata.get("source_plugin") != plugin]
+    kept = [r for r in entry.results if asked_plugin(r) != plugin]
     replaced = len(entry.results) - len(kept)
     return CachedSearch(
         results=kept + list(results),

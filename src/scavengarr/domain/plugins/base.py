@@ -17,7 +17,8 @@ class SearchResult:
     ``episode`` (ints) name the episode a series result is for, set by
     plugins that know it from the page; the Stremio episode filter reads
     them before guessing from the title. ``source_plugin`` is set by the
-    search runner.
+    search runner, and ``standby_for`` where a mirror group's standby
+    answered its member's search: the member's name.
     """
 
     title: str

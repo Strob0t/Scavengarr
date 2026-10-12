@@ -21,7 +21,11 @@ from dataclasses import replace
 
 import structlog
 
-from scavengarr.application.stremio.search_cache import CachedSearch, merge
+from scavengarr.application.stremio.search_cache import (
+    CachedSearch,
+    asked_plugin,
+    merge,
+)
 from scavengarr.domain.plugins.base import ResultKey, SearchResult, result_key
 
 log = structlog.get_logger(__name__)
@@ -51,7 +55,9 @@ class SearchProgress:
     counts only where the plugin gave no other match: the full and the base
     title run at once, and "Naruto" beside "Naruto Shippuden" is the parent
     series of "Naruto: Shippūden", while "Naruto" alone may be the site's
-    name for it.
+    name for it. A result counts for the plugin whose search gave it
+    (``asked_plugin``): a mirror standby's for the member it stood in for,
+    whose end the runner reports (code review 2026-10-12, finding 4).
     """
 
     def __init__(
@@ -138,12 +144,12 @@ class SearchProgress:
         self.total += len(keys)
         dropped: Counter[str] = Counter()
         for result in matching:
-            plugin = _plugin(result)
+            plugin = asked_plugin(result)
             self._matched.add(plugin)
             dropped[plugin] += len(self._held.pop(plugin, ()))
             self._keep(result)
         for result in partial:
-            plugin = _plugin(result)
+            plugin = asked_plugin(result)
             if plugin in self._matched:
                 dropped[plugin] += 1
             else:
@@ -173,8 +179,7 @@ class SearchProgress:
             self._notify()
 
     def finish(self) -> None:
-        # A standby's results carry its own name, its end is reported under
-        # its mirror group's member: what still waits counts now
+        # What still waits (a plugin whose end went unreported) counts now
         for plugin in list(self._held):
             self._release(plugin)
         self.done = True
@@ -203,7 +208,7 @@ class SearchProgress:
         return replace(entry, stored_at=self.started, missing=missing)
 
     def _results_of(self, plugin: str) -> list[SearchResult]:
-        return [r for r in self.results if _plugin(r) == plugin]
+        return [r for r in self.results if asked_plugin(r) == plugin]
 
     async def write(self) -> None:
         """Store the entry through the search's store when it changed since
@@ -242,8 +247,3 @@ class SearchProgress:
     def _notify(self) -> None:
         for event in self._listeners:
             event.set()
-
-
-def _plugin(result: SearchResult) -> str:
-    """The plugin that gave *result* (``source_plugin``, set by the runner)."""
-    return str(result.metadata.get("source_plugin", ""))

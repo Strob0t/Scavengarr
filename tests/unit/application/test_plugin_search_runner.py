@@ -668,6 +668,28 @@ class TestMirrorStandby:
             ("hdfilme", "streamcloud")
         ]
 
+    async def test_a_standbys_results_name_the_member(self) -> None:
+        """The standby answers the member's search: its results name the
+        member it stood in for (``standby_for``), so the search's progress
+        takes them as the member's (code review 2026-10-12, finding 4)."""
+        plugins = self._plugins("hdfilme")
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        results = await _search(runner, list(plugins), ["q"])
+
+        assert [
+            (r.metadata["source_plugin"], r.metadata.get("standby_for"))
+            for r in results
+        ] == [("streamcloud", "hdfilme")]
+
+    async def test_a_members_own_results_name_no_standby(self) -> None:
+        plugins = self._plugins()
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        results = await _search(runner, list(plugins), ["q"])
+
+        assert [r.metadata.get("standby_for") for r in results] == [None]
+
     async def test_the_member_that_missed_ranks_behind(self) -> None:
         plugins = self._plugins("hdfilme")
         runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
