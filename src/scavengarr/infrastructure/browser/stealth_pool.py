@@ -47,6 +47,8 @@ from scavengarr.infrastructure.browser.turnstile import (
 from scavengarr.infrastructure.captcha.detect import challenge_frame
 
 if TYPE_CHECKING:
+    from patchright.async_api import StorageState
+
     from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
@@ -406,6 +408,20 @@ async def collect_capture_state(page: Page, hosts: Collection[str]) -> dict[str,
     return {"cookies": cookies, "origins": kept}
 
 
+async def _created(browser: Browser, state: StorageState) -> BrowserContext | None:
+    """A context created from *state*; None, logged, when the browser
+    refuses it (a cost of challenges, not of captures)."""
+    try:
+        return await browser.new_context(service_workers="block", storage_state=state)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "capture_state_restore_failed",
+            error=type(exc).__name__,
+            origins=len(state.get("origins") or []),
+        )
+        return None
+
+
 def _time_left() -> float:
     """How long the running work's resolve bound (``work_clock``) has
     left; unbounded outside one or past it (a capture cut after its
@@ -503,18 +519,34 @@ class StealthPool:
 
     async def _new_context(self, browser: Browser) -> BrowserContext:
         """A context started from the kept clearance cookies and capture
-        states (localStorage and IndexedDB can be set only at creation)."""
-        state = None
-        if self._clearance_store is not None:
-            state = await self._clearance_store.creation_state()
-        if state is not None:
-            try:
-                return await browser.new_context(
-                    service_workers="block", storage_state=state
-                )
-            except Exception as exc:  # noqa: BLE001  (costs a challenge, not a capture)
-                log.warning("capture_state_restore_failed", error=type(exc).__name__)
-        return await browser.new_context(service_workers="block")
+        states (localStorage and IndexedDB can be set only at creation),
+        logged once it exists. A browser that refuses the state gets the
+        cookies alone, and the store drops the kept origins so that later
+        contexts do not fail the same way; one that refuses the cookies too
+        gets none (code review 2026-10-12, finding 8)."""
+        store = self._clearance_store
+        creation = None if store is None else await store.creation_state()
+        if store is None or creation is None:
+            return await browser.new_context(service_workers="block")
+        state = creation.state
+        context = await _created(browser, state)
+        if context is None and state.get("origins") and state.get("cookies"):
+            state = creation.cookies_only()
+            context = await _created(browser, state)
+            if context is not None:
+                # The browser took the cookies and refused the origins
+                await store.drop_capture_origins()
+        if context is None:
+            return await browser.new_context(service_workers="block")
+        if creation.hosts:
+            log.info(
+                "capture_state_restored",
+                hosts=creation.hosts,
+                origins=len(state.get("origins") or []),
+            )
+        if creation.clearance_domains:
+            log.info("clearance_restored", domains=creation.clearance_domains)
+        return context
 
     async def _remember(self, page: Page) -> None:
         """Keep the clearance cookies of a page that passed its challenge."""

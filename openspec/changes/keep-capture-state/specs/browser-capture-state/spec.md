@@ -37,7 +37,7 @@ The stealth pool SHALL read the state it keeps from the capture's own page befor
 - **THEN** that database is not kept, and the rest of the state is
 
 ### Requirement: Every New Context Starts With The Kept State
-The stealth pool SHALL create each new browser context (at the start, after a recycle, after a relaunch) with the unexpired clearance cookies and every kept host's unexpired cookies, localStorage and IndexedDB, the newest winning per cookie, whether the clearance cookies or a kept state hold it, and per origin. A kept state older than 24 hours SHALL NOT be restored. A failure to restore SHALL leave a context without the state, logged, never a failed capture.
+The stealth pool SHALL create each new browser context (at the start, after a recycle, after a relaunch) with the unexpired clearance cookies and every kept host's unexpired cookies, localStorage and IndexedDB, the newest winning per cookie, whether the clearance cookies or a kept state hold it, and per origin. A kept state older than 24 hours SHALL NOT be restored. The restore SHALL be logged once the context exists.
 
 #### Scenario: After a restart
 - **WHEN** the app restarts and a Dropload link is captured whose host's state was kept before the restart
@@ -56,9 +56,17 @@ The stealth pool SHALL create each new browser context (at the start, after a re
 - **WHEN** a host's state was kept 25 hours ago
 - **THEN** the next context is created without it
 
+### Requirement: A Refused State Keeps The Cookies
+When the browser refuses a context with the kept state, the stealth pool SHALL create it with the cookies alone and the store SHALL drop the kept origins, so that later contexts do not fail the same way. When the browser refuses the cookies too, the context SHALL be created without the state. Each refusal SHALL be logged and SHALL NOT fail a capture.
+
 #### Scenario: A failed restore
-- **WHEN** the creation of a context with the kept state fails
-- **THEN** the context is created without it and `capture_state_restore_failed` is logged
+- **WHEN** the creation of a context with the kept state fails (an IndexedDB record the browser cannot restore)
+- **THEN** the context is created with the clearance cookies and the kept cookies, and `capture_state_restore_failed` is logged
+- **AND** the kept origins are dropped and their cookies stay (`capture_state_origins_dropped`), so the next context is created with the cookies
+
+#### Scenario: The cookies refused too
+- **WHEN** the creation with the cookies alone fails as well
+- **THEN** the context is created without the state, and the kept origins stay
 
 ### Requirement: The Browser Starts With The App
 Once the app has reported ready, it SHALL launch the shared browser and create the stealth pool's context, with the kept state, in the background, so the first capture after a start does not wait for the launch. Readiness SHALL NOT wait for it. A failed warm-up SHALL be logged with its error type and leave the launch to the first capture. Shutdown SHALL end it.
@@ -69,7 +77,7 @@ Once the app has reported ready, it SHALL launch the shared browser and create t
 
 #### Scenario: The kept state at the start
 - **WHEN** the app starts with a kept capture state
-- **THEN** `capture_state_restored` is logged by the warm-up, before any capture
+- **THEN** `capture_state_restored` is logged by the warm-up once its context exists, before any capture
 
 #### Scenario: A failed warm-up
 - **WHEN** the browser cannot be launched at the start

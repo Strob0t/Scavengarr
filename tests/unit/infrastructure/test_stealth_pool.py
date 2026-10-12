@@ -22,6 +22,7 @@ from scavengarr.domain.ports.browser_fetcher import (
     Redirect,
     page_claim,
 )
+from scavengarr.infrastructure.browser.clearance_store import CreationState
 from scavengarr.infrastructure.browser.hardening import (
     BLOCKED_RESOURCE_TYPES,
     block_heavy_resources,
@@ -210,6 +211,7 @@ class TestStealthPoolClearanceStore:
         page = _fetch_page()
         context.new_page = AsyncMock(return_value=page)
         store = AsyncMock()
+        store.creation_state = AsyncMock(return_value=None)
 
         await StealthPool(browser_pool=shared_pool, clearance_store=store).fetch_text(
             "https://filmfans.org/x", timeout=10
@@ -221,6 +223,7 @@ class TestStealthPoolClearanceStore:
         shared_pool, _, context = _mock_pool_stack()
         context.new_page = AsyncMock(return_value=_fetch_page())
         store = AsyncMock()
+        store.creation_state = AsyncMock(return_value=None)
 
         with patch(
             "scavengarr.infrastructure.browser.stealth_pool.solve_cloudflare",
@@ -1527,12 +1530,18 @@ class TestBusyPages:
 # ------------------------------------------------------------------
 
 
+def _creation(state: dict[str, object]) -> CreationState:
+    """*state* as the store hands it out, without kept hosts or clearance
+    cookies to name."""
+    return CreationState(state, [], [])
+
+
 class TestCreationState:
     async def test_the_context_is_created_with_the_stores_state(self) -> None:
         shared_pool, browser, context = _mock_pool_stack()
         store = AsyncMock()
         state = {"cookies": [], "origins": []}
-        store.creation_state = AsyncMock(return_value=state)
+        store.creation_state = AsyncMock(return_value=_creation(state))
         pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
 
         assert await pool._ensure_context() is context
@@ -1553,13 +1562,59 @@ class TestCreationState:
 
         browser.new_context.assert_awaited_once_with(service_workers="block")
 
-    async def test_a_failed_creation_with_the_state_falls_back(self) -> None:
+    async def test_a_failed_creation_keeps_the_cookies(self) -> None:
+        """An origin the context refuses costs its storage, not every
+        host's cookies (code review 2026-10-12, finding 8)."""
         shared_pool, browser, context = _mock_pool_stack()
         browser.new_context = AsyncMock(
-            side_effect=[PlaywrightError("bad storage state"), context]
+            side_effect=[PlaywrightError("Error setting storage state"), context]
         )
         store = AsyncMock()
-        store.creation_state = AsyncMock(return_value={"cookies": [], "origins": []})
+        cookies = [{"name": "cf_clearance", "value": "v", "domain": ".a.example"}]
+        state = {"cookies": cookies, "origins": [{"origin": "https://a.example"}]}
+        store.creation_state = AsyncMock(return_value=_creation(state))
+        pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
+
+        with structlog.testing.capture_logs() as logs:
+            assert await pool._ensure_context() is context
+
+        assert browser.new_context.await_args_list[-1].kwargs == {
+            "service_workers": "block",
+            "storage_state": {"cookies": cookies, "origins": []},
+        }
+        (failed,) = [e for e in logs if e["event"] == "capture_state_restore_failed"]
+        assert failed["error"] == "Error"
+        store.drop_capture_origins.assert_awaited_once_with()
+
+    async def test_without_cookies_the_fallback_is_plain(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+        browser.new_context = AsyncMock(
+            side_effect=[PlaywrightError("Error setting storage state"), context]
+        )
+        store = AsyncMock()
+        state = {"cookies": [], "origins": [{"origin": "https://a.example"}]}
+        store.creation_state = AsyncMock(return_value=_creation(state))
+        pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
+
+        assert await pool._ensure_context() is context
+
+        assert browser.new_context.await_args_list[-1].kwargs == {
+            "service_workers": "block"
+        }
+
+    async def test_a_failed_fallback_creates_a_plain_context(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+        browser.new_context = AsyncMock(
+            side_effect=[
+                PlaywrightError("Error setting storage state"),
+                PlaywrightError("Invalid cookie fields"),
+                context,
+            ]
+        )
+        store = AsyncMock()
+        cookies = [{"name": "cf_clearance", "value": "v", "domain": ".a.example"}]
+        state = {"cookies": cookies, "origins": [{"origin": "https://a.example"}]}
+        store.creation_state = AsyncMock(return_value=_creation(state))
         pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
 
         with structlog.testing.capture_logs() as logs:
@@ -1568,13 +1623,78 @@ class TestCreationState:
         assert browser.new_context.await_args_list[-1].kwargs == {
             "service_workers": "block"
         }
-        assert any(e["event"] == "capture_state_restore_failed" for e in logs)
+        failed = [e for e in logs if e["event"] == "capture_state_restore_failed"]
+        assert len(failed) == 2
+        store.drop_capture_origins.assert_not_awaited()  # the browser, not them
+
+    async def test_the_restore_is_logged_once_the_context_exists(self) -> None:
+        """``capture_state_restored`` came before the creation it announced
+        (code review 2026-10-12, the restore's log lines)."""
+        shared_pool, browser, context = _mock_pool_stack()
+        logged_before: list[bool] = []
+
+        async def _created(**_: object) -> AsyncMock:
+            logged_before.append(bool(restored))
+            return context
+
+        browser.new_context = AsyncMock(side_effect=_created)
+        store = AsyncMock()
+        cookies = [
+            {"name": "cf_clearance", "value": "v", "domain": ".a.example"},
+            {"name": "file_id", "value": "v", "domain": "b.example"},
+        ]
+        state = {"cookies": cookies, "origins": [{"origin": "https://b.example"}]}
+        store.creation_state = AsyncMock(
+            return_value=CreationState(state, ["b.example"], [".a.example"])
+        )
+        pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
+
+        with structlog.testing.capture_logs() as logs:
+            restored = [e for e in logs if e["event"] == "capture_state_restored"]
+            await pool._ensure_context()
+
+        assert logged_before == [False]
+        lines = [
+            e
+            for e in logs
+            if e["event"] in ("capture_state_restored", "clearance_restored")
+        ]
+        assert lines == [
+            {
+                "event": "capture_state_restored",
+                "log_level": "info",
+                "hosts": ["b.example"],
+                "origins": 1,
+            },
+            {
+                "event": "clearance_restored",
+                "log_level": "info",
+                "domains": [".a.example"],
+            },
+        ]
+
+    async def test_a_plain_creation_logs_no_restore(self) -> None:
+        shared_pool, browser, context = _mock_pool_stack()
+        browser.new_context = AsyncMock(
+            side_effect=[PlaywrightError("Error setting storage state"), context]
+        )
+        store = AsyncMock()
+        state = {"cookies": [], "origins": [{"origin": "https://a.example"}]}
+        store.creation_state = AsyncMock(
+            return_value=CreationState(state, ["a.example"], [])
+        )
+        pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
+
+        with structlog.testing.capture_logs() as logs:
+            await pool._ensure_context()
+
+        assert not [e for e in logs if e["event"] == "capture_state_restored"]
 
     async def test_a_recycles_new_context_gets_the_state_too(self) -> None:
         shared_pool, browser, _ = _mock_pool_stack()
         store = AsyncMock()
         state = {"cookies": [], "origins": []}
-        store.creation_state = AsyncMock(return_value=state)
+        store.creation_state = AsyncMock(return_value=_creation(state))
         pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
         await pool._ensure_context()
 
@@ -1987,7 +2107,7 @@ class TestWarmup:
         shared_pool, browser, _ = _mock_pool_stack()
         store = AsyncMock()
         state = {"cookies": [], "origins": []}
-        store.creation_state = AsyncMock(return_value=state)
+        store.creation_state = AsyncMock(return_value=_creation(state))
 
         await StealthPool(browser_pool=shared_pool, clearance_store=store).warmup()
 

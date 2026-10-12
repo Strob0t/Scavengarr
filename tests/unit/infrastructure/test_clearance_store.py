@@ -341,9 +341,10 @@ class TestCreationState:
         )
 
         with structlog.testing.capture_logs() as logs:
-            state = await store.creation_state()
+            creation = await store.creation_state()
 
-        assert state is not None
+        assert creation is not None
+        state = creation.state
         values = {(c["name"], c["domain"]): c["value"] for c in state["cookies"]}
         assert values == {
             ("cf_clearance", ".filmfans.org"): "CF",
@@ -351,19 +352,42 @@ class TestCreationState:
             ("file_id", "dr0pstream.com"): "NEWER",
         }
         assert [len(o["localStorage"]) for o in state["origins"]] == [2]
-        (restored,) = [e for e in logs if e["event"] == "capture_state_restored"]
-        assert restored["hosts"] == ["dr0pstream.com", "www.dr0pstream.com"]
+        assert creation.hosts == ["dr0pstream.com", "www.dr0pstream.com"]
+        assert creation.clearance_domains == [".dr0pstream.com", ".filmfans.org"]
+        # The stealth pool logs the restore once its context exists
+        assert not [e for e in logs if e["event"] == "capture_state_restored"]
+
+    async def test_the_cookies_alone(self) -> None:
+        soon = time.time() + 1800
+        states = {
+            "dr0pstream.com": {
+                "saved_at": time.time() - 60,
+                "cookies": [_cookie("file_id", "dr0pstream.com", soon)],
+                "origins": [_origin("https://dr0pstream.com", keys=2)],
+            }
+        }
+        store, _ = _keyed_store({_STATE_KEY: json.dumps(states)})
+
+        creation = await store.creation_state()
+
+        assert creation is not None
+        assert creation.cookies_only() == {
+            "cookies": creation.state["cookies"],
+            "origins": [],
+        }
+        assert [c["name"] for c in creation.cookies_only()["cookies"]] == ["file_id"]
 
     async def test_clearance_cookies_alone(self) -> None:
         soon = time.time() + 1800
         clearance = [_cookie("cf_clearance", ".filmfans.org", soon)]
         store, _ = _keyed_store({_KEY: json.dumps(clearance)})
 
-        state = await store.creation_state()
+        creation = await store.creation_state()
 
-        assert state is not None
-        assert [c["domain"] for c in state["cookies"]] == [".filmfans.org"]
-        assert state["origins"] == []
+        assert creation is not None
+        assert [c["domain"] for c in creation.state["cookies"]] == [".filmfans.org"]
+        assert creation.state["origins"] == []
+        assert creation.hosts == []
 
     async def test_a_corrupt_key_is_dropped_and_the_clearances_stay(self) -> None:
         soon = time.time() + 1800
@@ -373,10 +397,10 @@ class TestCreationState:
         )
 
         with structlog.testing.capture_logs() as logs:
-            state = await store.creation_state()
+            creation = await store.creation_state()
 
-        assert state is not None
-        assert [c["domain"] for c in state["cookies"]] == [".filmfans.org"]
+        assert creation is not None
+        assert [c["domain"] for c in creation.state["cookies"]] == [".filmfans.org"]
         cache.delete.assert_awaited_once_with(_STATE_KEY)
         assert any(e["event"] == "capture_state_corrupt" for e in logs)
 
@@ -451,10 +475,10 @@ class TestNewestCookieWins:
             _context([_cookie("cf_clearance", ".dr0pstream.com", expires + 120, "B")])
         )
 
-        state = await store.creation_state()
+        creation = await store.creation_state()
 
-        assert state is not None
-        assert [c["value"] for c in state["cookies"]] == ["B"]
+        assert creation is not None
+        assert [c["value"] for c in creation.state["cookies"]] == ["B"]
 
     async def test_a_newer_kept_cookie_beats_an_older_clearance(
         self, monkeypatch: pytest.MonkeyPatch
@@ -471,10 +495,10 @@ class TestNewestCookieWins:
             {"cookies": [_cookie("cf_clearance", ".dr0pstream.com", expires, "B")]},
         )
 
-        state = await store.creation_state()
+        creation = await store.creation_state()
 
-        assert state is not None
-        assert [c["value"] for c in state["cookies"]] == ["B"]
+        assert creation is not None
+        assert [c["value"] for c in creation.state["cookies"]] == ["B"]
 
     async def test_no_cookie_carries_its_time_into_a_context(
         self, monkeypatch: pytest.MonkeyPatch
@@ -486,14 +510,64 @@ class TestNewestCookieWins:
         )
         context = _context([])
 
-        state = await store.creation_state()
+        creation = await store.creation_state()
         await store.restore(context)
 
         assert "saved_at" in json.loads(data[_KEY])[0]
-        assert state is not None
-        assert all("saved_at" not in c for c in state["cookies"])
+        assert creation is not None
+        assert all("saved_at" not in c for c in creation.state["cookies"])
         (added,) = context.add_cookies.await_args.args
         assert all("saved_at" not in c for c in added)
+
+
+class TestDropCaptureOrigins:
+    """After a context refused the kept origins, the stealth pool drops
+    them and keeps the cookies (code review 2026-10-12, finding 8)."""
+
+    async def test_the_origins_go_and_the_cookies_stay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = _clock(monkeypatch, 1_800_000_000.0)
+        store, _ = _memory_store()
+        cookie = _cookie("file_id", "dr0pstream.com", clock.now + 3600)
+        origin = {"origin": "https://dr0pstream.com", "localStorage": []}
+        await store.keep_capture_state(
+            ["dr0pstream.com"], {"cookies": [cookie], "origins": [origin]}
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            await store.drop_capture_origins()
+        creation = await store.creation_state()
+
+        assert creation is not None
+        assert [c["name"] for c in creation.state["cookies"]] == ["file_id"]
+        assert creation.state["origins"] == []
+        assert creation.hosts == ["dr0pstream.com"]
+        (dropped,) = [e for e in logs if e["event"] == "capture_state_origins_dropped"]
+        assert dropped["hosts"] == ["dr0pstream.com"]
+
+    async def test_a_host_with_nothing_else_goes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clock(monkeypatch, 1_800_000_000.0)
+        store, data = _memory_store()
+        origin = {"origin": "https://vixeo.io", "localStorage": [{"name": "k"}]}
+        await store.keep_capture_state(["vixeo.io"], {"origins": [origin]})
+
+        await store.drop_capture_origins()
+
+        assert await store.creation_state() is None
+        assert json.loads(data["browser:capture_state:v1"]) == {}
+
+    async def test_a_failure_is_logged(self) -> None:
+        cache = AsyncMock()
+        cache.get = AsyncMock(side_effect=OSError("disk"))
+
+        with structlog.testing.capture_logs() as logs:
+            await ClearanceStore(cache).drop_capture_origins()
+
+        (failed,) = [e for e in logs if e["event"] == "capture_state_drop_failed"]
+        assert failed["error"] == "OSError"
 
 
 async def test_no_log_line_carries_a_value_or_a_url() -> None:

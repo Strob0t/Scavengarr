@@ -247,6 +247,7 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       - **Read:** the read took 3.9 to 5.5 ms over 5 reads, against 40.8 ms for `storage_state(indexed_db=True)`.
       - **Kept:** a database with only plain records (4 stores, 8 records, a compound key path and a unique index) was kept whole. A database with one plain record beside five others (dates, NaN, a typed array, a date key) was left out, and so was one with a File value and a unique index over invalid dates.
       - **Restore:** a new context created from the read state read every kept record back. The context from `storage_state()`'s state failed: `Error setting storage state` (finding 8, reproduced).
+    - **The restore's log lines (row 97):** `capture_state_restored` now follows the creation and names how many origins the context took, so after the next restart it means that the context took the state (the restart of 15:11:28 above could not tell). A refused state falls back to the cookies and drops the kept origins (`capture_state_origins_dropped`).
 
 ### R5: warm-up after a start (gap 5)
 

@@ -16,7 +16,9 @@ Turnstile widget). After a capture found its stream the stealth pool keeps
 that state per host (``keep_capture_state()``, at most 24 h), and each new
 stealth context starts from it and the clearance cookies
 (``creation_state()``; localStorage and IndexedDB can be set only when a
-context is created). docs/plans/challenge-reactions.md, R4.
+context is created). A browser that refuses the kept origins makes the
+store drop them (``drop_capture_origins()``). docs/plans/challenge-reactions.md,
+R4.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import asyncio
 import json
 import time
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlsplit
 
@@ -108,6 +111,23 @@ def _usable(cookie: Mapping[str, Any], now: float) -> bool:
     if not isinstance(expires, (int, float)) or expires <= 0:
         return True
     return expires > now + _MIN_REMAINING_S
+
+
+@dataclass(frozen=True)
+class CreationState:
+    """What a new stealth context starts from (*state*), and what its log
+    lines name once the context exists: the kept capture states' *hosts*
+    and the domains of the clearance cookies in it."""
+
+    state: StorageState
+    hosts: list[str]
+    clearance_domains: list[str]
+
+    def cookies_only(self) -> StorageState:
+        """The state without its origins, for a browser that refuses
+        them (code review 2026-10-12, finding 8)."""
+        cookies = self.state.get("cookies") or []
+        return cast("StorageState", {"cookies": cookies, "origins": []})
 
 
 class ClearanceStore:
@@ -240,11 +260,12 @@ class ClearanceStore:
             duration_ms=duration_ms,
         )
 
-    async def creation_state(self) -> StorageState | None:
+    async def creation_state(self) -> CreationState | None:
         """The storage state a new stealth context starts from: the
         unexpired clearance cookies and every kept host's cookies and
         origins, the newest winning per cookie, whichever of the two holds
-        it, and per origin; None when there is nothing."""
+        it, and per origin; None when there is nothing. The stealth pool
+        logs the restore once its context exists."""
         try:
             now = time.time()
             # key -> (saved_at, cookie)
@@ -270,9 +291,33 @@ class ClearanceStore:
             return None
         if not newest and not origins:
             return None
-        if states:
-            log.info("capture_state_restored", hosts=sorted(states))
         # The entries are storage_state() output, read back from the cache
         cookies = [_for_context(cookie) for _, cookie in newest.values()]
         state = {"cookies": cookies, "origins": list(origins.values())}
-        return cast("StorageState", state)
+        return CreationState(
+            cast("StorageState", state),
+            sorted(states),
+            sorted({c["domain"] for c in cookies if _is_clearance(c)}),
+        )
+
+    async def drop_capture_origins(self) -> None:
+        """Drop the kept states' origins and keep their cookies: a browser
+        refused a context with them, and every later context would fail the
+        same way (code review 2026-10-12, finding 8). A host with no cookie
+        left goes."""
+        try:
+            async with self._lock:
+                states = await self._load_states(time.time())
+                hosts = sorted(host for host, e in states.items() if e.get("origins"))
+                if not hosts:
+                    return
+                kept = {
+                    host: {**entry, "origins": []}
+                    for host, entry in states.items()
+                    if entry.get("cookies")
+                }
+                await self._cache.set(_STATE_KEY, json.dumps(kept), ttl=_STATE_TTL_S)
+        except Exception as exc:  # noqa: BLE001  (the next context fails again)
+            log.warning("capture_state_drop_failed", error=type(exc).__name__)
+            return
+        log.warning("capture_state_origins_dropped", hosts=hosts)

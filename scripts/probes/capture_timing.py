@@ -808,11 +808,11 @@ async def restore_runs(
     one the app creates from the store."""
     # The store writes in the background
     await asyncio.gather(*pool._keep_tasks)
-    state = await store.creation_state()
-    if state is None:
+    creation = await store.creation_state()
+    if creation is None:
         print("restore: the runs kept no state")
         return []
-    print("\n".join(state_lines(state)))
+    print("\n".join(state_lines(creation.state)))
     runs: list[tuple[int | str, Run]] = []
     for label, kept in (("control", None), ("restored", store)):
         await _close("stealth pool", pool.cleanup())
