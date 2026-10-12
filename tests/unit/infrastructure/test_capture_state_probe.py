@@ -29,6 +29,7 @@ _mod = _load()
 
 _NOW = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 _SECRETS = ("secret-1", "secret-2", "secret-3", "secret-4", "secret-5", "secret-6")
+_CODES = ("Fq3ZmK8pXw2RtB", "k3j9x0q2w8zt")  # made-up file codes
 
 _STATES: dict[str, Any] = {
     "bysezejataos.com": {
@@ -52,7 +53,7 @@ _STATES: dict[str, Any] = {
                 "name": "byse_pass",
                 "value": "secret-3",
                 "domain": "bysezejataos.com",
-                "path": "/",
+                "path": "/e/k3j9x0q2w8zt",
                 "expires": _NOW - 600,
             },
         ],
@@ -61,6 +62,10 @@ _STATES: dict[str, Any] = {
                 "origin": "https://bysezejataos.com",
                 "localStorage": [
                     {"name": "volume", "value": "secret-4"},
+                    {
+                        "name": "byse.jw8.subtitle.settings.n1mwq.org.Fq3ZmK8pXw2RtB",
+                        "value": "",
+                    },
                     {"name": "captcha_token", "value": "secret-5" * 4},
                 ],
                 "indexedDB": [{"name": "player-cache", "version": 1, "stores": []}],
@@ -91,9 +96,10 @@ class TestReport:
             "host bysezejataos.com: kept 06:35:20 UTC, 2 h 18 min ago",
             "- cookie byse_device_id | domain bysezejataos.com | path / | 364 d left",
             "- cookie byse_session | domain .bysezejataos.com | path /api | session",
-            "- cookie byse_pass | domain bysezejataos.com | path /"
+            "- cookie byse_pass | domain bysezejataos.com | path /e/…"
             " | expired 10 min ago",
             "- origin bysezejataos.com: localStorage volume (8 chars),"
+            " byse.jw8.subtitle.settings.n1mwq.org.… (0 chars),"
             " captcha_token (32 chars); IndexedDB player-cache",
             "host n1mwq.org: kept 08:52:20 UTC, 1 min ago",
             "- nothing kept",
@@ -105,6 +111,27 @@ class TestReport:
         text = "\n".join(_lines())
 
         assert not any(secret in text for secret in _SECRETS)
+
+    def test_no_file_code_reaches_the_output(self) -> None:
+        text = "\n".join(_lines())
+
+        assert not any(code in text for code in _CODES)
+
+
+class TestMask:
+    def test_a_file_code_segment_is_masked(self) -> None:
+        assert _mod.mask("/e/k3j9x0q2w8zt") == "/e/…"
+        assert _mod.mask("vcap18510794") == "…"
+
+    def test_setting_names_stay_readable(self) -> None:
+        for name in (
+            "i18nextLng",
+            "byse:rendering-diagnostics-options",
+            "byse.languagePreference.v1",
+            "byse_device_id",
+            "/",
+        ):
+            assert _mod.mask(name) == name
 
     def test_missing_keys(self) -> None:
         assert _mod.report_lines(None, None, now=_NOW) == [

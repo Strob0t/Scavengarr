@@ -3,7 +3,8 @@
 ``probe capture_state`` prints per kept host its age, each cookie's name,
 domain, path and remaining lifetime, and per origin the localStorage key
 names with their value lengths; then the stored clearance cookies alike.
-Read-only; prints names, lengths and times, never a value.
+Read-only; prints names, lengths and times, never a value, and masks the
+id-like segments of names and paths (``mask()``).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -24,6 +26,27 @@ import structlog
 from scavengarr.infrastructure.browser.clearance_store import _CACHE_KEY, _STATE_KEY
 from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.config import load_config
+
+# A file code names the file played, like a URL: a segment of 12 or more
+# characters with letters and digits (setting names such as i18nextLng are
+# shorter)
+_SEGMENT = re.compile(r"[^./:_-]+")
+
+
+def _masked(segment: re.Match[str]) -> str:
+    text = segment.group()
+    coded = (
+        len(text) >= 12
+        and any(c.isdigit() for c in text)
+        and any(c.isalpha() for c in text)
+    )
+    return "…" if coded else text
+
+
+def mask(name: str) -> str:
+    """*name* (a cookie's name or path, a localStorage key) with its
+    id-like segments as ``…``."""
+    return _SEGMENT.sub(_masked, name)
 
 
 def span(seconds: float) -> str:
@@ -49,8 +72,8 @@ def _cookie_line(cookie: Mapping[str, Any], now: float) -> str:
     else:
         lifetime = f"{span(expires - now)} left"
     return (
-        f"- cookie {cookie.get('name')} | domain {cookie.get('domain')}"
-        f" | path {cookie.get('path')} | {lifetime}"
+        f"- cookie {mask(str(cookie.get('name')))} | domain {cookie.get('domain')}"
+        f" | path {mask(str(cookie.get('path')))} | {lifetime}"
     )
 
 
@@ -61,7 +84,8 @@ def _origin_line(origin: Mapping[str, Any]) -> str:
     items = [i for i in origin.get("localStorage") or [] if isinstance(i, dict)]
     if items:
         keys = ", ".join(
-            f"{i.get('name')} ({len(str(i.get('value', '')))} chars)" for i in items
+            f"{mask(str(i.get('name')))} ({len(str(i.get('value', '')))} chars)"
+            for i in items
         )
         parts.append(f"localStorage {keys}")
     bases = [b for b in origin.get("indexedDB") or [] if isinstance(b, dict)]
