@@ -328,7 +328,7 @@ Some home routers treat many new connections to different hosts in a short time 
 <details>
 <summary><b>Where is my data stored?</b></summary>
 
-In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies, plugin scores and their 180-day record, hoster resolutions and circuit breakers) and in `data/config.yaml`. Scavengarr stores no media.
+In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies and the state of the hosters the browser plays, plugin scores and their 180-day record, hoster resolutions and circuit breakers) and in `data/config.yaml`. Scavengarr stores no media.
 
 </details>
 
