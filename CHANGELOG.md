@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: One Title Set Judges A Site's Series Name
+- The use case fetches the TMDB titles for every language the stream plugins search in, not only the selected plugins' languages, and every title info carries the request's series titles in all of them (`TitleMatchInfo.series_titles`). The title matcher judges a partial match by them in every language group, and they go to the locating plugins as `EpisodeRef.titles`. The matcher normalises titles with the episode index's `normalize_title`, which decodes the entities the sites leave in their titles.
+- Why: code review 2026-10-12, finding 11. The matcher judged a site's name by its language group's titles, `locate()` by the selected plugins' titles: aniworld's "Yu-Gi-Oh!" (TMDB's English title) was a whole title for `locate()` but a partial match of the German "Yu-Gi-Oh! Duel Monsters" for the matcher, held until aniworld's end and dropped beside its other match; a scored selection without an English plugin flipped `locate()`'s verdict, and a joined request took the first request's titles.
+- Cost: with scored selection, a request whose selection lacks a language makes one more TMDB lookup (in parallel with the others).
+
 ### Fixed: A Site Name Without Its Article Is No Parent Series
 - `is_partial_title` (`domain/entities/stremio.py`) counts no article (the, a, an, der, die, das, ein, eine) and no "and"/"und" as a title word: "Walking Dead" and "Rick & Morty" ("&" falls away when normalising) name "The Walking Dead" and "Rick and Morty" whole.
 - Why: code review 2026-10-12, finding 10 (plausible: no captured page shows such a pair). The site's name for the requested series counted as its parent, so a spin-off beside it ("The Walking Dead: World Beyond", "Rick and Morty: The Anime") dropped the series in every arrival order. The matcher's partial flag and `locate()`'s `is_partial_series` share the rule.

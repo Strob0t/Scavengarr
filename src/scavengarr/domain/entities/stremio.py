@@ -115,6 +115,12 @@ class TitleMatchInfo:
     *animation* says whether the catalog's genres name "Animation";
     ``None`` without a catalog meta, and then a result's category is
     not compared.
+
+    *series_titles* are the request's titles in every language the stream
+    plugins search in (``EpisodeRef.titles``): a series result named only
+    by a shorter form of them is partial (``is_partial_title``), whichever
+    language group's reference scores it; without them the reference's
+    own titles judge it.
     """
 
     title: str
@@ -123,6 +129,7 @@ class TitleMatchInfo:
     content_type: StremioContentType | None = None
     imdb_id: str | None = None
     animation: bool | None = None
+    series_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -174,10 +181,11 @@ class EpisodeRef:
     Kitsu entry counts whole whose number did not come out), which may lie
     one off the sites' count (One Piece), so a titled row's own title has
     to confirm it (``locate``).
-    *titles* are the request's series titles (each language's title and
-    alternatives): a site's series named only by a shorter form of them
-    is the request's parent, whose rows count another series
-    (``is_partial_title``).
+    *titles* are the request's series titles (the title and alternatives
+    of each language the stream plugins search in, as the title matcher's
+    ``TitleMatchInfo.series_titles``): a site's series named only by a
+    shorter form of them is the request's parent, whose rows count another
+    series (``is_partial_title``).
     """
 
     season: int

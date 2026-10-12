@@ -76,6 +76,13 @@ class TestNormalize:
     def test_strips_mixed_punctuation(self) -> None:
         assert _normalize("T2: Trainspotting!") == "t2 trainspotting"
 
+    def test_decodes_entities(self) -> None:
+        """The sites escape their titles twice: the episode index decodes
+        what is left, and so does the matcher (code review 2026-10-12,
+        finding 11)."""
+        assert _normalize("Rick &amp; Morty") == "rick morty"
+        assert _normalize("Someone&#039;s Dream") == "someone s dream"
+
 
 # ---------------------------------------------------------------------------
 # _strip_year
@@ -435,6 +442,26 @@ class TestPartialMatches:
 
         assert matches.matching == [tybw]
         assert matches.partial == [bleach]
+
+    def test_the_series_titles_judge_a_partial_match(self) -> None:
+        """The review's case (code review 2026-10-12, finding 11): the German
+        group's reference is "Yu-Gi-Oh! Duel Monsters", while the request's
+        series titles hold the English "Yu-Gi-Oh!", aniworld's name for the
+        series. The series titles judge the name, as ``locate()`` does."""
+        yugioh = _sr("Yu-Gi-Oh! - S01E06", category=5070)
+        german = TitleMatchInfo(
+            title="Yu-Gi-Oh! Duel Monsters", year=2000, content_type="series"
+        )
+        every_language = TitleMatchInfo(
+            title="Yu-Gi-Oh! Duel Monsters",
+            year=2000,
+            content_type="series",
+            series_titles=("Yu-Gi-Oh! Duel Monsters", "Yu-Gi-Oh!"),
+        )
+
+        assert score_title(yugioh, german).partial
+        assert not score_title(yugioh, every_language).partial
+        assert score_title(yugioh, every_language).score == 1.0
 
     def test_a_name_without_its_article_is_the_series(self) -> None:
         """The review's case (code review 2026-10-12, finding 10): the site

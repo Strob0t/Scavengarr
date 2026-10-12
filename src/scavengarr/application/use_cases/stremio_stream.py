@@ -290,19 +290,22 @@ class StremioStreamUseCase:
         with self._telemetry.stage("stremio_phase", phase="metadata") as metadata:
             selected = await self._selector.select(all_names, category)
 
-            # 2. Titles: one per language the selected plugins search in,
-            # and the episode's Kitsu number alongside
+            # 2. Titles: one per language the stream plugins search in, so
+            # the request's series titles are the same whichever plugins it
+            # selects (code review 2026-10-12, finding 11), and the episode's
+            # Kitsu number alongside
             languages = self._titles.languages(selected)
             (title_infos, meta), (absolute, position_trusted) = await asyncio.gather(
-                self._titles.title_infos(request, languages),
+                self._titles.title_infos(request, self._titles.languages(all_names)),
                 self._numbering(request, absolute),
             )
-            titles = self._titles.series_titles(title_infos, languages)
+            primary_title_info = first_available_title(title_infos, languages)
+            titles = (
+                () if primary_title_info is None else primary_title_info.series_titles
+            )
             episode_ref = self._episode_ref(
                 request, meta, absolute, titles, position_trusted=position_trusted
             )
-
-            primary_title_info = first_available_title(title_infos, languages)
             metadata.outcome = "not_found" if primary_title_info is None else "found"
         if primary_title_info is None:
             log.warning("stremio_title_not_found", imdb_id=request.imdb_id)

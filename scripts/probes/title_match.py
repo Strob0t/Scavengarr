@@ -216,12 +216,14 @@ async def probe(state: AppState, sid: str, only: set[str] | None) -> list[Plugin
         set(state.plugins.get_by_provides("stream"))
         | set(state.plugins.get_by_provides("both"))
     )
+    # The app's titles: every stream plugin's language, whichever it asks
+    languages = titles.languages(names)
     if only:
         names = [n for n in names if n in only]
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
     req, category = parse_id(sid)
-    infos, _meta = await titles.title_infos(req, titles.languages(names))
+    infos, _meta = await titles.title_infos(req, languages)
 
     async def one_plugin(
         name: str, langs: list[str], queries: list[str], ref: TitleMatchInfo

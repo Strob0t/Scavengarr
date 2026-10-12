@@ -652,6 +652,45 @@ class TestShorterTitles:
 
         assert [s.url for s in streams] == ["https://voe.sx/e/tybw"]
 
+    async def test_a_name_another_language_holds_whole_is_no_partial(self) -> None:
+        """The review's case (code review 2026-10-12, finding 11): TMDB's
+        German title is "Yu-Gi-Oh! Duel Monsters", its English one
+        "Yu-Gi-Oh!", and the German aniworld names the series "Yu-Gi-Oh!".
+        The request's series titles hold that name whole, so aniworld's
+        other match does not drop it."""
+        aniworld = AsyncMock()
+        aniworld.isolated_search = AsyncMock(
+            side_effect=lambda *_args, **_kwargs: [
+                _episode("https://voe.sx/e/yugioh", "Yu-Gi-Oh!"),
+                _episode("https://dood.to/e/duel", "Yu-Gi-Oh! Duel Monsters"),
+            ]
+        )
+        sites = {"aniworld": aniworld, "english": _site_by_query({})}
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, *, language: TitleMatchInfo(
+                title="Yu-Gi-Oh!" if language == "en" else "Yu-Gi-Oh! Duel Monsters",
+                year=2000,
+            )
+        )
+        plugins = MagicMock()
+        plugins.get_languages.side_effect = lambda name: (
+            ["en"] if name == "english" else ["de"]
+        )
+        plugins.get_by_provides.side_effect = lambda p: (
+            sorted(sites) if p == "stream" else []
+        )
+        plugins.get.side_effect = sites.__getitem__
+        config = make_config(plugin_timeout_seconds=1.0, stream_deadline_seconds=2.0)
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, config=config)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert sorted(s.url for s in streams) == [
+            "https://dood.to/e/duel",
+            "https://voe.sx/e/yugioh",
+        ]
+
     async def test_a_site_that_lists_only_the_shorter_name_keeps_it(self) -> None:
         """Another plugin's full match does not drop it."""
         bleach = _site_by_query(

@@ -441,12 +441,27 @@ class TestSeriesIdentity:
             content_type="series",
             imdb_id="tt0388629",
             animation=True,
+            series_titles=("One Piece DE", "One Piece"),
         )
         assert infos["en"] is not None
         assert infos["en"].title == "One Piece"
         assert infos["en"].animation is True
         # One catalog lookup, shared by the languages
         series_meta.lookup.assert_awaited_once_with("series", "tt0388629")
+
+    @pytest.mark.asyncio
+    async def test_every_info_carries_the_series_titles(self) -> None:
+        """Each language's title and alternatives: every language group's
+        reference judges a site's name by the titles ``EpisodeRef.titles``
+        holds (code review 2026-10-12, finding 11)."""
+        titles, _ = _resolver((_meta(("Animation",)), "found"))
+
+        infos, _record = await titles.title_infos(_series(), ["de", "en"])
+
+        assert {lang: info and info.series_titles for lang, info in infos.items()} == {
+            "de": ("One Piece DE", "One Piece"),
+            "en": ("One Piece DE", "One Piece"),
+        }
 
     @pytest.mark.asyncio
     async def test_a_live_action_series(self) -> None:
@@ -486,7 +501,9 @@ class TestSeriesIdentity:
         infos, meta = await titles.title_infos(_series("tmdb:37854"), ["de"])
 
         assert meta is None
-        assert infos["de"] == TitleMatchInfo(title="Some Show", content_type="series")
+        assert infos["de"] == TitleMatchInfo(
+            title="Some Show", content_type="series", series_titles=("Some Show",)
+        )
         series_meta.lookup.assert_not_awaited()
 
     @pytest.mark.asyncio

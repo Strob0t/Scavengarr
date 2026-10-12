@@ -586,6 +586,66 @@ class TestEpisodeReference:
             ),
         )
 
+    async def test_the_series_titles_take_every_stream_plugins_language(
+        self,
+    ) -> None:
+        """The scores select the German aniworld alone; the English plugin's
+        language still gives its title, so a site's name is judged alike
+        for every selection (code review 2026-10-12, finding 11)."""
+        plugin = self._plugin(locates=True)
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, *, language: TitleMatchInfo(
+                title="Yu-Gi-Oh!" if language == "en" else "Yu-Gi-Oh! Duel Monsters",
+                year=2000,
+            )
+        )
+        plugins = MagicMock()
+        plugins.get_languages.side_effect = lambda name: (
+            ["en"] if name == "english" else ["de"]
+        )
+        plugins.get_by_provides.side_effect = lambda p: (
+            ["aniworld", "english"] if p == "stream" else []
+        )
+        plugins.get.return_value = plugin
+        series_meta = AsyncMock()
+        series_meta.lookup = AsyncMock(return_value=(self._META, "found"))
+        store = AsyncMock()
+        store.get_snapshot = AsyncMock(
+            side_effect=lambda name, category, bucket: PluginScoreSnapshot(
+                plugin=name,
+                category=category,
+                bucket="current",
+                final_score=0.9 if name == "aniworld" else 0.4,
+                confidence=0.5,
+            )
+        )
+        config = make_config(
+            scoring_enabled=True, max_plugins_scored=1, exploration_probability=0.0
+        )
+        uc = make_use_case(
+            tmdb=tmdb,
+            plugins=plugins,
+            series_meta=series_meta,
+            score_store=store,
+            config=config,
+        )
+
+        await uc.execute(
+            make_request(
+                imdb_id="tt0388629", content_type="series", season=5, episode=2
+            )
+        )
+
+        # aniworld alone searched, in German
+        assert [c.args[0] for c in plugin.search.await_args_list] == [
+            "Yu-Gi-Oh Duel Monsters"
+        ]
+        assert plugin.search.await_args.kwargs["episode_ref"].titles == (
+            "Yu-Gi-Oh! Duel Monsters",
+            "Yu-Gi-Oh!",
+        )
+
     async def test_a_kitsu_request_is_not_numbered_again(self) -> None:
         plugin = self._plugin(locates=True)
         translated = make_request(

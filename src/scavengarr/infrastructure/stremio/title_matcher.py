@@ -7,9 +7,9 @@ decides by identity where a result shows one: an IMDb id in its
 metadata, a year outside the tolerance, or a category against the
 reference's kind (``TitleMatchInfo.animation``). Every verdict names the
 rule that decided it (``TitleScore.reason``). A series result named only by
-a shorter form of the reference's titles ("Naruto" for "Naruto: Shippūden")
-is a partial match (``TitleMatches.partial``), which counts only where its
-plugin gave no other match.
+a shorter form of the request's series titles ("Naruto" for "Naruto:
+Shippūden") is a partial match (``TitleMatches.partial``), which counts only
+where its plugin gave no other match.
 
 Uses **rapidfuzz** for fast, robust fuzzy matching (C++ backend).
 """
@@ -23,7 +23,6 @@ from typing import Literal
 
 import structlog
 from rapidfuzz import fuzz
-from unidecode import unidecode as _unidecode
 
 from scavengarr.domain.entities.stremio import (
     TitleMatches,
@@ -32,6 +31,7 @@ from scavengarr.domain.entities.stremio import (
 )
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.categories import names_anime
+from scavengarr.infrastructure.plugins.episode_index import normalize_title
 from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 log = structlog.get_logger(__name__)
@@ -42,11 +42,6 @@ _YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 # Regex: trailing sequel number — 1-2 digits only (e.g. "Iron Man 2", "Taken 3")
 # Excludes 4-digit years like "2008".
 _SEQUEL_RE = re.compile(r"\s+(\d{1,2})\s*$")
-
-# Matches any character that is NOT a word character or whitespace.
-# Used to strip punctuation (colons, hyphens, apostrophes, etc.) so that
-# token matching is not broken by e.g. "dune:" vs "dune".
-_PUNCT_RE = re.compile(r"[^\w\s]")
 
 # An IMDb title id: "tt0388629", or the digits alone (a site's API may store
 # the number, which loses the leading zeros)
@@ -65,8 +60,8 @@ class TitleScore:
     agree, 1.2, or differ, 0.0), ``category`` (the result's label against
     the reference's kind, 0.0), ``year`` (the result's year outside the
     tolerance, 0.0) or ``score`` (the text rules). *partial*: a series
-    result whose titles name only a shorter form of the reference's
-    (``is_partial_title``)."""
+    result whose titles name only a shorter form of the request's series
+    titles (``is_partial_title``)."""
 
     score: float
     reason: TitleReason
@@ -74,10 +69,11 @@ class TitleScore:
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, transliterate Unicode→ASCII, strip punctuation, collapse ws."""
-    text = _unidecode(text.lower())
-    text = _PUNCT_RE.sub(" ", text)
-    return " ".join(text.split())
+    """Lower-case ASCII words, as the episode index normalises a site's
+    titles (``normalize_title``: entities decoded, accents transliterated,
+    punctuation dropped, so "dune:" is "dune"): both judge a site's name
+    alike (code review 2026-10-12, finding 11)."""
+    return normalize_title(text)
 
 
 def _strip_year(text: str) -> str:
@@ -345,8 +341,9 @@ def score_title(
     - Sequel penalty: −*sequel_penalty* if sequel numbers differ
 
     A series result whose candidates name only a shorter form of the
-    reference's titles is marked ``partial``; a movie's never is, since
-    scene names drop subtitles ("Dune.2021" for "Dune: Part One").
+    request's series titles (``series_titles``, else the reference's
+    titles) is marked ``partial``; a movie's never is, since scene names
+    drop subtitles ("Dune.2021" for "Dune: Part One").
     """
     verdict = _identity_verdict(result, reference)
     if verdict is not None:
@@ -389,8 +386,9 @@ def score_title(
             if s > best:
                 best = s
 
+    series_titles = [_normalize(_strip_year(t)) for t in reference.series_titles]
     partial = reference.content_type == "series" and is_partial_title(
-        candidates, norm_refs
+        candidates, series_titles or norm_refs
     )
     return TitleScore(best, "score", partial)
 

@@ -120,7 +120,11 @@ class TitleResolver:
         ``tmdb:`` id has no language variants: the same info for every
         language); the record comes from the catalog, once per request, and
         gives every info its identity: the request's IMDb id and whether the
-        genres name animation (``None`` without a record).
+        genres name animation (``None`` without a record). Every info also
+        carries the request's series titles in all *languages*
+        (``series_titles``), so each language group's reference judges a
+        site's name by the titles ``EpisodeRef.titles`` holds (code review
+        2026-10-12, finding 11).
         """
         meta, infos = await asyncio.gather(
             self.series_meta(request),
@@ -130,11 +134,15 @@ class TitleResolver:
         )
         imdb_id = request.imdb_id if request.imdb_id.startswith("tt") else None
         animation = None if meta is None else "Animation" in meta.genres
+        by_language = dict(zip(languages, infos))
+        titles = self.series_titles(by_language, languages)
         return {
             lang: None
             if info is None
-            else replace(info, imdb_id=imdb_id, animation=animation)
-            for lang, info in zip(languages, infos)
+            else replace(
+                info, imdb_id=imdb_id, animation=animation, series_titles=titles
+            )
+            for lang, info in by_language.items()
         }, meta
 
     async def series_meta(self, request: StremioStreamRequest) -> SeriesMeta | None:

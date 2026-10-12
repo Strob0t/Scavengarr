@@ -501,6 +501,8 @@ async def probe(
         series_meta=state.series_meta,
     )
     names = _plugin_names(state, only)
+    # The app's titles: every stream plugin's language, whichever it asks
+    languages = titles.languages(_plugin_names(state, None))
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
     records: list[Record] = []
@@ -549,7 +551,6 @@ async def probe(
             print(f"{sid}: no translation", file=sys.stderr)
             continue
         req, absolute = request
-        languages = titles.languages(names)
         infos, meta = await titles.title_infos(req, languages)
         episode_ref = titles.episode_ref(
             req,
