@@ -338,6 +338,36 @@ One more Filemoon run with a 20 s bound met no captcha and found no stream in 18
 
 Challenge completions (`scavengarr_hoster_challenge_completion_total`): dropload `none` 1, filemoon `stream` 1. Filemoon's `challenge` and completion are the trial of 15:22:19 (R4, the restart of 15:11:28), its `timeout`s the cold captures before it; Dropload's `check_error`s are playback checks of its CDN. Row 96's round compares the same outcomes, with `joined`, `challenge_cooldown` and the completions, per hoster and per hour of uptime.
 
+**Row 96's round (Ultracode, after its deploy).** The same counters in 503a0eb, from its start at 17:42:29 to 18:09:30 UTC (27 minutes, as long as the baseline; the post-deploy check's requests and the round's plays, four titles from 17:55 to 17:59, among them):
+
+| Resolver | `stream` | `cached` | `dead` | `challenge` | `cut` | `timeout` | `breaker_open` | `busy` | `check_error` | `unplayable` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| direct | 0 | 25 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| doodstream | 9 | 25 | 4 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| dropload | 0 | 0 | 0 | 0 | 0 | 1 | 7 | 0 | 2 | 0 |
+| filemoon | 7 | 12 | 0 | 0 | 9 | 10 | 8 | 0 | 0 | 2 |
+| firestream | 2 | 4 | 0 | 0 | 3 | 1 | 0 | 0 | 0 | 0 |
+| fsst | 3 | 4 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| gxplayer | 1 | 4 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 1 |
+| mixdrop | 2 | 5 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| rpmplay | 0 | 4 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| strmup | 3 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| supervideo | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
+| upns | 0 | 4 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| vidhide | 2 | 3 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| vidmoly | 6 | 18 | 3 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| vidsonic | 3 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| vinovo | 1 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| voe | 25 | 25 | 6 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
+
+No challenge completion, no `joined` or `challenge_cooldown`, and no `hoster_resolve_challenge` line in the 27 minutes; the two Turnstile passes (`turnstile_widget_passed`) were the sto plugin's pages, not a hoster's. Two breakers opened: Filemoon's at 17:45:43 for 60 s, Dropload's at 17:46:05 for 3600 s. Against the baseline:
+
+- **Nothing moved from `timeout` to `challenge`: Filemoon showed the app no captcha.** The state restored at the start spared it (task 3.2 above, a young state). Its 7 streams came with `challenge=None`, in 5.9, 8.0, 8.2, 8.7, 10.3 and 10.3 s, and one in 33.5 s (`duration_ms`; at least 23.5 s of it waited for a page, which stops the bound). Its 10 timeouts (9 on the filemoon and bysezejataos hosts, 1 on a moflix-stream link) ended at the bound without a mark: six from 17:44:01 to 17:45:43 among the post-deploy check's requests, four during the plays (17:57:12 to 17:58:46). On the idle Pi a warm filemoon.to capture streamed at 6.5 s (the Pi runs of 17:48 and 17:49 above); under the window's load most streams came near the bound, and the timeouts are captures that found none in their 10 s of work. Whether one of them would have met a captcha after its cut, the counters cannot tell; none of the 7 streams met one. Row 96's split between a passed and a standing challenge had nothing to judge in production yet.
+- **`cut` against the completions.** Filemoon 9 cuts (baseline 7), all of them before the plays, and 28 for all resolvers (baseline 18); no completion (baseline 2). A `cut` is a resolution whose request ended first (its answer went out); the registry cancels it, challenge or not. A completion follows only the bound's cut after a challenge (`_hand_over`), and there was none to hand over.
+- **`breaker_open`.** Filemoon 8 (baseline 20). Its opening followed five failures in a row after its stream at 17:45:05 (an `unplayable` at 17:45:12, four `timeout`s); three links were skipped while it was open, and five at 17:50:28 while its half-open trial ran, whose stream at 17:50:36 closed it. The plays' four timeouts stayed below the threshold of five, and the stream at 17:58:56 reset the count. Dropload's 7 follow its opening: its three browser fallbacks (hdfilme's links) found two streams that failed the CDN check (`ConnectTimeout`, the two `check_error`s), and the third ended at the bound without a mark. SuperVideo's 9 skip the breaker it was restored with; no trial ran in the window.
+
+The plays (One Piece S22E04, Interstellar, Demon Slayer S02E01, Breaking Bad S01E01; 26 of 27 streams played) show nothing new for this table: their one failure, VidHide's CDN cutting an HLS segment mid-body, is row 102.
+
 ### R8: plugin-side fixes (gap 6)
 
 - **What:**
