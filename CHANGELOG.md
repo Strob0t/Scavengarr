@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Play-Time Refresh Passes the Challenge Cooldown
+- `resolve(refresh=True)` (the CDN refused a stored stream: `after_refusal()`) passes the hoster's challenge cooldown; only an open breaker refuses it, as before the cooldown. A search-time resolution still waits the cooldown out.
+- Why: code review 2026-10-12, finding 5. A Filemoon link met a challenge and started the cooldown; a stored Filemoon stream whose video URL had expired was refused by its CDN, the refresh came back `None` without asking the resolver, and playback failed at once.
+
 ### Fixed: A Page Past Its Challenge Gives a Verdict; DoodStream's Widget Marks Nothing
 - A resolution's challenge mark says whether its challenge still stands (`ChallengeMark.open`). The browser passes it when its page got past the challenge (`mark_resolution_passed()`): `solve_cloudflare()` after a shown interstitial cleared, `pass_turnstile_widget()` after the widget's token came and the form went out, and the capture when the page shows the hoster's offline notice. A later challenge marks it again.
 - The registry judges a resolution without a stream after a pass as one without a challenge: `dead`, cached for 15 minutes, and the hoster's next link is resolved. A cut after a pass stays `challenge` and runs on in the background, but starts no cooldown (`hoster_resolve_challenge` names `passed`, with `cooldown_s=0`). A completion past its challenge caches a dead link as dead without a step up; its error or deadline steps nothing up.

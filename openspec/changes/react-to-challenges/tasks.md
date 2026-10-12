@@ -33,3 +33,4 @@
 - [x] 3.2 Tests: DoodStream's capture declares its passive widget and its frames mark nothing; an interstitial still marks; reCAPTCHA's `bframe` marks nothing (finding 3).
 - [x] 3.3 Implementation: `ChallengeMark.open`, `mark_resolution_passed()`, the passes in `turnstile.py` and `capture_media()`, `passive_widget` through `capture_stream()`, the registry's rules, and the capture timing probe's `passive_widget`.
 - [x] 3.4 Docs: `docs/features/hoster-resolvers.md`, `docs/features/observability.md`, `CHANGELOG.md`.
+- [x] 3.5 Tests and implementation: a play-time refresh passes the challenge cooldown, an open breaker still refuses it (finding 5); docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.

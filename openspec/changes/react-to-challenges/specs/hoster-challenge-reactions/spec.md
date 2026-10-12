@@ -55,6 +55,17 @@ After a `challenge` whose challenge stood the registry SHALL skip the hoster's l
 - **WHEN** a hoster's breaker is half-open and its challenge cooldown runs
 - **THEN** the link is skipped without claiming the trial's slot
 
+### Requirement: A Play-Time Refresh Passes The Cooldown
+A refresh of a stored stream that its CDN refused at play time SHALL pass the hoster's challenge cooldown. Only an open circuit breaker SHALL refuse it.
+
+#### Scenario: A play-time refresh
+- **WHEN** Filemoon's cooldown runs and the CDN refuses a stored Filemoon stream whose video URL expired
+- **THEN** the link is resolved again
+
+#### Scenario: An open breaker
+- **WHEN** Filemoon's breaker is open and the CDN refuses a stored Filemoon stream
+- **THEN** the refresh is refused without a resolution
+
 ### Requirement: A Challenged Capture Finishes In The Background
 When the resolve bound cuts a capture that showed a challenge, the registry SHALL answer `challenge` at once and SHALL let the resolution run on, shielded from the request, for up to 20 s after the cut. At most one such completion SHALL run per hoster, and a second cut capture of that hoster SHALL be cancelled at the cut. A completion SHALL keep only the page its capture holds, and shutdown SHALL cancel it.
 

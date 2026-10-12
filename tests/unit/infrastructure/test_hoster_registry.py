@@ -1857,6 +1857,34 @@ class TestChallenge:
         clock["t"] += 1
         assert await registry.resolve(self._url("b")) is not None
 
+    @pytest.mark.usefixtures("clock")
+    async def test_a_refresh_passes_the_cooldown(self) -> None:
+        """The review's case (code review 2026-10-12, finding 5): a Filemoon
+        link meets a challenge, and a stored Filemoon stream's video URL has
+        expired meanwhile. The CDN refuses it, and the play-time refresh
+        resolves the link again instead of failing at once."""
+        registry, resolver, telemetry = self._registry(
+            self._answers("challenged", "stream")
+        )
+        await registry.resolve(self._url("a"))
+
+        assert await registry.resolve(self._url("b"), refresh=True) is not None
+
+        assert resolver.resolve.await_count == 2
+        assert self._outcome(telemetry, "challenge_cooldown") is None
+        # Its stream ends the cooldown
+        assert registry._challenges.left("filemoon") == 0
+
+    @pytest.mark.usefixtures("clock")
+    async def test_an_open_breaker_still_refuses_a_refresh(self) -> None:
+        registry, resolver, telemetry = self._registry(self._answers("hang", "stream"))
+        await registry.resolve(self._url("a"))
+
+        assert await registry.resolve(self._url("b"), refresh=True) is None
+
+        assert resolver.resolve.await_count == 1
+        assert self._outcome(telemetry, "breaker_open") == 1
+
     async def test_further_challenges_step_the_cooldown_up(
         self, clock: dict[str, float]
     ) -> None:

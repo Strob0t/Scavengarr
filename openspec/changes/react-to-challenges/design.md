@@ -47,6 +47,7 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
   - It lives in the registry beside the breaker: per resolver name, the step reached and the time it ends. The steps are 60, 300, 900, then 1800 s, staying at 1800. A stream ends the cooldown and resets the steps.
   - `_guarded()` checks the cooldown before `breaker.allow()`, so a skipped link never claims a half-open trial's slot.
   - A skip is logged as `hoster_resolve_challenge_cooldown` and counted as `challenge_cooldown`. It is not cached.
+  - A play-time refresh (`resolve(refresh=True)`, the CDN refused a stored stream) passes the cooldown; only an open breaker refuses it (row 96, finding 5). The cooldown spares captures for links nobody plays yet, and a refused refresh failed the playback at once.
   - Memory only: a restart starts the browser cold, so a kept cooldown would only delay the first capture that can warm it.
   - Alternative: a breaker state. Rejected: the breaker's failure count, doubling, persistence and alert rule mean "the hoster is broken".
 - **The completion.**

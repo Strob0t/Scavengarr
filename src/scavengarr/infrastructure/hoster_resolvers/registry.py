@@ -355,8 +355,9 @@ class HosterResolverRegistry:
         """Resolve a hoster embed URL to a playable video URL.
 
         1. Check result cache for previously resolved URL (not with
-           *refresh*: the CDN refused the cached stream); probe a streaming
-           playlist URL (``.m3u8``, ``.mpd``) directly.
+           *refresh*: the CDN refused the cached stream, and a refresh
+           passes the challenge cooldown too); probe a streaming playlist
+           URL (``.m3u8``, ``.mpd``) directly.
         2. Try the specific hoster resolver (URL domain takes priority over hint).
         3. If URL domain has no resolver, follow HTTP redirects and retry.
         4. Try hoster hint if different from URL domain (handles redirect domains).
@@ -392,7 +393,9 @@ class HosterResolverRegistry:
         #    match, then domain alias)
         resolver = self._resolver_for(url, hoster_name)
         if resolver is not None:
-            return await self._resolve_with(resolver, hoster_name, url, url)
+            return await self._resolve_with(
+                resolver, hoster_name, url, url, refresh=refresh
+            )
 
         # 2. No resolver for this domain — try following redirects
         final_url = await self._follow_redirects(url)
@@ -407,7 +410,7 @@ class HosterResolverRegistry:
                     url=final_url,
                 )
                 return await self._resolve_with(
-                    resolver, redirected_hoster, final_url, url
+                    resolver, redirected_hoster, final_url, url, refresh=refresh
                 )
 
         # 3. Try hoster hint if different from URL domain
@@ -421,7 +424,9 @@ class HosterResolverRegistry:
                     url_domain=hoster_name,
                     url=url,
                 )
-                return await self._resolve_with(resolver, hoster, url, url)
+                return await self._resolve_with(
+                    resolver, hoster, url, url, refresh=refresh
+                )
 
         # 4. Fallback: content-type probing
         self._count_unresolved(hoster_name)
@@ -597,10 +602,15 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         cache_key: str,
+        *,
+        refresh: bool = False,
     ) -> ResolvedStream | None:
         """Resolve *url* with *resolver*; cache the outcome under *cache_key*."""
         return await self._guarded(
-            resolver, url, partial(self._attempt, resolver, hoster_name, url, cache_key)
+            resolver,
+            url,
+            partial(self._attempt, resolver, hoster_name, url, cache_key),
+            refresh=refresh,
         )
 
     async def _guarded(
@@ -608,12 +618,18 @@ class HosterResolverRegistry:
         resolver: HosterResolverPort,
         url: str,
         attempt: Callable[[], Coroutine[Any, Any, ResolvedStream | None]],
+        *,
+        refresh: bool = False,
     ) -> ResolvedStream | None:
         """Run *attempt* unless the challenge cooldown or the circuit breaker
         skips *resolver*.
 
         The cooldown goes first: the breaker's ``allow()`` starts a half-open
         trial, and a link the cooldown skips must not take the trial's slot.
+        A *refresh* (the CDN refused a stored stream at play time) passes the
+        cooldown, which spares captures for links nobody plays yet; only an
+        open breaker refuses it, as before the cooldown (code review
+        2026-10-12, finding 5: playback failed at once in a cooldown).
         A half-open probe runs to its end even when the request is cut: cut
         by the resolve grace, Filemoon's probes never reported, so the
         breaker probed again after every cooldown without doubling it
@@ -623,7 +639,7 @@ class HosterResolverRegistry:
         probe slot, so the next link probes (it held the slot for a whole
         cooldown, code review 2026-10-06).
         """
-        if left := self._challenges.left(resolver.name):
+        if not refresh and (left := self._challenges.left(resolver.name)):
             log.info(
                 "hoster_resolve_challenge_cooldown",
                 hoster=resolver.name,
