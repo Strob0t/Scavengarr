@@ -11,8 +11,18 @@ import pytest
 
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.config import load_config
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
+
+_PLUGIN_GLOBALS: tuple[tuple[type, str], ...] = (
+    (HttpxPluginBase, "_shared_http_client"),
+    (HttpxPluginBase, "_cache"),
+    (HttpxPluginBase, "_browser_fetcher"),
+    (PlaywrightPluginBase, "_clearance_store"),
+    (PlaywrightPluginBase, "_page_timeout_ms"),
+)
 
 
 class _Warmup:
@@ -52,6 +62,11 @@ async def _run_app(
 
     monkeypatch.setattr(StealthPool, "warmup", _warmup)
     monkeypatch.setattr(StealthPool, "cleanup", _cleanup)
+    # The lifespan sets the plugin bases' class globals (the shared client,
+    # cache, browser fetcher, clearance store, page timeout) and leaves them
+    # on the closed client and cache: restored after the test
+    for base, name in _PLUGIN_GLOBALS:
+        monkeypatch.setattr(base, name, getattr(base, name))
     plugins = tmp_path / "plugins"
     plugins.mkdir()
     config = load_config(

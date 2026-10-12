@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: The Warm-up's Lifespan Test Restores the Plugin Globals
+- `tests/unit/interfaces/test_browser_warmup_lifespan.py` runs the app's real lifespan, which sets the plugin bases' class globals (the shared HTTP client, the cache, the browser fetcher, the clearance store, the page timeout) and left them on the closed client and cache: plugin tests that ran after it in the same process failed with "Cannot send a request, as the client has been closed" (5 byte tests; 13 failures ahead of `tests/unit/infrastructure` and `tests/unit/application`). The test now restores the five globals (code review of 2026-10-12, finding 13; backlog row 99).
+
 ### Added: The Resolver Link Probe Takes a Next Link
 - `scripts/probes/resolver_urls.py --avoid <file>` skips the links an earlier output names, so each resolver keeps its next link (write it with `--out` to a file of its own; the live test reads `resolver-urls.json` only). Used for the four live cases the suite of 2026-10-12 lost (`docs/plans/plugin-domains.md` → Live suite (2026-10-12)): playmate's first link was a removed file, firestream's CDN refuses the dev container on every link, no stream of veev or vidhide passed its CDN's check from here (their offline files are told correctly).
 
