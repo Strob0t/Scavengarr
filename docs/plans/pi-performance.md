@@ -287,7 +287,20 @@ The quantiles of the server view are histogram bucket bounds; "max" is the highe
 
 **Change.** `_AHEAD = 3` in `src/scavengarr/infrastructure/stremio/hls_proxy.py` (was 2). `_MAX_PLAYBACKS` (8) and `_MAX_AHEAD_BYTES` (16 MiB a segment) stay, so the worst case grows from 256 to 384 MiB (8 × 3 × 16 MiB; production used 407 MiB of 7.6 GiB). A 429 keeps its 10-minute pause. The probe's read-ahead runs follow the proxy's depth (`READ_AHEAD = 3`).
 
-**After.** Pending: the read-ahead metrics (`scavengarr_hls_readahead_seconds`, `_total{outcome}`) and the player's answer times during the maintainer's next 1080p FireStream playback after the rebuild, against the numbers above.
+**After (2026-10-12, 7c23863, read-ahead 3).** The maintainer's Lanterns S01E02 on FireStream from 12:38 UTC to the rebuild at 13:16 (CDN `firestream.to`, a media playlist without variants, 781 segments of 4.0 s, bitrate 2.8 Mbit/s): per 5 minutes from 12:40, 42 to 78 segment requests, median 140 to 1229 ms (2.2 s before), p90 10.3 to 15.0 s (9.6 s before), max 19.5 to 28.6 s, 16 to 28 of them over 3 s. From 12:58:27 to 13:13:23 (896 s) the requests went from segment name 355 to 736; the names step by 2 per 4 s segment (181 of 226 steps), so 762 s of video in 896 s, 0.85 times real time, and 26 of the 227 requests repeated a segment about 10 s after its first request (the player gave up and asked again); 2 answered 502. `hls_readahead_total` since 10:39 (this and the earlier S01E01): hit 889, ok 915, miss 129, dropped 30, failed 32, cut 3. The probe on the same link right after the rebuild (13:22 to 13:26, nothing playing; `probe hls_throughput --stream-id <id> --segments 10 --in-flight 3,4,6`):
+
+| Run | Connections | Bytes | Time | Mbit/s | × real time | Ranges |
+|---|---|---|---|---|---|---|
+| one connection | 1 | 13.4 MiB | 71.2 s | 1.6 (1.0–5.2 per segment) | 0.56 | – |
+| read-ahead 2 | 3 | 13.4 MiB | 16.1 s | 7.0 | 2.46 | – |
+| read-ahead 3 | 4 | 13.5 MiB | 21.5 s | 5.3 | 1.86 | – |
+| read-ahead 5 | 6 | 13.2 MiB | 11.8 s | 9.4 | 3.33 | – |
+| 3 ranges | 3 | 13.4 MiB | 49.5 s | 2.3 (0.6–4.1 per segment) | 0.80 | 30 of 30 answered 206 |
+| read-ahead 3 × 3 ranges | 12 | 13.4 MiB | 30.1 s | 3.7 | 1.32 | 30 of 30 answered 206 |
+
+**Reading (Mr. Fable).** N1's rule asks for ⌈1.5 × 2.8 / 1.6⌉ = 3 connections, and read-ahead 3 carried 1.86 times real time in the probe, yet the playback got 0.85: unless the maintainer paused, it stalled about 9 s a minute. The probe's runs vary (read-ahead 2 beat read-ahead 3), and six connections carried 9.4 Mbit/s, above 2026-10-11's flat 5 Mbit/s. Not known: whether the repeated requests cost a CDN fetch each (`take()` hands an in-flight fetch to the first request only), and how much the slowest of the segments in flight holds back the player, which needs them in order. The maintainer's answer whether it stuttered decides between a deeper read-ahead and a closer look at the repeats.
+
+The paragraph that waited for this (the read-ahead metrics and the player's answer times during the maintainer's next FireStream playback after the rebuild) is the "After" above; a 1080p title is still to measure.
 
 **Limits.** One title and one run from the Pi, 10 segments per run; one connection's pace varied from 0.1 to 2.0 Mbit/s per segment. The maintainer's playback numbers come from production's logs and metrics, not from the probe.
 
