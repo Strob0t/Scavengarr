@@ -92,8 +92,37 @@ Each option names the gap it closes (the numbers of the list above).
 - **What:** the context's storage state per host (cookies, localStorage and IndexedDB, as in Playwright's `storage_state`) goes to the cache backend next to `ClearanceStore`. It is taken after the player started.
 - **Evidence:** the cold and warm readings; Playwright's storage state covers these stores, not sessionStorage.
 - **Pro:** a restart no longer resets every capture hoster.
-- **Contra:** which state warms Filemoon and Dropload is unmeasured. A `capture_timing` run with a restored state has to show it first.
+- **Contra:** which state warms Filemoon and Dropload is unmeasured. A `capture_timing` run with a restored state has to show it first. Measured in row 91, below: the restored state warms both.
 - **Cost:** medium.
+
+#### R4's premise, measured (row 91, 2026-10-12)
+
+`scripts/probes/capture_timing.py --runs 2 --restore` (03614ef): two runs in one context, then that context's `storage_state(indexed_db=True)` held in memory, then the same link in a relaunched browser in a fresh context (`control`) and in a relaunched browser in a context restored from the state (`restored`). One current link per hoster, in the dev container and on the Pi (before 07:29 UTC, 61 s and 44 s per probe, production idle before and after: CPU 0.01 and 0.00 of 4 cores). The challenge column is what the run's pages requested: the player's `captcha` and `captcha/verify` (Filemoon), `turnstile` for Cloudflare's challenge host (Dropload). The time is the time to the stream.
+
+| Hoster | Run | Dev: challenge | Dev: stream | Pi: challenge | Pi: stream |
+|---|---|---|---|---|---|
+| Filemoon | 1 (cold) | captcha, captcha/verify | 5.1 s (1 click) | captcha, captcha/verify | 18.1 s (3 clicks) |
+| Filemoon | 2 (warm) | none | 1.4 s | none | 5.8 s (1 click) |
+| Filemoon | control | captcha, captcha/verify | 5.6 s (1 click) | captcha, captcha/verify | 9.3 s (1 click) |
+| Filemoon | restored | none | 1.7 s | none | 8.4 s (1 click) |
+| Dropload | 1 (cold) | turnstile | 4.9 s (1 click) | turnstile | 13.1 s (2 clicks) |
+| Dropload | 2 (warm) | none | 0.6 s | none | 2.1 s |
+| Dropload | control | turnstile | 9.5 s (2 clicks) | turnstile | 12.4 s (2 clicks) |
+| Dropload | restored | none | 0.8 s | none | 3.3 s |
+
+The state's make-up (names and counts only, as the probe prints them):
+
+- **Filemoon**, alike in both: the cookies `byse_device_id` and `byse_viewer_id` on the player's host; 7 localStorage keys and 1 IndexedDB database there, 3 localStorage keys on the embedding site.
+- **Dropload**: the cookies `aff`, `file_id` and one with an id-like name on the hoster's host; 1 localStorage key on `cloudflare.com` (the Turnstile widget). On the Pi also a `GL_UI4` cookie on each of two ad domains.
+
+Findings:
+
+1. **The restored context runs warm.** It met no challenge for either hoster in either place. Dropload's restored run on the Pi took 3.3 s against 12.4 s for the control, past the 10 s resolve bound. Filemoon's skipped the captcha but still clicked once and took 8.4 s against 9.3 s: on the Pi its page load started 2.4 s into the run, and the warm run 2 also needed 5.8 s and one click. So the restore removes Filemoon's challenge, not its whole cold time.
+2. **The hoster does not remember the address.** Each control met the challenge again, though runs 1 and 2 had passed it seconds before from the same address. The warmth is the context's state, not the address's.
+3. **Not separated:** which store carries the warmth (cookies, localStorage or IndexedDB). R4 keeps the whole state per host, so this does not change the form.
+4. **Limits:** one link and one run per condition and place; the state was restored seconds after it was taken. How long a restored state stays warm is unmeasured: R5 stays for a state that turns out to expire.
+
+**Verdict:** control cold and restored warm, the first branch of row 91. R4 keeps a capture hoster's storage state in the cache backend beside `ClearanceStore` and restores it into each new context (start, recycle, relaunch). R5 is needed only where a restored state expires.
 
 ### R5: warm-up after a start (gap 5)
 
