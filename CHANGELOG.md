@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Request Joins Its Link's Running Completion
+- A request for a link whose challenged capture runs on in the background no longer starts a second capture: it waits for the completion, at most the resolve bound, and answers the stream the completion cached (`hoster_resolve_joined`, the `hoster_resolve` outcome `joined`), `None` without one in time. The completions are kept by their link too (`_completing`), and `_complete()` returns the stream it cached.
+- Why: code review 2026-10-12, finding 9. With the cooldown over (or ended by another link's stream), a second capture of a link whose completion still ran ended without the first's challenge and cached the link as dead over the completion's stream for 15 minutes.
+
 ### Fixed: A Play-Time Refresh Passes the Challenge Cooldown
 - `resolve(refresh=True)` (the CDN refused a stored stream: `after_refusal()`) passes the hoster's challenge cooldown; only an open breaker refuses it, as before the cooldown. A search-time resolution still waits the cooldown out.
 - Why: code review 2026-10-12, finding 5. A Filemoon link met a challenge and started the cooldown; a stored Filemoon stream whose video URL had expired was refused by its CDN, the refresh came back `None` without asking the resolver, and playback failed at once.

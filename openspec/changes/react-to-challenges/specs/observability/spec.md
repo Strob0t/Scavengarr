@@ -23,6 +23,10 @@ The system SHALL record each hoster resolution in the hoster resolver registry, 
 - **WHEN** a link is skipped because its hoster's challenge cooldown runs
 - **THEN** `outcome="challenge_cooldown"` is counted for the resolver, without a duration
 
+#### Scenario: Joined completion
+- **WHEN** a request for a link whose challenged capture runs on in the background waits for it
+- **THEN** `outcome="joined"` is counted for the resolver, without a duration
+
 #### Scenario: Background completion
 - **WHEN** a completion finds a stream 7 s after the cut
 - **THEN** `scavengarr_hoster_challenge_completion_total{resolver, outcome="stream"}` grows by 1

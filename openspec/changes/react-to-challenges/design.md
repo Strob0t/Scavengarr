@@ -58,6 +58,7 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
   - With a result it runs the attempt's own steps: `_judge()`, `_cache_result()` under the attempt's cache key, `_record()`. The stream ends the cooldown and closes a half-open breaker; `unplayable` counts as today.
   - Without a stream by the deadline the task is cancelled. The capture's `finally` closes the page, and the cooldown steps up.
   - `aclose()` cancels the completions as it cancels the half-open probes.
+  - A request for a link whose completion runs joins it (row 96, finding 9): it waits, at most the resolve bound, and answers the stream the completion returns, not the cache, which may still hold the stream a refresh's CDN refused. A second capture of the link would end without the first's challenge and cache the link as dead over the completion's stream. The completions are kept by resolver name (the one-per-hoster rule, `aclose()`) and by the link's cache key (the join).
   - Only `_attempt()` (the cached resolution) completes in the background. `resolve_for_client()` belongs to one player, is not cached, and ends as `challenge` without a completion.
 - **The page and the lease.**
   - A completion keeps the one page and the lease its capture holds and takes no other.

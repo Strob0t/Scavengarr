@@ -34,3 +34,4 @@
 - [x] 3.3 Implementation: `ChallengeMark.open`, `mark_resolution_passed()`, the passes in `turnstile.py` and `capture_media()`, `passive_widget` through `capture_stream()`, the registry's rules, and the capture timing probe's `passive_widget`.
 - [x] 3.4 Docs: `docs/features/hoster-resolvers.md`, `docs/features/observability.md`, `CHANGELOG.md`.
 - [x] 3.5 Tests and implementation: a play-time refresh passes the challenge cooldown, an open breaker still refuses it (finding 5); docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.
+- [x] 3.6 Tests and implementation: a request for a link whose completion runs joins it and answers its stream, no second capture; the join waits at most the resolve bound; a joined refresh never answers the refused stream; the outcome `joined` (finding 9). Docs in `docs/features/hoster-resolvers.md`, `docs/features/observability.md` and `CHANGELOG.md`.

@@ -194,10 +194,16 @@ class HosterResolverRegistry:
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
         self._challenges = ChallengeCooldown()
         # Challenged captures that run on past the bound, by resolver
-        # (_hand_over): the completion and the capture it awaits
+        # (_hand_over): the completion and the capture it awaits; and the
+        # completions by the cache key of their link (_joined)
         self._completions: dict[
-            str, tuple[asyncio.Task[None], asyncio.Task[ResolvedStream | None]]
+            str,
+            tuple[
+                asyncio.Task[ResolvedStream | None],
+                asyncio.Task[ResolvedStream | None],
+            ],
         ] = {}
+        self._completing: dict[str, asyncio.Task[ResolvedStream | None]] = {}
         # Probes of links no resolver claims, by hoster (unresolved_hosts)
         self._unresolved: Counter[str] = Counter()
         for resolver in resolvers or []:
@@ -605,13 +611,39 @@ class HosterResolverRegistry:
         *,
         refresh: bool = False,
     ) -> ResolvedStream | None:
-        """Resolve *url* with *resolver*; cache the outcome under *cache_key*."""
+        """Resolve *url* with *resolver*; cache the outcome under *cache_key*.
+        A link whose capture runs on in the background joins it instead
+        (``_joined``)."""
+        completion = self._completing.get(cache_key)
+        if completion is not None:
+            return await self._joined(completion, resolver, url)
         return await self._guarded(
             resolver,
             url,
             partial(self._attempt, resolver, hoster_name, url, cache_key),
             refresh=refresh,
         )
+
+    async def _joined(
+        self,
+        completion: asyncio.Task[ResolvedStream | None],
+        resolver: HosterResolverPort,
+        url: str,
+    ) -> ResolvedStream | None:
+        """Wait for the background *completion* of *url*'s capture, at most
+        the resolve bound, and answer the stream it cached; ``None`` without
+        one in time. A second capture of the link would end without the
+        first's challenge and cache the link as dead over the completion's
+        stream (code review 2026-10-12, finding 9). The wait leaves the
+        completion running when the bound or the request ends it."""
+        log.info("hoster_resolve_joined", hoster=resolver.name, url=url)
+        self._telemetry.count("hoster_resolve", "joined", resolver=resolver.name)
+        await asyncio.wait((completion,), timeout=self._resolve_timeout)
+        if not completion.done() or completion.cancelled():
+            return None
+        if completion.exception() is not None:
+            return None
+        return completion.result()
 
     async def _guarded(
         self,
@@ -840,7 +872,8 @@ class HosterResolverRegistry:
         """Let *work*, a capture the bound cut, run on in the background
         (``_complete``) when it met a challenge: only a resolution whose
         outcome is cached (*cache_key*; a player's own is not), one per
-        resolver at a time (each holds a browser page). Whether it runs on."""
+        resolver at a time (each holds a browser page); requests for the
+        link join it (``_joined``). Whether it runs on."""
         name = resolver.name
         if mark.kind is None or cache_key is None or name in self._completions:
             return False
@@ -848,10 +881,12 @@ class HosterResolverRegistry:
             self._complete(work, resolver, hoster_name, url, cache_key, mark, started)
         )
         self._completions[name] = (completion, work)
+        self._completing[cache_key] = completion
         # A completion cancelled before its first step never awaited the
         # capture, which would run on unowned
         completion.add_done_callback(lambda _: work.cancel())
         completion.add_done_callback(lambda _: self._completions.pop(name, None))
+        completion.add_done_callback(lambda _: self._completing.pop(cache_key, None))
         return True
 
     async def _complete(
@@ -863,9 +898,10 @@ class HosterResolverRegistry:
         cache_key: str,
         mark: ChallengeMark,
         started: float,
-    ) -> None:
+    ) -> ResolvedStream | None:
         """Await a capture the bound cut after a challenge for up to
-        ``_COMPLETION_S`` more, on the page it holds (it takes no other).
+        ``_COMPLETION_S`` more, on the page it holds (it takes no other);
+        returns the stream it cached, for the requests that joined it.
 
         Its stream is judged and cached under *cache_key* as the attempt's
         own: it ends the resolver's challenge cooldown, closes a half-open
@@ -896,11 +932,11 @@ class HosterResolverRegistry:
                     )
                 if mark.open:
                     self._unsolved(resolver, hoster_name, url)
-                return
+                return None
             if result is None and mark.open:
                 stage.outcome = "none"
                 self._unsolved(resolver, hoster_name, url)
-                return
+                return None
             _, stream, cacheable = await self._judge(
                 resolver,
                 hoster_name,
@@ -909,9 +945,12 @@ class HosterResolverRegistry:
                 started=started,
                 challenge=mark.kind,
             )
-            if cacheable:
-                self._cache_result(cache_key, stream, resolver.name)
+            if not cacheable:
+                stage.outcome = "none"
+                return None
+            self._cache_result(cache_key, stream, resolver.name)
             stage.outcome = "none" if stream is None else "stream"
+            return stream
 
     def _unsolved(
         self, resolver: HosterResolverPort, hoster_name: str, url: str

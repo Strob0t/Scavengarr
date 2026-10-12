@@ -92,6 +92,18 @@ When the resolve bound cuts a capture that showed a challenge, the registry SHAL
 - **WHEN** the app shuts down while a completion runs
 - **THEN** the registry's `aclose()` cancels it and its page closes
 
+### Requirement: A Request Joins Its Link's Completion
+A request for a link whose challenged capture runs on in the background SHALL NOT start a second capture of it. It SHALL wait for the completion, at most the resolve bound, and SHALL answer the stream the completion cached, or nothing when none came in time; the wait SHALL leave the completion running.
+
+#### Scenario: The link is requested again
+- **WHEN** link L's capture runs on after its challenge, the cooldown runs out, and L is requested again
+- **THEN** no second capture of L starts
+- **AND** the request answers the stream L's completion caches
+
+#### Scenario: Nothing in time
+- **WHEN** L's completion caches nothing within the resolve bound of the joined request
+- **THEN** the request answers nothing, and the completion runs on
+
 ### Requirement: A Completion's Stream Counts As The Hoster's Stream
 A stream a background completion finds SHALL pass the registry's judgement as a resolution's stream does, the playback check included where the resolver needs one. It SHALL be cached under its link for the resolution cache's lifetime and SHALL count as the hoster's stream: it ends the challenge cooldown and closes a half-open breaker. Only resolutions the registry caches SHALL complete in the background.
 

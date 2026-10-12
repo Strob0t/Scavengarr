@@ -1875,6 +1875,72 @@ class TestChallenge:
         # Its stream ends the cooldown
         assert registry._challenges.left("filemoon") == 0
 
+    async def test_an_attempt_joins_its_links_running_completion(
+        self, clock: dict[str, float]
+    ) -> None:
+        """The review's case (code review 2026-10-12, finding 9): link a's
+        capture is cut after its challenge and runs on, the cooldown runs out
+        meanwhile, and a is requested again. The request waits for a's
+        completion and answers its stream: no second capture of a runs, so
+        none caches a as dead over the stream."""
+        streamed, gone = asyncio.Event(), asyncio.Event()
+        calls: list[str] = []
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            calls.append(url)
+            if len(calls) == 1:
+                mark_resolution_challenge("hoster_captcha")
+                await streamed.wait()
+                return ResolvedStream(video_url=self._MP4)
+            # A second capture of the link: no stream, no challenge
+            await gone.wait()
+            return None
+
+        registry, _, telemetry = self._registry(_resolve, resolve_timeout=0.2)
+        assert await registry.resolve(self._url("a")) is None
+        clock["t"] += 60
+
+        again = asyncio.ensure_future(registry.resolve(self._url("a")))
+        await asyncio.sleep(0.05)
+        streamed.set()
+        await asyncio.sleep(0.05)
+        gone.set()
+        stream = await again
+
+        assert stream is not None and stream.video_url == self._MP4
+        assert calls == [self._url("a")]
+        assert registry.cached(self._url("a")) == (True, stream)
+        assert self._outcome(telemetry, "joined") == 1
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_joined_request_waits_at_most_the_bound(self) -> None:
+        registry, resolver, _ = self._registry(self._answers("challenge", "stream"))
+        await registry.resolve(self._url("a"))
+        started = time.monotonic()
+
+        assert await registry.resolve(self._url("a")) is None
+
+        assert time.monotonic() - started < 1
+        assert resolver.resolve.await_count == 1
+        assert registry.cached(self._url("a")) == (False, None)
+        # The completion runs on
+        assert "filemoon" in registry._completions
+        await registry.aclose()
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_joined_refresh_never_answers_the_refused_stream(self) -> None:
+        """A refresh whose capture runs on: a second refresh of the link
+        joins it and answers nothing in time, not the cached stream the CDN
+        refused."""
+        registry, resolver, _ = self._registry(self._answers("stream", "challenge"))
+        assert await registry.resolve(self._url("a")) is not None
+
+        assert await registry.resolve(self._url("a"), refresh=True) is None
+        assert await registry.resolve(self._url("a"), refresh=True) is None
+
+        assert resolver.resolve.await_count == 2
+        await registry.aclose()
+
     @pytest.mark.usefixtures("clock")
     async def test_an_open_breaker_still_refuses_a_refresh(self) -> None:
         registry, resolver, telemetry = self._registry(self._answers("hang", "stream"))
