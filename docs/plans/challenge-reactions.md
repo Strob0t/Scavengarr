@@ -2,7 +2,7 @@
 
 # Plan: Reactive Challenge Handling (Round 2)
 
-**Status:** Decided 2026-10-12 07:02 UTC (the maintainer): R1 with R7, R2, and R4 with R5 become backlog rows 89 to 91; R3 is not chosen; R6, R8 and R9 wait for the numbers ([Decision and Expected Gain](#decision-and-expected-gain-2026-10-12)). Nothing is built yet.
+**Status:** Decided 2026-10-12 07:02 UTC (the maintainer): R1 with R7, R2, and R4 with R5 become backlog rows 89 to 91; R3 is not chosen; R6, R8 and R9 wait for the numbers ([Decision and Expected Gain](#decision-and-expected-gain-2026-10-12)). R4 is built (row 91, OpenSpec `keep-capture-state`, 2026-10-12).
 
 **Request:** the maintainer's, of 2026-10-11 17:41 UTC: after the release v0.4.0, research reactive approaches to Cloudflare challenges and captchas and document them ("reaktive lösungsansätze für cloudflare und captchas einlegen und diese dokumentieren").
 
@@ -123,6 +123,27 @@ Findings:
 4. **Limits:** one link and one run per condition and place; the state was restored seconds after it was taken. How long a restored state stays warm is unmeasured: R5 stays for a state that turns out to expire.
 
 **Verdict:** control cold and restored warm, the first branch of row 91. R4 keeps a capture hoster's storage state in the cache backend beside `ClearanceStore` and restores it into each new context (start, recycle, relaunch). R5 is needed only where a restored state expires. R4's build: the OpenSpec change `keep-capture-state` (row 91).
+
+#### R4 built (row 91, 2026-10-12)
+
+OpenSpec `keep-capture-state`. After a capture found its stream, the stealth pool keeps the state of the page's host and its frames' hosts in `ClearanceStore` (`browser:capture_state:v1`: per host its cookies, those of its parent domains included, and its origins' localStorage and IndexedDB; in the background, at most once per host per 10 minutes, at most 24 hours, at most 512 KiB per host). Each new stealth context is created from the kept states and the clearance cookies, the newest winning per cookie and origin. The Playwright plugins' contexts keep `restore()` (clearance cookies only).
+
+**Dev proof (task 3.1).** A restart as a new process: the app's `StealthPool` and `ClearanceStore` over a diskcache, one capture per process, the challenge column from `capture_timing`'s request watch. The dev server would not show it: it logs neither the Turnstile widget nor the captcha requests, and after a restart it answers the same link from its resolver cache (`hoster_state:v1`) without a capture.
+
+| Hoster | Process | Challenge | Stream | Logs |
+|---|---|---|---|---|
+| Dropload | 1 (empty cache) | turnstile | 5.0 s (1 click) | `capture_state_saved` dr0pstream.com: 3 cookies, 0 origins, 586 bytes |
+| Dropload | 2 (restart) | none | 1.1 s | `capture_state_restored` dr0pstream.com |
+| Dropload | 3 (restart) | none | 1.1 s | `capture_state_restored` dr0pstream.com; context created in 0.0 s |
+| Filemoon | 1 (empty cache) | captcha, captcha/verify | 4.9 s (1 click) | `capture_state_saved` moflix-stream.link and n1mwq.org: 2 cookies, 2 origins, 2547 bytes |
+| Filemoon | 2 (restart) | – | nothing in 40.2 s | none: the resolver never reached the browser (no context, so no restore line) |
+| Filemoon | 3 (restart) | none | 7.2 s (page at 5.8 s) | `capture_state_restored` moflix-stream.link, n1mwq.org |
+| Filemoon | 4 (restart) | none | 2.2 s | `capture_state_restored` moflix-stream.link, n1mwq.org; context created in 0.1 s |
+
+- Dropload's warmth lives in the hoster's own cookies: the Turnstile frame is gone when the stream comes, so its host is not noted, and the restored capture still met no widget.
+- Filemoon keeps the player host's cookies and its localStorage and IndexedDB; the creation with them costs 0.1 s.
+- Not explained: Filemoon's second process (nothing in 40.2 s before any browser step) and the third's late page (5.8 s); both lie before the context, in the resolver's HTTP step. One link per hoster; the state was restored minutes after it was kept.
+- Production (task 3.2) waits for the deploy: the first Filemoon or Dropload capture after a restart, with `capture_state_restored` in the startup's log.
 
 ### R5: warm-up after a start (gap 5)
 

@@ -343,7 +343,7 @@ The composition root is where concrete implementations are wired together. It ru
 5.  CacheCrawlJobRepository
 6.  CrawlJobFactory
 7.  TMDB client (HttpxTmdbClient with API key, else ImdbFallbackClient)
-8.  SharedBrowserPool (one Chromium) + ClearanceStore (challenge cookies, shared with the Playwright plugins) + StealthPool (own context on that browser)
+8.  SharedBrowserPool (one Chromium) + ClearanceStore (challenge cookies, shared with the Playwright plugins; the capture hosters' state, from which the stealth context is created) + StealthPool (own context on that browser)
 8b. Browser fetcher for httpx plugins (HttpxPluginBase.set_browser_fetcher: StealthPool and/or the solver sidecar)
 9.  HosterResolverRegistry (dedicated + generic DDL + XFS resolvers, own hoster circuit breaker)
 10. CacheStreamLinkRepository + StremioLinks

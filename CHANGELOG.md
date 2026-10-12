@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Capture Hoster Stays Warm Across Restarts
+- After a capture found its stream, the stealth pool keeps the state of the page's host and its frames' hosts (cookies of the host and its parent domains, localStorage and IndexedDB of its origins) in the cache backend (`browser:capture_state:v1`, beside the clearance cookies): in the background, at most once per host per 10 minutes, at most 24 hours, at most 512 KiB per host. Each new stealth context (start, recycle, relaunch) is created from the kept states and the clearance cookies; a failed creation falls back to a plain context (`capture_state_restore_failed`). Logs: `capture_state_saved`, `capture_state_restored`, `capture_state_too_large`, `capture_state_corrupt`, `capture_state_save_failed`, with hosts and counts only.
+- Why: a restart, a recycle or a relaunch made every capture hoster cold again, and the cold paths outlast the Pi's 10 s resolve bound (`docs/plans/challenge-reactions.md` → R4).
+- Dev proof, a restart as a new process: Dropload 5.0 s with the Turnstile widget, then 1.1 s without it twice; Filemoon 4.9 s with its captcha, then 7.2 and 2.2 s without it.
+
 ### Added: The Capture Probe Restores a Context After a Relaunch
 - `scripts/probes/capture_timing.py --restore` takes the runs' context state (`storage_state(indexed_db=True)`, in memory only) and prints its make-up (cookie names per domain, ids masked; localStorage keys and IndexedDB databases per origin; no values), then resolves the link in a relaunched browser twice: in a fresh context (`control`) and in one restored from the state (`restored`). Every run now names the challenges it met: the player's `captcha` and `captcha/verify`, `turnstile` for Cloudflare's challenge host.
 - Why: row 91 measures R4's premise (`docs/plans/challenge-reactions.md`): whether a context restored after a restart skips the hoster's challenge.

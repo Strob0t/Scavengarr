@@ -80,6 +80,9 @@ _TARGET_ONLY_CSS = (
 )
 
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
+# A capture with a stream keeps its hosts' state (ClearanceStore), at most
+# once per host in this interval: the serialization covers the whole context
+_KEEP_INTERVAL_S = 600.0
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
 # Dead-file notices of player pages, matched against the visible text only
@@ -288,6 +291,9 @@ class StealthPool:
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
         self._user_agent: str | None = None
+        # The capture states being kept, and when each host's was last
+        self._keep_tasks: set[asyncio.Task[None]] = set()
+        self._kept: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -314,16 +320,29 @@ class StealthPool:
                 return self._context
 
             self._browser, _ = await self._browser_pool.warmup()
-            self._context = await self._browser.new_context(service_workers="block")
+            self._context = await self._new_context(self._browser)
             self._user_agent = None  # a relaunched browser may be another version
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", block_heavy_resources)
-            if self._clearance_store is not None:
-                await self._clearance_store.restore(self._context)
 
             log.info("stealth_pool_started")
             return self._context
+
+    async def _new_context(self, browser: Browser) -> BrowserContext:
+        """A context started from the kept clearance cookies and capture
+        states (localStorage and IndexedDB can be set only at creation)."""
+        state = None
+        if self._clearance_store is not None:
+            state = await self._clearance_store.creation_state()
+        if state is not None:
+            try:
+                return await browser.new_context(
+                    service_workers="block", storage_state=state
+                )
+            except Exception as exc:  # noqa: BLE001  (costs a challenge, not a capture)
+                log.warning("capture_state_restore_failed", error=type(exc).__name__)
+        return await browser.new_context(service_workers="block")
 
     async def _remember(self, page: Page) -> None:
         """Keep the clearance cookies of a page that passed its challenge."""
@@ -335,6 +354,9 @@ class StealthPool:
 
         The browser belongs to :class:`SharedBrowserPool` and is closed there.
         """
+        for task in self._keep_tasks:
+            task.cancel()
+        await asyncio.gather(*self._keep_tasks, return_exceptions=True)
         if self._context is not None:
             try:
                 await self._context.close()
@@ -541,12 +563,46 @@ class StealthPool:
                         return None
                 media = await _start_player(page, found, player)
                 log.debug("stealth_capture", url=url, found=media is not None)
+                if media is not None:
+                    self._keep_state(page)
                 return media
             except Exception:  # noqa: BLE001
                 log.debug("stealth_capture_error", url=url, exc_info=True)
                 return None
             finally:
                 await self._close(page)
+
+    def _keep_state(self, page: Page) -> None:
+        """Keep the state of *page*'s host and its frames' hosts in the
+        background (the resolution does not wait), each at most once per
+        ``_KEEP_INTERVAL_S``."""
+        if self._clearance_store is None:
+            return
+        now = time.monotonic()
+        hosts = {
+            host
+            for frame in page.frames
+            if (host := urlparse(frame.url).hostname)
+            and now - self._kept.get(host, -_KEEP_INTERVAL_S) >= _KEEP_INTERVAL_S
+        }
+        if not hosts:
+            return
+        self._kept.update(dict.fromkeys(hosts, now))
+        task = asyncio.create_task(self._save_state(page.context, sorted(hosts)))
+        self._keep_tasks.add(task)
+        task.add_done_callback(self._keep_tasks.discard)
+
+    async def _save_state(self, context: BrowserContext, hosts: list[str]) -> None:
+        assert self._clearance_store is not None
+        try:
+            state = await context.storage_state(indexed_db=True)
+            await self._clearance_store.keep_capture_state(hosts, state)
+        except Exception as exc:  # noqa: BLE001  (costs a challenge after a restart)
+            for host in hosts:
+                self._kept.pop(host, None)  # the next stream tries again
+            log.warning(
+                "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
+            )
 
     async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
         """Return the first off-site URL *url* redirects to.

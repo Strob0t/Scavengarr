@@ -100,7 +100,7 @@ A generic "solve the widget, read `cf-turnstile-response`" helper stays unbuilt 
 | 2 | nox: log the gateway's block reason, live smoke for grab resolution | done |
 | 3 | Shared captcha detector (`infrastructure/captcha/detect.py`), logging + scoring | done |
 | 4 | animeloads: odd-one-out captcha in the browser, links on grab | done (anonymous: releases ≤ 13 episodes; login path untested live) |
-| 5 | Keep clearance cookies across restarts (B3) | done (live: 4.9 s with challenge → 0.9 s after restart) |
+| 5 | Keep clearance cookies across restarts (B3) | done (live: 4.9 s with challenge → 0.9 s after restart). Since 2026-10-12 the same store also keeps the capture hosters' state (cookies, localStorage, IndexedDB of a capture's hosts, `browser:capture_state:v1`), and the stealth pool creates each context with both (`challenge-reactions.md` → R4); the Playwright plugins' contexts still get the clearance cookies alone (`restore()`) |
 | 6 | Embedded Turnstile tokens (vinovo, devideosrc, doodstream) | done: none needs a token flow (see below) |
 | 7 | Byparr sidecar as second `BrowserFetcherPort` | done (not verified live: no Docker in the dev container) |
 | 8 | Recognizer container (opt-in) | deferred (no target needs it) |
