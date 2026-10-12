@@ -173,7 +173,11 @@ class TestPlainTcp:
         _, port = await serve(_never_answer)
         async with _client() as client:
             with pytest.raises(httpx.ReadTimeout):
-                await client.get(f"http://127.0.0.1:{port}/", timeout=0.1)
+                # the read alone is short: a loaded CI runner's connect to
+                # 127.0.0.1 took over 0.1 s (ConnectTimeout, 2026-10-12)
+                await client.get(
+                    f"http://127.0.0.1:{port}/", timeout=httpx.Timeout(2, read=0.1)
+                )
 
     async def test_a_closed_port_is_a_connect_error(self, serve: _Serve) -> None:
         server, port = await serve(_never_answer)
