@@ -402,6 +402,7 @@ class TestBrowserCapture:
         # The player frame's ad tag stays out (row 78)
         assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
 
+    @respx.mock
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("request_url", "named"),
@@ -417,11 +418,18 @@ class TestBrowserCapture:
     ) -> None:
         """A cold context meets the player's own captcha, a warm one skips it
         (row 91): a capture cut after it ends as ``challenge`` (R7)."""
-        resolver, pool = self._resolver(_make_html_response(self._SPA), None)
+        respx.get(f"{_BYSE}/e/{_BYSE_ID}").respond(200, text=self._SPA)
+        respx.get(_DETAILS).respond(200, text=f'{{"code":"{_BYSE_ID}"}}')
+        pool = _FakePool(None)
 
-        await resolver.resolve("https://filemoon.to/e/fwzwu9ny19jk")
+        async with httpx.AsyncClient() as client:
+            resolver = FilemoonResolver(
+                http_client=client, stealth_pool=cast("StealthPool", pool)
+            )
+            await resolver.resolve(f"{_BYSE}/e/{_BYSE_ID}")
 
-        pattern = pool.capture_media.await_args.kwargs["challenge_requests"]
+        (pattern,) = pool.challenges
+        assert pattern is not None
         assert bool(pattern.search(request_url)) is named
 
     @pytest.mark.asyncio
@@ -499,6 +507,7 @@ class _FakePool:
         self.urls: list[str] = []
         self.players: list[str | None] = []
         self.own_scripts: list[bool] = []
+        self.challenges: list[re.Pattern[str] | None] = []
 
     async def capture_media(
         self,
@@ -512,6 +521,7 @@ class _FakePool:
         self.urls.append(url)
         self.players.append(player)
         self.own_scripts.append(own_scripts_only)
+        self.challenges.append(challenge_requests)
         return self.media
 
 

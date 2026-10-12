@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Filemoon Captcha-Pattern Test Mocks HTTP With respx
+- `test_the_players_captcha_requests_are_named` (`tests/unit/infrastructure/test_filemoon_resolver.py`) served the embed page from an `AsyncMock` client, against the respx rule for resolver tests (AGENTS.md §6). It now runs the resolver on a real `httpx.AsyncClient` with the Byse embed page and details API mocked by respx, and reads the pattern from the recording `_FakePool` (code review of 2026-10-12; backlog row 99).
+
 ### Fixed: The Warm-up's Lifespan Test Restores the Plugin Globals
 - `tests/unit/interfaces/test_browser_warmup_lifespan.py` runs the app's real lifespan, which sets the plugin bases' class globals (the shared HTTP client, the cache, the browser fetcher, the clearance store, the page timeout) and left them on the closed client and cache: plugin tests that ran after it in the same process failed with "Cannot send a request, as the client has been closed" (5 byte tests; 13 failures ahead of `tests/unit/infrastructure` and `tests/unit/application`). The test now restores the five globals (code review of 2026-10-12, finding 13; backlog row 99).
 
