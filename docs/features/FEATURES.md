@@ -126,6 +126,7 @@ Validates file availability and extracts direct video URLs from streaming hoster
 | fsst | [x] Implemented | Kernel Video Sharing player → best-quality `get_file` MP4 |
 | Veev | [x] Implemented | LZW-decoded page token → player API → MP4 (JD2 `VeevTo`) |
 | Vinovo | [x] Implemented | Page token → `/api/file/url/{id}` → stream token (JD2 `VinovoTo`) |
+| UPN Share, RPM Share (upns, rpmplay) | [x] Implemented | moflix's mirrors: player API `/api/v1/video` → AES-128-CBC answer decrypted → HLS master |
 
 ### Validate-only streaming hosters (no video extraction)
 
