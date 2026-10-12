@@ -455,13 +455,16 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         result: ResolvedStream | None,
+        *,
+        started: float,
         challenge: ResolutionChallenge | None = None,
     ) -> tuple[str, ResolvedStream | None, bool]:
         """Classify a resolver's answer: ``dead`` link, ``unplayable``,
         ``check_error`` or a ``stream``; the stream only for the last, and
         whether the outcome may be cached. The success log names the
         *challenge* the capture passed on its way (a cold capture), ``None``
-        for a warm one.
+        for a warm one, and the attempt's wall time since *started*
+        (``time.monotonic()``) as ``duration_ms``.
 
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
@@ -494,6 +497,7 @@ class HosterResolverRegistry:
             hoster=hoster_name,
             is_hls=result.is_hls,
             challenge=challenge,
+            duration_ms=round((time.monotonic() - started) * 1000),
         )
         self._record(resolver, failed=False)
         if getattr(resolver, "address_bound", False) is True:
@@ -664,6 +668,7 @@ class HosterResolverRegistry:
         the challenge cooldown.
         """
         mark = ChallengeMark()
+        started = time.monotonic()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
                 async with asyncio.timeout(self._resolve_timeout) as clock:
@@ -680,7 +685,12 @@ class HosterResolverRegistry:
                     )
                     return None, False
                 stage.outcome, stream, cacheable = await self._judge(
-                    resolver, hoster_name, url, result, mark.kind
+                    resolver,
+                    hoster_name,
+                    url,
+                    result,
+                    started=started,
+                    challenge=mark.kind,
                 )
                 return stream, cacheable
             except PageBusy:

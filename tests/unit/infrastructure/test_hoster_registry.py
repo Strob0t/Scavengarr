@@ -1676,6 +1676,17 @@ class TestChallenge:
         assert self._outcome(telemetry, "stream") == 2
 
     @pytest.mark.usefixtures("clock")
+    async def test_a_stream_logs_the_attempts_time(self) -> None:
+        """Task 1.10 reads cold against warm times from the logs."""
+        registry, _, _ = self._registry(self._answers("slow"), resolve_timeout=1)
+
+        with structlog.testing.capture_logs() as logs:
+            await registry.resolve(self._url("a"))
+
+        success = next(e for e in logs if e["event"] == "hoster_resolve_success")
+        assert 100 <= success["duration_ms"] < 1000
+
+    @pytest.mark.usefixtures("clock")
     async def test_a_cut_without_a_challenge_stays_a_timeout(self) -> None:
         registry, _, telemetry = self._registry(self._answers("hang"))
 
