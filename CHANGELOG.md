@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Capture Probe Sets the Autoplay Wait
+- `scripts/probes/capture_timing.py --autoplay-wait S` sets the capture's wait for a player that starts itself, before its first click (`_MEDIA_AUTOPLAY_WAIT_S`, 3 s in the app), for the probe's runs, and the header names the wait. It measures what a shorter wait gains per hoster before the app changes it: Filemoon's player starts only on a click, so a warm capture on the Pi spends 3 of its 10 s bound waiting (`docs/plans/pi-performance.md`, row 103).
+
 ### Fixed: A Frame's Failed Read Costs Its Own Host; a Refused State of Origins Alone Is Dropped Too
 - The capture read every frame host's storage in one go under its 0.5 s bound, so one frame that navigated, detached or dawdled during the read (an ad's) cost the keep of every host, the player's own included. Each frame's read now ends after 0.4 s at most, and one that fails or runs out leaves out its own host only (`capture_state_save_failed` with that host and the error type); the host is read again at its next stream, and its kept entry stays as it was. Real Chromium, a page with two frames on routed pages: a detached ad frame left the other two hosts kept (the whole read failed before), an ad frame whose main thread was blocked for 5 s left nothing kept, as before, since the top page's own read waited for the same renderer.
 - A refused state of origins alone (a kept host without cookies and no clearance cookie) kept its origins, so every later context failed the same way. It now falls back to an empty state, and the store drops the origins as for a state with cookies (row 97's review).

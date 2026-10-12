@@ -1,7 +1,7 @@
 """A browser-capture resolver's capture, timed in the container.
 
     probe capture_timing -- URL [--hoster filemoon] [--runs 2] [--timeout S]
-        [--diagnose] [--block DOMAIN ...] [--restore]
+        [--diagnose] [--block DOMAIN ...] [--restore] [--autoplay-wait S]
 
 Resolves the hoster page *URL* (a link as the plugins store it) with the
 app's resolver for ``--hoster`` (one that captures in the stealth browser:
@@ -17,8 +17,10 @@ launches nothing when memory or shared memory is short.
 
 ``--timeout`` bounds navigation and the challenge (default: production's
 ``stremio.probe_stealth_timeout_seconds``); the player's clicks keep the
-app's waits, and the registry's bound (``http_timeout_resolve_seconds``)
-is left out, so a slow capture shows its whole time. A run ends after 90 s
+app's waits, apart from the first with ``--autoplay-wait`` (the wait for a
+player that starts itself, before the first click: 3 s in the app), and
+the registry's bound (``http_timeout_resolve_seconds``) is left out, so a
+slow capture shows its whole time. A run ends after 90 s
 at the latest, the whole probe after its runs' share plus a minute, and at
 exit the probe kills every process it started. Per run it prints the pages
 the browser loaded (the path's first segment, when the load started, how
@@ -560,6 +562,16 @@ class TimedStealthPool(StealthPool):
         return media
 
 
+def autoplay_wait(seconds: float | None) -> float:
+    """The capture's wait for a player that starts itself, before its first
+    click: *seconds* for the probe's runs, the app's without them (the
+    capture reads ``_MEDIA_AUTOPLAY_WAIT_S`` from its module at every
+    start)."""
+    if seconds is not None:
+        stealth._MEDIA_AUTOPLAY_WAIT_S = seconds
+    return stealth._MEDIA_AUTOPLAY_WAIT_S
+
+
 def note_clicks(pool: TimedStealthPool) -> None:
     """Note each click on the player in ``pool.run`` (the capture looks
     ``_click_point`` up in its module at every click)."""
@@ -868,9 +880,10 @@ async def probe(args: argparse.Namespace) -> int:
         if resolver is None:
             print(f"no capture resolver {args.hoster!r}")
             return 1
+        wait = autoplay_wait(args.autoplay_wait)
         print(
             f"# capture_timing: {args.hoster} · {urlsplit(args.url).hostname}"
-            f" · navigation bound {timeout:g} s"
+            f" · navigation bound {timeout:g} s · autoplay wait {wait:g} s"
         )
         started = time.monotonic()
         chromium, _ = await browser.warmup()
@@ -941,6 +954,14 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep the runs' state as the app does, then resolve in a relaunched"
         " browser, cold and restored from it",
+    )
+    parser.add_argument(
+        "--autoplay-wait",
+        type=float,
+        default=None,
+        metavar="S",
+        help="the capture's wait for a player that starts itself, before its"
+        " first click (default: the app's)",
     )
     return parser
 

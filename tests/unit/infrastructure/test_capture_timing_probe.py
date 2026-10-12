@@ -3,6 +3,7 @@ of scripts/probes/capture_timing.py."""
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import signal
@@ -201,7 +202,8 @@ def test_two_runs_by_default() -> None:
         args.diagnose,
         args.block,
         args.restore,
-    ) == ("filemoon", 2, None, False, [], False)
+        args.autoplay_wait,
+    ) == ("filemoon", 2, None, False, [], False, None)
 
 
 def test_the_watchdog_covers_the_restores_two_runs() -> None:
@@ -210,6 +212,51 @@ def test_the_watchdog_covers_the_restores_two_runs() -> None:
 
     assert _mod.probe_limit(plain) == 2 * _mod.RUN_LIMIT_S + 60
     assert _mod.probe_limit(restore) == 4 * _mod.RUN_LIMIT_S + 60
+
+
+class TestAutoplayWait:
+    def test_the_option_takes_seconds(self) -> None:
+        args = _mod._parser().parse_args(
+            ["https://byse.example/e/abc", "--autoplay-wait", "1.5"]
+        )
+
+        assert args.autoplay_wait == 1.5
+
+    def test_without_the_option_the_apps_wait_stays(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # restored after the test
+        monkeypatch.setattr(stealth, "_MEDIA_AUTOPLAY_WAIT_S", 3.0)
+
+        assert _mod.autoplay_wait(None) == 3.0
+        assert stealth._MEDIA_AUTOPLAY_WAIT_S == 3.0
+
+    async def test_the_capture_clicks_after_the_probes_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # restored after the test
+        monkeypatch.setattr(
+            stealth, "_MEDIA_AUTOPLAY_WAIT_S", stealth._MEDIA_AUTOPLAY_WAIT_S
+        )
+
+        async def click_point(_page: object, _player: object) -> tuple[float, float]:
+            return 1.0, 2.0
+
+        monkeypatch.setattr(stealth, "_click_point", click_point)
+        found: asyncio.Future[CapturedMedia] = (
+            asyncio.get_running_loop().create_future()
+        )
+        media = CapturedMedia("https://edge.cdn.example.com/master.m3u8", None)
+        page = MagicMock()
+        # The player requests its stream on the click
+        page.mouse.click = AsyncMock(side_effect=lambda *_: found.set_result(media))
+
+        assert _mod.autoplay_wait(0.05) == 0.05
+        started = time.monotonic()
+        assert await stealth._start_player(page, found, None) is media
+        # The app's own wait is 3 s
+        assert time.monotonic() - started < 1.0
+        page.mouse.click.assert_awaited_once_with(1.0, 2.0)
 
 
 def test_blocks_repeat() -> None:
