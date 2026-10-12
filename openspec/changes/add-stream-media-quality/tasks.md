@@ -13,4 +13,4 @@
 ## 3. Docs and check
 
 - [x] 3.1 `docs/features/stremio-addon.md` (stream name and description: where quality and size come from, badge vs. measurement), `docs/features/hoster-resolvers.md` (the playback check and what it reads), `CHANGELOG.md`.
-- [ ] 3.2 Production check after deploy: `prodctl.py logs` for one title shows `stremio_search_complete` and the Stremio client shows quality lines for HLS hosters that have master playlists (voe, filemoon, streamtape are candidates); record the share of streams with a measured quality in `docs/plans/ideas-backlog.md` (I2 row).
+- [x] 3.2 Production check after deploy: `prodctl.py logs` for one title shows `stremio_search_complete` and the Stremio client shows quality lines for HLS hosters that have master playlists (voe, filemoon, streamtape are candidates); record the share of streams with a measured quality in `docs/plans/ideas-backlog.md` (I2 row). Done 2026-10-12 (row 7): `stremio_search_complete` for three titles, the share 15 of 28 streams (54 %; HLS 15 of 16) in the I2 row.
