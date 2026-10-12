@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Probe Counts the Stored Stream Qualities
+- `scripts/probes/stream_quality.py` (`prodctl.py probe stream_quality`) reads the hoster resolver registry's snapshot (`hoster_state:v1`) from the app's cache backend and counts per resolver its resolutions, dead links, streams, HLS streams, streams per known quality class and streams with a size, with the share of streams whose quality is known. filemoon, supervideo and voe name a quality themselves, so they are counted apart from the resolvers whose quality only the playback check measures. Read-only; names and counts only.
+- Why: task 3.2 of `add-stream-media-quality` (backlog row 7), the production check of the quality and size the playback check reads from the stream (I2).
+
 ### Added: A Capture Hoster Stays Warm Across Restarts
 - After a capture found its stream, the stealth pool keeps the state of the page's host and its frames' hosts (cookies of the host and its parent domains, localStorage and IndexedDB of its origins) in the cache backend (`browser:capture_state:v1`, beside the clearance cookies): in the background, at most once per host per 10 minutes, at most 24 hours, at most 512 KiB per host. Each new stealth context (start, recycle, relaunch) is created from the kept states and the clearance cookies; a failed creation falls back to a plain context (`capture_state_restore_failed`). Logs: `capture_state_saved`, `capture_state_restored`, `capture_state_too_large`, `capture_state_corrupt`, `capture_state_save_failed`, with hosts and counts only.
 - Why: a restart, a recycle or a relaunch made every capture hoster cold again, and the cold paths outlast the Pi's 10 s resolve bound (`docs/plans/challenge-reactions.md` → R4).
