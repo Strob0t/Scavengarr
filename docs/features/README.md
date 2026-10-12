@@ -10,7 +10,7 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 
 | Fact | Value |
 |---|---|
-| Version | 0.3.0 |
+| Version | 0.4.0 |
 | Python | 3.12–3.14 (Docker image: 3.14) |
 | Plugins | 42 (36 httpx + 6 Playwright) |
 | Hoster resolvers | 62 (27 individual + 10 generic DDL + 25 XFS) |

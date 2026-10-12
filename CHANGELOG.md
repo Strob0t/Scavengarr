@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.4.0 - 2026-10-12
+
+Anime and the right episode: the Kitsu catalogs' ids, an anime episode's absolute number from Kitsu (for IMDb requests too; an episode 0 entry no longer shifts it), aniworld and sto placing the episode on the site's own season pages, and a series filter that keeps other series and episodes out. Playback through Scavengarr: address-bound direct files (DoodStream, MixDrop, Vinovo, FSST) go through a byte-range file proxy, the HLS proxy keeps three segments ahead, and the browser captures keep the players' ad tags out. Cut searches continue in the background under an answer budget of their own, resolutions and circuit breakers outlive a restart, the plugins' long-term record counts results, timeouts, challenges and dead sites, and quality and size come from the stream itself. Also the filmo plugin, two resolvers for moflix's mirrors, the sites' official domain lists, every setting from the environment, a published multi-arch image (`ghcr.io/strob0t/scavengarr`), Dependabot, alert rules, and the production diagnostics' digest, Stremio round and post-deploy check.
 
 ### Added: The Anime Probe Places Episodes on aniworld's Index
 - `scripts/probes/anime_offsets.py --aniworld` (row 82) places each regular Cinemeta episode of a series on aniworld's episode index as the app does: the series the plugin's search gives (`--slug IMDB=SLUG` names the page instead), its season pages read once through the plugin's fetcher, the reference `TitleResolver.episode_ref()` builds with the app's Kitsu number, and `locate()`. Per series it counts the placements at the number's row, at a neighbour (with the offsets), by title, nowhere although the number's row has an English title (N26) and nowhere, the title-confirmed placements at another row (ties apart), and prints `--cases` of each kind. Default: Duel Monsters, Pokémon, Digimon Adventure, Dragon Ball Z and the long-runners. Read-only, names and counts only.
