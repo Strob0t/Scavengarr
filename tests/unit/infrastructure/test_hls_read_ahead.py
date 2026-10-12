@@ -10,6 +10,7 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
+from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
     SegmentReadAhead,
     listed_segments,
@@ -365,17 +366,80 @@ class TestBounds:
         assert _count(telemetry, "hit") == 3
         assert [cdn.requested(f"seg-{i}.ts") for i in range(2, 7)] == [1] * 5
 
-    async def test_at_most_eight_playbacks(self) -> None:
-        """The least recently used one goes with its segment order."""
+    async def test_a_paused_playback_keeps_its_order_while_others_play(
+        self,
+    ) -> None:
+        """Production, 2026-10-12: a 1080p playback paused for 4.5 minutes
+        while 12 other media playlists passed the proxy; the least recently
+        used playback went with its order, and its 497 segments after the
+        resume all came from the CDN on demand."""
+        cdn = _Cdn()
+        telemetry = Telemetry()
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(telemetry=telemetry, clock=clock)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+            for i in range(12):
+                clock.now += 20
+                others = [f"{_CDN}p{i}-seg-{n}.ts" for n in range(1, 5)]
+                read_ahead.remember(f"{_CDN}p{i}.m3u8", others)
+                await _segment(client, read_ahead, others[0])
+                await _settle(read_ahead)
+            hits = _count(telemetry, "hit")
+            for url in _SEGMENTS[1:5]:
+                await _segment(client, read_ahead, url)
+                await _settle(read_ahead)
+
+        # seg-2 from the CDN on demand, seg-3 to seg-5 fetched ahead
+        assert _count(telemetry, "hit") - hits == 3
+
+    async def test_at_most_eight_playbacks_hold_fetches_ahead(self) -> None:
+        """The bound on memory: a ninth playback that schedules takes the
+        place of the least recently used one, which keeps its order."""
+        cdn = _Cdn()
         clock = _Clock()
         read_ahead = SegmentReadAhead(clock=clock)
-        for i in range(9):
+        async with cdn.client() as client:
+            for i in range(10):
+                clock.now += 1
+                urls = [f"{_CDN}p{i}-seg-{n}.ts" for n in range(1, 5)]
+                read_ahead.remember(f"{_CDN}p{i}.m3u8", urls)
+                await _segment(client, read_ahead, urls[0])
+                await _settle(read_ahead)
+                holding = [p for p in read_ahead._playbacks.values() if p.ahead]
+                assert len(holding) <= 8
+
+        assert len(read_ahead._playbacks) == 10
+        assert read_ahead._playbacks[f"{_CDN}p0.m3u8"].ahead == {}
+        assert read_ahead._playbacks[f"{_CDN}p1.m3u8"].ahead == {}
+        assert read_ahead._playlist_of[f"{_CDN}p0-seg-2.ts"] == f"{_CDN}p0.m3u8"
+
+    async def test_an_order_past_its_idle_bound_is_forgotten(self) -> None:
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(clock=clock)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        clock.now += hls_proxy._ORDER_SECONDS - 1
+        read_ahead.remember(f"{_CDN}other.m3u8", [f"{_CDN}other-1.ts"])
+        assert _PLAYLIST in read_ahead._playbacks
+
+        clock.now += 2
+        read_ahead.remember(f"{_CDN}late.m3u8", [f"{_CDN}late-1.ts"])
+
+        assert _PLAYLIST not in read_ahead._playbacks
+        assert read_ahead._playlist_of.get(_SEGMENTS[0]) is None
+
+    async def test_at_most_a_bounded_number_of_orders(self) -> None:
+        """The least recently used order goes past ``_MAX_ORDERS``."""
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(clock=clock)
+        for i in range(hls_proxy._MAX_ORDERS + 1):
             clock.now += 1
             read_ahead.remember(f"{_CDN}p{i}.m3u8", [f"{_CDN}p{i}-seg-1.ts"])
 
-        assert len(read_ahead._playbacks) == 8
+        assert len(read_ahead._playbacks) == hls_proxy._MAX_ORDERS
         assert f"{_CDN}p0.m3u8" not in read_ahead._playbacks
-        assert f"{_CDN}p8.m3u8" in read_ahead._playbacks
         assert read_ahead._playlist_of.get(f"{_CDN}p0-seg-1.ts") is None
 
     async def test_a_playlist_fetched_again_keeps_the_segments_still_listed(

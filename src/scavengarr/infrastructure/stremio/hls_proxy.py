@@ -310,8 +310,12 @@ async def _pieces(
 
 # Segments fetched ahead of the player per playback
 _AHEAD = 3
-# Playbacks (media playlists the proxy rewrote) followed at once
+# Playbacks (media playlists the proxy rewrote) with fetches ahead at once
 _MAX_PLAYBACKS = 8
+# Playbacks whose segment order is kept, and for how long after their last
+# request: a paused VOD player resumes without fetching its playlist again
+_MAX_ORDERS = 32
+_ORDER_SECONDS = 3 * 3600.0
 # A segment larger than this is left to the player's own request
 _MAX_AHEAD_BYTES = 16 * 1024 * 1024
 # A playback without a request for this long loses its fetches ahead
@@ -383,8 +387,14 @@ class SegmentReadAhead:
     A playback loses its fetches ahead ``_IDLE_SECONDS`` after its last
     request (``dropped``) and keeps its segment order: a player that
     resumes after a pause without fetching the playlist again gets the
-    next segments fetched ahead again. The least recently used playback
-    is forgotten when ``_MAX_PLAYBACKS`` are followed, its order with it.
+    next segments fetched ahead again. At most ``_MAX_PLAYBACKS``
+    playbacks hold fetches ahead: one more that schedules takes the place
+    of the least recently used one (``dropped``), which keeps its order.
+    An order is forgotten ``_ORDER_SECONDS`` after its playback's last
+    request, or as the least recently used one past ``_MAX_ORDERS``: a
+    playback paused while other playbacks started still finds its order
+    (production, 2026-10-12: 12 other media playlists in a 4.5-minute
+    pause, and 497 segments from the CDN on demand after it).
     """
 
     def __init__(
@@ -423,7 +433,7 @@ class SegmentReadAhead:
                 else:
                     self._drop(task)
             self._unlist(old)
-        while len(self._playbacks) >= _MAX_PLAYBACKS:
+        while len(self._playbacks) >= _MAX_ORDERS:
             oldest = min(self._playbacks, key=lambda k: self._playbacks[k].last_request)
             self._forget(self._playbacks.pop(oldest))
         self._playbacks[playlist_url] = playback
@@ -446,6 +456,7 @@ class SegmentReadAhead:
             self._drop(playback.ahead.pop(other))
         if playback.stopped or self._throttled.get(urlsplit(url).netloc, 0.0) > now:
             return
+        self._make_room(playback)
         for next_url in wanted[1:]:
             if next_url not in playback.ahead:
                 playback.ahead[next_url] = asyncio.create_task(
@@ -476,10 +487,23 @@ class SegmentReadAhead:
         return None if key is None else self._playbacks.get(key)
 
     def _sweep(self, now: float) -> None:
-        """Idle playbacks lose their fetches ahead; their order stays."""
-        for playback in self._playbacks.values():
-            if playback.last_request + _IDLE_SECONDS <= now:
+        """Idle playbacks lose their fetches ahead; their order stays until
+        ``_ORDER_SECONDS`` after their last request."""
+        for key, playback in list(self._playbacks.items()):
+            if playback.last_request + _ORDER_SECONDS <= now:
+                self._forget(self._playbacks.pop(key))
+            elif playback.last_request + _IDLE_SECONDS <= now:
                 self._drop_ahead(playback)
+
+    def _make_room(self, playback: _Playback) -> None:
+        """At most ``_MAX_PLAYBACKS`` playbacks hold fetches ahead: the
+        least recently used others drop theirs for *playback*, their order
+        kept."""
+        holding = [p for p in self._playbacks.values() if p.ahead and p is not playback]
+        while len(holding) >= _MAX_PLAYBACKS:
+            oldest = min(holding, key=lambda p: p.last_request)
+            self._drop_ahead(oldest)
+            holding.remove(oldest)
 
     def _forget(self, playback: _Playback) -> None:
         self._drop_ahead(playback)
