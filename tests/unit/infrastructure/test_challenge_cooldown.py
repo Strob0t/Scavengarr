@@ -70,6 +70,20 @@ class TestChallengeCooldown:
         assert cooldown.left("filemoon") == 0
         assert cooldown.challenged("filemoon") == 60
 
+    def test_an_unsolved_challenge_steps_up_at_once(
+        self, clock: dict[str, float]
+    ) -> None:
+        """A capture that ran on past the cut and still found no stream: the
+        next step starts now, not when the running cooldown ends."""
+        cooldown = ChallengeCooldown()
+        cooldown.challenged("filemoon")
+        clock["t"] += 20
+
+        assert cooldown.unsolved("filemoon") == 300
+        assert cooldown.left("filemoon") == 300
+        clock["t"] += 300
+        assert cooldown.challenged("filemoon") == 900
+
     @pytest.mark.usefixtures("clock")
     def test_each_hoster_has_its_own(self) -> None:
         cooldown = ChallengeCooldown()

@@ -5,9 +5,10 @@ A resolution that showed a challenge and found no stream in time (outcome
 is broken, so the circuit breaker does not count it. The hoster's links are
 skipped for a while instead, longer after each further challenge
 (``_STEPS_S``), and the hoster's next stream ends the cooldown and resets
-its steps. Memory only: a restart starts the browser cold, and a kept
-cooldown would only delay the capture that warms it. See
-``openspec/changes/react-to-challenges/design.md``.
+its steps. A capture that ran on past its challenge and still found no
+stream steps it up at once (``unsolved``). Memory only: a restart starts
+the browser cold, and a kept cooldown would only delay the capture that
+warms it. See ``openspec/changes/react-to-challenges/design.md``.
 """
 
 from __future__ import annotations
@@ -44,6 +45,12 @@ class ChallengeCooldown:
         """
         if left := self.left(name):
             return left
+        return self.unsolved(name)
+
+    def unsolved(self, name: str) -> float:
+        """A capture of *name* ran on past its challenge and found no stream
+        (the registry's background completion): the next step's cooldown
+        starts now, also while one runs. Returns the seconds it runs."""
         step = self._steps.get(name, 0)
         seconds = _STEPS_S[min(step, len(_STEPS_S) - 1)]
         self._steps[name] = step + 1

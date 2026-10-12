@@ -64,6 +64,11 @@ _MAX_UNRESOLVED = 1000
 # suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
 _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
 
+# A capture the resolve bound cut after a challenge runs on for this long
+# (_complete): with production's bound of 10 s, 30 s of work in all, past the
+# Pi's cold captures of 13.3 to 17.8 s (2026-10-11)
+_COMPLETION_S = 20.0
+
 
 def _is_playlist_url(url: str) -> bool:
     return urlparse(url).path.lower().endswith(_PLAYLIST_SUFFIXES)
@@ -106,6 +111,30 @@ def _from_plain(data: dict[str, Any]) -> ResolvedStream:
     return ResolvedStream(**known)
 
 
+def _started(
+    resolve: Callable[[], Awaitable[ResolvedStream | None]],
+    clock: asyncio.Timeout,
+    mark: ChallengeMark,
+) -> asyncio.Task[ResolvedStream | None]:
+    """*resolve* as a task under *clock* (``work_clock``) and *mark*
+    (``challenge_mark``). Awaited through ``asyncio.shield``, the bound does
+    not cancel it, so a challenged capture can run on past the cut."""
+    clock_token = work_clock.set(clock)
+    mark_token = challenge_mark.set(mark)
+    try:
+        return asyncio.ensure_future(resolve())
+    finally:
+        work_clock.reset(clock_token)
+        challenge_mark.reset(mark_token)
+
+
+async def _cancelled(task: asyncio.Task[Any]) -> None:
+    """Cancel *task* and wait for its cleanup (a capture closes its page),
+    whatever it ends with."""
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 class _CacheEntry[T]:
     """Time-bounded cache entry (resolver results, redirect targets); a
     result keeps the name of the resolver that produced it."""
@@ -132,8 +161,10 @@ class HosterResolverRegistry:
     resolver name, so a hoster's mirror domains share it). A resolution
     whose capture met a challenge ends as ``challenge`` instead: the
     resolver's links wait out a challenge cooldown (``ChallengeCooldown``),
-    and the breaker does not count it. Every resolution is recorded in
-    *telemetry* by resolver name (``direct`` for a probe).
+    and the breaker does not count it. A capture the bound cut after its
+    challenge runs on in the background and leaves its stream in the cache
+    (``_complete``). Every resolution is recorded in *telemetry* by resolver
+    name (``direct`` for a probe).
     """
 
     def __init__(
@@ -162,6 +193,11 @@ class HosterResolverRegistry:
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
         self._challenges = ChallengeCooldown()
+        # Challenged captures that run on past the bound, by resolver
+        # (_hand_over): the completion and the capture it awaits
+        self._completions: dict[
+            str, tuple[asyncio.Task[None], asyncio.Task[ResolvedStream | None]]
+        ] = {}
         # Probes of links no resolver claims, by hoster (unresolved_hosts)
         self._unresolved: Counter[str] = Counter()
         for resolver in resolvers or []:
@@ -623,17 +659,22 @@ class HosterResolverRegistry:
         cache_key: str,
     ) -> ResolvedStream | None:
         """One resolution of *url*; its outcome is cached under *cache_key*."""
-        result, cacheable = await self._try_resolver(resolver, hoster_name, url)
+        result, cacheable = await self._try_resolver(
+            resolver, hoster_name, url, cache_key=cache_key
+        )
         if cacheable:
             self._cache_result(cache_key, result, resolver.name)
         return result
 
     async def aclose(self) -> None:
-        """Cancel the half-open probes still running (at shutdown)."""
-        probes = list(self._probes)
-        for probe in probes:
-            probe.cancel()
-        await asyncio.gather(*probes, return_exceptions=True)
+        """Cancel the half-open probes and the challenged captures that run
+        on past the bound, with their completions (at shutdown)."""
+        running: list[asyncio.Task[Any]] = [*self._probes]
+        for completion, work in self._completions.values():
+            running += (completion, work)
+        for task in running:
+            task.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
 
     async def _try_resolver(
         self,
@@ -642,6 +683,7 @@ class HosterResolverRegistry:
         url: str,
         *,
         resolve: Callable[[], Awaitable[ResolvedStream | None]] | None = None,
+        cache_key: str | None = None,
     ) -> tuple[ResolvedStream | None, bool]:
         """Attempt resolution with a specific resolver, logging success/failure.
 
@@ -665,20 +707,39 @@ class HosterResolverRegistry:
         a captcha provider's frame, the hoster's own captcha) ends as
         ``challenge``: the hoster wants a warm browser context, it is not
         broken. Neither cached nor counted; the resolver's links wait out
-        the challenge cooldown.
+        the challenge cooldown. A capture the bound cuts after its challenge
+        runs on in the background when its outcome is cached under
+        *cache_key* (``_hand_over``); a cut request (the answer went out)
+        cancels it, as it cancels a capture without a challenge.
         """
         mark = ChallengeMark()
         started = time.monotonic()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
                 async with asyncio.timeout(self._resolve_timeout) as clock:
-                    clock_token = work_clock.set(clock)
-                    mark_token = challenge_mark.set(mark)
+                    work = _started(
+                        resolve or partial(resolver.resolve, url), clock, mark
+                    )
                     try:
-                        result = await (resolve() if resolve else resolver.resolve(url))
-                    finally:
-                        work_clock.reset(clock_token)
-                        challenge_mark.reset(mark_token)
+                        result = await asyncio.shield(work)
+                    except asyncio.CancelledError:
+                        # Cut by the bound (its clock expired) or the request.
+                        # The work ends inside the bound: the page gate gives
+                        # a stopped clock its time back, an exited one refuses
+                        if not (
+                            clock.expired()
+                            and self._hand_over(
+                                work,
+                                resolver,
+                                hoster_name,
+                                url,
+                                cache_key,
+                                mark,
+                                started,
+                            )
+                        ):
+                            await _cancelled(work)
+                        raise
                 if result is None and mark.kind is not None:
                     stage.outcome = self._challenged(
                         resolver, hoster_name, url, mark.kind
@@ -747,6 +808,97 @@ class HosterResolverRegistry:
             cooldown_s=round(cooldown),
         )
         return "challenge"
+
+    def _hand_over(
+        self,
+        work: asyncio.Task[ResolvedStream | None],
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        cache_key: str | None,
+        mark: ChallengeMark,
+        started: float,
+    ) -> bool:
+        """Let *work*, a capture the bound cut, run on in the background
+        (``_complete``) when it met a challenge: only a resolution whose
+        outcome is cached (*cache_key*; a player's own is not), one per
+        resolver at a time (each holds a browser page). Whether it runs on."""
+        name = resolver.name
+        if mark.kind is None or cache_key is None or name in self._completions:
+            return False
+        completion = asyncio.ensure_future(
+            self._complete(
+                work, resolver, hoster_name, url, cache_key, mark.kind, started
+            )
+        )
+        self._completions[name] = (completion, work)
+        # A completion cancelled before its first step never awaited the
+        # capture, which would run on unowned
+        completion.add_done_callback(lambda _: work.cancel())
+        completion.add_done_callback(lambda _: self._completions.pop(name, None))
+        return True
+
+    async def _complete(
+        self,
+        work: asyncio.Task[ResolvedStream | None],
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        cache_key: str,
+        kind: ResolutionChallenge,
+        started: float,
+    ) -> None:
+        """Await a capture the bound cut after a challenge for up to
+        ``_COMPLETION_S`` more, on the page it holds (it takes no other).
+
+        Its stream is judged and cached under *cache_key* as the attempt's
+        own: it ends the resolver's challenge cooldown, closes a half-open
+        breaker, and the next request finds it in the cache. Without a
+        stream (none, an error, the deadline, which cancels the capture) the
+        challenge stands as in ``_try_resolver``: nothing is cached or
+        counted, and the resolver's next cooldown step starts now. Recorded
+        as the stage ``hoster_challenge_completion`` from the cut; shutdown
+        cancels it (``aclose``).
+        """
+        deadline = asyncio.timeout(_COMPLETION_S)
+        with self._telemetry.stage(
+            "hoster_challenge_completion", resolver=resolver.name
+        ) as stage:
+            # Unless it ends otherwise: cut by the deadline or by shutdown
+            stage.outcome = "cancelled"
+            try:
+                async with deadline:
+                    result = await work
+            except Exception:
+                if not deadline.expired():
+                    log.exception(
+                        "hoster_challenge_completion_error", hoster=hoster_name, url=url
+                    )
+                result = None
+            if result is None:
+                if not deadline.expired():
+                    stage.outcome = "none"
+                self._unsolved(resolver, hoster_name, url)
+                return
+            _, stream, cacheable = await self._judge(
+                resolver, hoster_name, url, result, started=started, challenge=kind
+            )
+            if cacheable:
+                self._cache_result(cache_key, stream, resolver.name)
+            stage.outcome = "none" if stream is None else "stream"
+
+    def _unsolved(
+        self, resolver: HosterResolverPort, hoster_name: str, url: str
+    ) -> None:
+        """A completion without a stream: the resolver's challenge stands,
+        and its next cooldown step starts now."""
+        cooldown = self._challenges.unsolved(resolver.name)
+        log.info(
+            "hoster_challenge_unsolved",
+            hoster=hoster_name,
+            url=url,
+            cooldown_s=round(cooldown),
+        )
 
     async def _follow_redirects(self, url: str) -> str | None:
         """Follow HTTP redirects and return final URL if domain changed.

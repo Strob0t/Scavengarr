@@ -17,6 +17,7 @@ StageName = Literal[
     "stremio_phase",
     "plugin_search",
     "hoster_resolve",
+    "hoster_challenge_completion",
     "hls_proxy",
     "hls_readahead",
     "browser_page_wait",

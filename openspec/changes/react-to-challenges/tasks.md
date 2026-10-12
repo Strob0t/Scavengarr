@@ -16,12 +16,12 @@
 
 ## 2. Row 90: the background completion (R2)
 
-- [ ] 2.1 Tests (a fake capture): the stream found after the cut is judged and cached under the link; the next resolve answers it from the cache; the cooldown ends; a half-open breaker closes.
-- [ ] 2.2 Tests: one completion per hoster (a second cut capture is cancelled); the deadline 20 s after the cut cancels it, its page closes and the cooldown steps up; `aclose()` cancels it.
-- [ ] 2.3 Tests: `resolve_for_client()` ends as `challenge` without a completion; the page gate's tests stay green; a completion holds only its capture's page.
-- [ ] 2.4 Implementation: the attempt as a task under the bound, the completions, and the stage `hoster_challenge_completion` in `infrastructure/telemetry/metrics.py`.
-- [ ] 2.5 Live proof (dev container): a capture cut at a short resolve bound finishes in the background, and the next request answers from the cache.
-- [ ] 2.6 Docs:
+- [x] 2.1 Tests (a fake capture): the stream found after the cut is judged and cached under the link; the next resolve answers it from the cache; the cooldown ends; a half-open breaker closes.
+- [x] 2.2 Tests: one completion per hoster (a second cut capture is cancelled); the deadline 20 s after the cut cancels it, its page closes and the cooldown steps up; `aclose()` cancels it.
+- [x] 2.3 Tests: `resolve_for_client()` ends as `challenge` without a completion; the page gate's tests stay green; a completion holds only its capture's page.
+- [x] 2.4 Implementation: the attempt as a task under the bound, the completions, and the stage `hoster_challenge_completion` in `infrastructure/telemetry/metrics.py`.
+- [x] 2.5 Live proof (dev container): a capture cut at a short resolve bound finishes in the background, and the next request answers from the cache.
+- [x] 2.6 Docs:
   - `docs/features/hoster-resolvers.md`: the completion;
   - `docs/features/observability.md`: the stage;
   - `CHANGELOG.md`.

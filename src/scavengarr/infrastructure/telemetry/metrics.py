@@ -85,6 +85,13 @@ _STAGES: dict[StageName, _StageSpec] = {
         "Hoster resolutions",
         span_label="resolver",
     ),
+    # A capture the bound cut after a challenge runs on for at most 20 s
+    "hoster_challenge_completion": _StageSpec(
+        ("resolver",),
+        (1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 20.0),
+        "Background completions of challenged hoster captures",
+        span_label="resolver",
+    ),
     # A span per segment would bury the requests in the traces
     "hls_proxy": _StageSpec(
         ("kind",),

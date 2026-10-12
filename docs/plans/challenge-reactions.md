@@ -77,6 +77,20 @@ Each option names the gap it closes (the numbers of the list above).
 - **Contra:** it holds one of the browser's pages for up to 30 s. The page gate ranks plugin and capture pages alike (by their due time, after `play`), so plugin pages and other captures may wait for a page meanwhile.
 - **Cost:** medium (the stealth pool, the registry, the page budget's tests).
 
+#### R2 built (row 90, 2026-10-12)
+
+OpenSpec `react-to-challenges`, tasks group 2. `_try_resolver()` runs the resolver as a task and awaits it through `asyncio.shield` under the bound. When the bound cuts an attempt whose capture showed a challenge, its outcome is cached (`resolve()`, not `resolve_for_client()`) and no completion runs for the hoster, the task goes to a background completion (`_complete`) and the attempt answers `challenge` at once; otherwise the cut cancels the task inside the bound, as before. The completion awaits the capture for at most 20 s after the cut, on the page the capture holds. A stream passes `_judge()` and is cached under the link: it ends the challenge cooldown and closes a half-open breaker. Without one (none, an error, the deadline) the challenge stands: nothing is cached or counted, and the hoster's next cooldown step starts at once (`ChallengeCooldown.unsolved()`, logged as `hoster_challenge_unsolved`). `aclose()` cancels the completions and their captures; a completion cancelled before its first step cancels its capture through a done callback (the shutdown test found that gap). The stage `hoster_challenge_completion` (`resolver`; `stream`, `none`, `cancelled`) times each completion from the cut. The stealth pool is unchanged: the capture keeps its page and lease as before, and the completion only awaits it.
+
+Dev proof with the app's registry and resolvers (a fresh context per attempt, one current link per hoster, 2026-10-12 10:19 UTC):
+
+| Hoster | Bound | Mark (into the capture) | Attempt | Completion | Next request |
+|---|---|---|---|---|---|
+| Filemoon | 4.1 s | `hoster_captcha` at 3.9 s | `challenge`, cooldown 60 s | `stream` 0.4 s after the cut (`duration_ms` 4498), cached | from the cache at once, breaker untouched |
+| Dropload | 2 s | `turnstile` at 0.6 s | `challenge`, cooldown 60 s | `stream` 2.6 s after the cut (`duration_ms` 4602), cached | from the cache at once, breaker untouched |
+| Filemoon | 4.1 s, deadline 0.1 s | `hoster_captcha` at 3.9 s | `challenge`, cooldown 60 s | `cancelled` at the deadline, its page closed (0 pages in use), cooldown up to 300 s | `challenge_cooldown`, 300 s left |
+
+Limits: the dev container, one link per hoster, one run each; the short bounds stand in for production's 10 s against the Pi's cold captures of 13.3 to 17.8 s. Production after the deploy is task 2.7.
+
 ### R3: a capture budget of its own (gaps 1 and 3)
 
 - **What:** a separate time bound for captures, or simply production's resolve bound raised: `http.timeout_resolve_seconds` 25 in the Pi's YAML, against the default of 15.

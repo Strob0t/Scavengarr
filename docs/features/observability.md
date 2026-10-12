@@ -92,6 +92,7 @@ All names start with `scavengarr_`. Outcomes in *italics* are counted without a 
 | `plugin_search_seconds`, `plugin_search_total` | `plugin`, `outcome` | Stremio searches only; Torznab searches are not recorded. `hits`, `empty`, `late` (returned after the request's answer budget: its results reach the cache and the next request), `error`, `cut` (shutdown), *`breaker_open`*, *`unreachable`* (failed the periodic health check, or found no reachable domain in this search) |
 | `plugin_results_total` | `plugin` | Validated results |
 | `hoster_resolve_seconds`, `hoster_resolve_total` | `resolver`, `outcome` | Resolver name, `direct` for content-type probes (playlists, URLs without a resolver). `stream`, `dead`, `unplayable`, `check_error` (the playback check failed), `timeout`, `challenge` (a resolution whose pages showed a challenge found no stream in time; the breaker does not count it), `network_error`, `http_error`, `error`, `cut`, `busy` (a capture got no stealth browser page before its request was due), *`cached`*, *`breaker_open`*, *`challenge_cooldown`* (a link skipped while its hoster's challenge cooldown runs) |
+| `hoster_challenge_completion_seconds`, `hoster_challenge_completion_total` | `resolver`, `outcome` | A capture the resolve bound cut after a challenge, run on in the background, from the cut to its end (at most 20 s): `stream` (judged and cached under its link), `none` (no stream or an error, which steps the hoster's challenge cooldown up, or a stream the judgement refused), `cancelled` (the 20 s deadline, which steps the cooldown up too, or shutdown) |
 | `hls_proxy_seconds`, `hls_proxy_total` | `kind`, `outcome` | `master` (the stream's playlist), `playlist`, `segment`, `file` (an address-bound direct file through the file proxy, byte ranges: mostly `206`); outcome is the answer's HTTP status. The duration ends when the answer starts (time to first byte for the player) |
 | `hls_proxy_bytes_total` | `kind` | Bytes sent (playlists, segments and files; an aborted transfer's bytes included) |
 | `hls_readahead_seconds`, `hls_readahead_total` | `outcome` | The HLS proxy's fetches of segments ahead of the player: `ok`, `failed`, `too_large` (over 16 MiB, left to the player), `throttled` (the CDN answered 429), `cut` (dropped while in flight); and its answers: `hit` (served from memory), `miss`, `dropped` (fetched or in flight, the player did not ask). `hit` over `hit` plus `miss` says how often the read-ahead was there in time |
@@ -122,6 +123,9 @@ sum by (plugin, outcome) (increase(scavengarr_plugin_search_total[1d]))
 
 # Outcomes per resolver
 sum by (resolver, outcome) (increase(scavengarr_hoster_resolve_total[1d]))
+
+# Background completions of challenged captures per resolver
+sum by (resolver, outcome) (increase(scavengarr_hoster_challenge_completion_total[1d]))
 
 # Chromium and the rest of the container, in cores
 rate(scavengarr_container_cpu_seconds_total[5m]) - rate(process_cpu_seconds_total[5m])
