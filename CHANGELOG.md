@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Capture Keeps Its State From Its Own Page
+- The stealth pool took a captured stream's state with `storage_state(indexed_db=True)` on the live shared context. The driver's hidden page then walked every origin the context had ever committed, outside the page gate and without a lease: it raced the browser's 200-page recycle, swallowed the popups opened meanwhile, and its cost grew with the context's age (code review 2026-10-12, finding 6). The capture now reads the state from its own page before the page closes (`collect_capture_state()`): the context's cookies, and in each of its frames on a kept host, that origin's localStorage and IndexedDB. No other origin is visited. The read took 4 to 11 ms per capture in the dev container. The resolution waits for it, at most 0.5 s, and not at all when its resolve bound has less time left; the store still writes in the background, and `capture_state_saved` now names the read's `duration_ms`.
+- An IndexedDB database is kept whole or not at all: one with a record that plain JSON cannot hold (a date, a file, a typed array) stays out, so no context is refused for it (finding 8's reproductions; Filemoon's two records are plain).
+- What a player writes after its stream request is not kept: Vixeo's one localStorage key, on a hoster that meets no challenge.
+- `scripts/probes/capture_timing.py --restore` keeps the runs' state as the app does and prints how long each read took.
+
 ### Fixed: The Newest Cookie Starts a Stealth Context
 - `ClearanceStore.creation_state()` let every kept capture state's cookie replace the clearance store's of the same name, domain and path, whatever their age. A capture that kept Dropload's `cf_clearance` A and a challenge within the host's 10-minute keep interval that stored B in the clearance store left every context created before the host's next keep (a recycle, a restart, a relaunch) with A, which Cloudflare no longer accepts (code review 2026-10-12, finding 7). Each stored clearance cookie now carries the time it was saved (`saved_at`, never handed to a browser context), and per cookie the newer of the two wins; a cookie stored before carries no time and loses to a kept one.
 

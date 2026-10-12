@@ -1,12 +1,12 @@
 ## ADDED Requirements
 
 ### Requirement: A Capture Hoster's State Is Kept
-After a capture found its stream, the stealth pool SHALL keep the storage state (cookies, localStorage, IndexedDB) of the capture page's host and its frames' hosts in the cache backend, in the background so that the resolution does not wait, at most once per host per 10 minutes, for at most 24 hours. A cookie SHALL be kept only when its domain is such a host or a parent domain of one.
+After a capture found its stream, the stealth pool SHALL keep the storage state (cookies, localStorage, IndexedDB) of the capture page's host and its frames' hosts in the cache backend, at most once per host per 10 minutes, for at most 24 hours, the cache write in the background. A cookie SHALL be kept only when its domain is such a host or a parent domain of one.
 
 #### Scenario: Kept after a stream
 - **WHEN** Dropload's capture finds its stream after the Turnstile widget
-- **THEN** the cookies of Dropload's host and the localStorage of the widget frame's host are kept
-- **AND** `capture_state_saved` names the hosts and counts, without values
+- **THEN** the cookies of Dropload's host are kept (the widget's frame is gone by then)
+- **AND** `capture_state_saved` names the hosts, the counts and how long the read took, without values
 
 #### Scenario: Other hosts stay out
 - **WHEN** an ad domain without a frame on the capture page set a cookie in the context
@@ -19,6 +19,22 @@ After a capture found its stream, the stealth pool SHALL keep the storage state 
 #### Scenario: No stream
 - **WHEN** a capture ends without a stream
 - **THEN** nothing is kept for its hosts
+
+### Requirement: The State Is Read From The Capture's Own Page
+The stealth pool SHALL read the state it keeps from the capture's own page before the page closes, each origin in one of its frames, visiting no other origin. The resolution SHALL wait for the read at most 0.5 seconds, and not at all when its resolve bound has less time left. An IndexedDB database SHALL be kept whole or not at all: one with a record that plain JSON cannot hold SHALL NOT be kept.
+
+#### Scenario: Read from the capture's own page
+- **WHEN** a capture finds its stream
+- **THEN** each frame on a kept host reads its own origin's storage before the page closes
+- **AND** no other page and no other origin is visited
+
+#### Scenario: Close to the resolve bound
+- **WHEN** a capture finds its stream with less than 0.5 seconds of its resolve bound left
+- **THEN** the stream is returned at once and nothing is read or kept
+
+#### Scenario: A database plain JSON cannot hold
+- **WHEN** a frame's IndexedDB database holds a record with a date, a file or a typed array
+- **THEN** that database is not kept, and the rest of the state is
 
 ### Requirement: Every New Context Starts With The Kept State
 The stealth pool SHALL create each new browser context (at the start, after a recycle, after a relaunch) with the unexpired clearance cookies and every kept host's unexpired cookies, localStorage and IndexedDB, the newest winning per cookie, whether the clearance cookies or a kept state hold it, and per origin. A kept state older than 24 hours SHALL NOT be restored. A failure to restore SHALL leave a context without the state, logged, never a failed capture.

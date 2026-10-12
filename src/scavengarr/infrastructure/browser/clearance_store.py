@@ -197,11 +197,16 @@ class ClearanceStore:
         }
 
     async def keep_capture_state(
-        self, hosts: Iterable[str], state: Mapping[str, Any]
+        self,
+        hosts: Iterable[str],
+        state: Mapping[str, Any],
+        *,
+        duration_ms: int | None = None,
     ) -> None:
         """Keep *state*'s part of each of *hosts*: the cookies of the host
-        and its parent domains, the origins on it (a context's
-        ``storage_state()``)."""
+        and its parent domains, the origins on it (in the form of a
+        context's ``storage_state()``). *duration_ms*, how long the capture
+        took to read the state, goes into the log line."""
         now = time.time()
         cookies, origins = state.get("cookies") or [], state.get("origins") or []
         kept: dict[str, dict[str, Any]] = {}
@@ -232,6 +237,7 @@ class ClearanceStore:
             cookies=sum(len(e["cookies"]) for e in kept.values()),
             origins=sum(len(e["origins"]) for e in kept.values()),
             bytes=sizes,
+            duration_ms=duration_ms,
         )
 
     async def creation_state(self) -> StorageState | None:

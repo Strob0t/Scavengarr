@@ -10,7 +10,7 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
 
 - **Goals:**
   - A capture hoster that passed once stays warm across restarts, recycles and relaunches.
-  - No resolution waits for the state.
+  - No resolution waits long for the state (row 97: a read of milliseconds, bounded).
   - Only the capture's own hosts are kept.
 - **Non-Goals:**
   - R5's warm-up captures.
@@ -33,10 +33,15 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
   - a cookie is kept when its domain, without the leading dot, is one of these hosts or a parent domain of one;
   - an origin is kept when its host is one of them.
   - Ad domains that set cookies without a frame on the page stay out (the Pi's `GL_UI4`).
-- **In the background.**
-  - After `capture_media()` returned its stream, one task per host takes `storage_state(indexed_db=True)`, filters it and writes it, unless that host's state was kept within the last 10 minutes (in memory).
-  - A recycle or relaunch in between makes the task fail quietly (`capture_state_save_failed`). The tasks end at the pool's cleanup.
-  - The resolution never waits: the serialization covers every origin of the shared context.
+- **Read from the capture's own page (row 97, code review 2026-10-12, finding 6).**
+  - Once `capture_media()` has its stream, before its page closes, it reads the state of the hosts not kept within the last 10 minutes (in memory): the context's cookies, and in each frame on one of them that origin's localStorage and IndexedDB (`collect_capture_state()`, one evaluate per origin, in Playwright's `StorageScript` format). A store write in the background follows; the tasks end at the pool's cleanup.
+  - The read runs inside the capture's page slot and lease, so the browser's recycle cannot close it, and it visits no other origin. It took 4 to 11 ms per capture in the dev container.
+  - It is bounded by 0.5 s and skipped when the capture's resolve bound (`work_clock`) has less time left, so it never costs a stream. A completion past its bound reads: the bound no longer ends it.
+  - An IndexedDB database is read whole and left out when plain JSON cannot hold one of its records (a date, a file, a typed array). A new context cannot always take such a record back (finding 8), and a page whose database is missing creates it anew, whereas one with records gone may not.
+  - Alternatives:
+    - `storage_state(indexed_db=True)` in the background, as built first: the driver's hidden page walked every origin the context had committed, outside the page gate and without a lease. It raced the recycle (12 of 12 runs failed in the review), swallowed popups (0 of 15 delivered), and cost about 20 ms per origin, growing with the context's age.
+    - A background task that takes the page over: the page gate's slot and the browser lease are context managers whose stages attach tracing context to the task that entered them. A second slot in the background would wait for a free page while the capture held its own.
+    - The resolution therefore waits for the read: milliseconds, once per host per 10 minutes.
 - **Bounds.**
   - A host's filtered state above 512 KiB is not kept (`capture_state_too_large`, with the host and the size).
   - A corrupt key is dropped with a warning (`capture_state_corrupt`).
@@ -50,7 +55,8 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
 ## Risks / Trade-offs
 
 - **A stale state** (the hoster rotates what it trusts) costs a challenge, as a fresh context does, and the next pass replaces it.
-- **The serialization's cost** grows with the shared context's origins. It runs in the browser process, once per host per 10 minutes, off the resolution path.
+- **The read's cost** is one cookie query and one evaluate per kept origin, on the resolution path: 4 to 11 ms in the dev container, at most 0.5 s, none near the resolve bound.
+- **What a player writes after its stream request** is not kept: Vixeo's one localStorage key, on a hoster that meets no challenge. Filemoon's captcha pass is written at the verify, before the stream.
 - **The cache holds session-like cookies and storage of hoster pages**, as it holds clearance cookies today. The cache backend is the app's own (diskcache or Redis), and nothing is logged.
 - **A hoster whose warmth lives in sessionStorage**, which `storage_state` does not cover, stays cold. Row 91 found none.
 

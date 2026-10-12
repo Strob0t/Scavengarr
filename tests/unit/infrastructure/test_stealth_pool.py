@@ -9,7 +9,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
@@ -31,6 +31,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     PageBusy,
     PageGate,
     challenge_mark,
+    work_clock,
 )
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
@@ -1589,81 +1590,261 @@ class TestCreationState:
         )
 
 
-def _frame(url: str) -> SimpleNamespace:
-    return SimpleNamespace(url=url)
+def _frame(url: str, state: dict[str, object] | None = None) -> MagicMock:
+    """A frame at *url* whose origin's storage the collector reads as
+    *state* (None: an opaque origin)."""
+    frame = MagicMock()
+    frame.url = url
+    frame.evaluate = AsyncMock(return_value=state)
+    return frame
+
+
+def _origin(origin: str, *keys: str) -> dict[str, object]:
+    return {
+        "origin": origin,
+        "localStorage": [{"name": key, "value": "v"} for key in keys],
+        "indexedDB": [],
+    }
+
+
+_KEPT_COOKIE = {
+    "name": "file_id",
+    "value": "v",
+    "domain": "dr0pstream.com",
+    "path": "/",
+}
+_PLAYER = _origin("https://dr0pstream.com", "player")
+_WIDGET = _origin("https://challenges.cloudflare.com", "widget")
+
+
+async def _expired_clock() -> asyncio.Timeout:
+    """A resolve bound that cut its work (a completion runs on past it)."""
+    clock = asyncio.timeout(0)
+    with pytest.raises(TimeoutError):
+        async with clock:
+            await asyncio.sleep(1)
+    return clock
 
 
 @pytest.mark.usefixtures("_fast_capture")
 class TestCaptureKeepsItsState:
-    """After a stream the capture keeps its hosts' state in the background."""
+    """After a stream the capture reads its hosts' state from its own page
+    before the page closes, so no other origin is visited (code review
+    2026-10-12, finding 6); the store writes it in the background."""
 
     @staticmethod
     def _setup(
-        *, streams: bool = True
-    ) -> tuple[StealthPool, MagicMock, AsyncMock, MagicMock]:
+        *, streams: bool = True, frames: Callable[[], list[MagicMock]] | None = None
+    ) -> tuple[StealthPool, AsyncMock, AsyncMock, list[MagicMock]]:
         shared_pool, _, context = _mock_pool_stack()
         store = AsyncMock()
         store.creation_state = AsyncMock(return_value=None)
         on_load = ["https://cdn.example/hls/master.m3u8"] if streams else []
+        pages: list[MagicMock] = []
+
+        def _frames() -> list[MagicMock]:
+            return [
+                _frame("https://dr0pstream.com/e/abc", _PLAYER),
+                _frame("https://challenges.cloudflare.com/cdn-cgi/x", _WIDGET),
+                _frame("about:blank"),
+            ]
 
         def _page() -> MagicMock:
             page = _player_page(on_load=on_load)
-            page.frames = [
-                _frame("https://dr0pstream.com/e/abc"),
-                _frame("https://challenges.cloudflare.com/cdn-cgi/x"),
-                _frame("about:blank"),
-            ]
+            page.frames = (frames or _frames)()
             page.context = context
+            pages.append(page)
             return page
 
         context.new_page = AsyncMock(side_effect=lambda: _page())
-        context.storage_state = AsyncMock(return_value={"cookies": [], "origins": []})
+        context.cookies = AsyncMock(return_value=[_KEPT_COOKIE])
         pool = StealthPool(browser_pool=shared_pool, clearance_store=store)
-        return pool, context, store, shared_pool
+        return pool, context, store, pages
 
     @staticmethod
     async def _settle(pool: StealthPool) -> None:
         await asyncio.gather(*pool._keep_tasks)
 
     async def test_a_stream_keeps_the_pages_and_frames_hosts(self) -> None:
-        pool, context, store, _ = self._setup()
+        pool, context, store, pages = self._setup()
 
         media = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
         await self._settle(pool)
 
         assert media is not None
-        context.storage_state.assert_awaited_once_with(indexed_db=True)
         store.keep_capture_state.assert_awaited_once_with(
             ["challenges.cloudflare.com", "dr0pstream.com"],
-            {"cookies": [], "origins": []},
+            {"cookies": [_KEPT_COOKIE], "origins": [_PLAYER, _WIDGET]},
+            duration_ms=ANY,
+        )
+        assert isinstance(
+            store.keep_capture_state.await_args.kwargs["duration_ms"], int
+        )
+        pages[0].frames[2].evaluate.assert_not_awaited()  # about:blank
+
+    async def test_the_state_is_read_before_the_page_closes(self) -> None:
+        pool, context, _, pages = self._setup()
+        read_when_closed: list[list[int]] = []
+        new_page = context.new_page.side_effect
+
+        def _page() -> MagicMock:
+            page = new_page()
+            page.close = AsyncMock(
+                side_effect=lambda: read_when_closed.append(
+                    [frame.evaluate.await_count for frame in page.frames]
+                )
+            )
+            return page
+
+        context.new_page = AsyncMock(side_effect=_page)
+
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+
+        assert read_when_closed == [[1, 1, 0]]
+        context.storage_state.assert_not_awaited()  # no page of its own
+        assert context.new_page.await_count == 1
+
+    async def test_an_origin_is_read_once(self) -> None:
+        pool, _, store, pages = self._setup(
+            frames=lambda: [
+                _frame("https://dr0pstream.com/e/abc", _PLAYER),
+                _frame("https://dr0pstream.com/player", _PLAYER),
+            ]
         )
 
-    async def test_the_resolution_does_not_wait_for_it(self) -> None:
-        pool, context, store, _ = self._setup()
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+
+        assert [f.evaluate.await_count for f in pages[0].frames] == [1, 0]
+        assert store.keep_capture_state.await_args.args[1]["origins"] == [_PLAYER]
+
+    async def test_an_opaque_origin_keeps_its_hosts_cookies_only(self) -> None:
+        pool, _, store, _ = self._setup(
+            frames=lambda: [_frame("https://dr0pstream.com/e/abc", None)]
+        )
+
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+
+        store.keep_capture_state.assert_awaited_once_with(
+            ["dr0pstream.com"],
+            {"cookies": [_KEPT_COOKIE], "origins": []},
+            duration_ms=ANY,
+        )
+
+    async def test_an_origin_without_storage_is_left_out(self) -> None:
+        """As in ``storage_state()``: a new context visits no origin for
+        nothing."""
+        pool, _, store, _ = self._setup(
+            frames=lambda: [
+                _frame(
+                    "https://dr0pstream.com/e/abc", _origin("https://dr0pstream.com")
+                ),
+                _frame("https://challenges.cloudflare.com/cdn-cgi/x", _WIDGET),
+            ]
+        )
+
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+
+        assert store.keep_capture_state.await_args.args[1]["origins"] == [_WIDGET]
+
+    async def test_the_read_waits_at_most_its_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        assert mod._KEEP_BOUND_S == 0.5
+        monkeypatch.setattr(mod, "_KEEP_BOUND_S", 0.01)
+
+        async def _never(*_: object) -> None:
+            await asyncio.Event().wait()
+
+        hanging = _frame("https://dr0pstream.com/e/abc")
+        hanging.evaluate = AsyncMock(side_effect=_never)
+        pool, _, store, _ = self._setup(frames=lambda: [hanging])
+
+        with structlog.testing.capture_logs() as logs:
+            media = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+
+        assert media is not None
+        (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
+        assert failed["error"] == "TimeoutError"
+        store.keep_capture_state.assert_not_awaited()
+        assert not pool._kept  # the next stream tries again
+
+    async def test_nothing_is_read_when_the_bound_ends_sooner(self) -> None:
+        """A stream found within ``_KEEP_BOUND_S`` of the resolve bound goes
+        out as found: the read could cost it."""
+        pool, _, store, pages = self._setup()
+
+        async with asyncio.timeout(0.3) as clock:
+            token = work_clock.set(clock)
+            try:
+                media = await pool.capture_media(
+                    "https://dr0pstream.com/e/abc", timeout=10
+                )
+            finally:
+                work_clock.reset(token)
+        await self._settle(pool)
+
+        assert media is not None
+        assert all(f.evaluate.await_count == 0 for f in pages[0].frames)
+        store.keep_capture_state.assert_not_awaited()
+        assert not pool._kept
+
+    async def test_a_bound_with_time_left_reads(self) -> None:
+        pool, _, store, _ = self._setup()
+
+        async with asyncio.timeout(10) as clock:
+            token = work_clock.set(clock)
+            try:
+                await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            finally:
+                work_clock.reset(token)
+        await self._settle(pool)
+
+        store.keep_capture_state.assert_awaited_once()
+
+    async def test_a_completion_past_its_bound_reads(self) -> None:
+        """A capture cut after its challenge runs on past its bound, which
+        no longer cuts it: its stream keeps the state it passed with."""
+        pool, _, store, _ = self._setup()
+        token = work_clock.set(await _expired_clock())
+        try:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        finally:
+            work_clock.reset(token)
+        await self._settle(pool)
+
+        store.keep_capture_state.assert_awaited_once()
+
+    async def test_the_store_writes_in_the_background(self) -> None:
+        pool, _, store, _ = self._setup()
         release = asyncio.Event()
 
-        async def _slow_state(**_: object) -> dict[str, list[object]]:
+        async def _slow_write(*_: object, **__: object) -> None:
             await release.wait()
-            return {"cookies": [], "origins": []}
 
-        context.storage_state = AsyncMock(side_effect=_slow_state)
+        store.keep_capture_state = AsyncMock(side_effect=_slow_write)
 
         media = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
 
         assert media is not None
-        store.keep_capture_state.assert_not_awaited()
+        assert pool._keep_tasks
         release.set()
         await self._settle(pool)
         store.keep_capture_state.assert_awaited_once()
 
     async def test_a_second_stream_within_10_minutes_keeps_nothing(self) -> None:
-        pool, context, store, _ = self._setup()
+        pool, _, store, pages = self._setup()
 
         for _ in range(2):
             await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
             await self._settle(pool)
 
-        assert context.storage_state.await_count == 1
+        assert pages[1].frames[0].evaluate.await_count == 0
         assert store.keep_capture_state.await_count == 1
 
     async def test_after_the_interval_the_host_is_kept_again(
@@ -1683,23 +1864,28 @@ class TestCaptureKeepsItsState:
         assert store.keep_capture_state.await_count == 2
 
     async def test_without_a_stream_nothing_is_kept(self) -> None:
-        pool, context, store, _ = self._setup(streams=False)
+        pool, context, store, pages = self._setup(streams=False)
 
         media = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
 
         assert media is None
         assert not pool._keep_tasks
-        context.storage_state.assert_not_awaited()
+        assert all(f.evaluate.await_count == 0 for f in pages[0].frames)
+        context.cookies.assert_not_awaited()
         store.keep_capture_state.assert_not_awaited()
 
-    async def test_a_failed_keep_is_logged_and_tried_again_next_time(self) -> None:
-        pool, context, store, _ = self._setup()
-        context.storage_state = AsyncMock(
-            side_effect=[
-                PlaywrightError("Target closed"),
-                {"cookies": [], "origins": []},
-            ]
-        )
+    async def test_a_failed_read_is_logged_and_tried_again_next_time(self) -> None:
+        failing = [True]
+
+        def _frames() -> list[MagicMock]:
+            frame = _frame("https://dr0pstream.com/e/abc", _PLAYER)
+            if failing.pop() if failing else False:
+                frame.evaluate = AsyncMock(
+                    side_effect=PlaywrightError("Execution context was destroyed")
+                )
+            return [frame]
+
+        pool, _, store, _ = self._setup(frames=_frames)
 
         with structlog.testing.capture_logs() as logs:
             await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
@@ -1708,17 +1894,31 @@ class TestCaptureKeepsItsState:
         await self._settle(pool)
 
         (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
-        assert failed["hosts"] == ["challenges.cloudflare.com", "dr0pstream.com"]
+        assert failed["hosts"] == ["dr0pstream.com"]
         assert "https://" not in str(failed)
         store.keep_capture_state.assert_awaited_once()
 
-    async def test_the_tasks_end_at_the_pools_cleanup(self) -> None:
-        pool, context, store, _ = self._setup()
+    async def test_a_failed_write_is_logged_and_tried_again_next_time(self) -> None:
+        pool, _, store, _ = self._setup()
+        store.keep_capture_state = AsyncMock(side_effect=[OSError("disk full"), None])
 
-        async def _never(**_: object) -> None:
+        with structlog.testing.capture_logs() as logs:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            await self._settle(pool)
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+
+        (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
+        assert failed["error"] == "OSError"
+        assert store.keep_capture_state.await_count == 2
+
+    async def test_the_tasks_end_at_the_pools_cleanup(self) -> None:
+        pool, _, store, _ = self._setup()
+
+        async def _never(*_: object, **__: object) -> None:
             await asyncio.Event().wait()
 
-        context.storage_state = AsyncMock(side_effect=_never)
+        store.keep_capture_state = AsyncMock(side_effect=_never)
 
         await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
         await asyncio.sleep(0)
@@ -1727,7 +1927,6 @@ class TestCaptureKeepsItsState:
 
         assert task.cancelled()
         assert not pool._keep_tasks
-        store.keep_capture_state.assert_not_awaited()
 
 
 # ------------------------------------------------------------------

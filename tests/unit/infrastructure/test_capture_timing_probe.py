@@ -756,28 +756,35 @@ class TestState:
             "state: 0 cookies, 0 origins"
         ]
 
-    async def test_the_state_comes_from_the_context_with_its_indexeddb(self) -> None:
-        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
-        assert await pool.saved_state() is None
-
-        context = MagicMock()
-        context.storage_state = AsyncMock(return_value=_STATE)
-        pool._context = context
-
-        assert await pool.saved_state() is _STATE
-        context.storage_state.assert_awaited_once_with(indexed_db=True)
-
-    def test_the_state_is_kept_under_every_host_it_names(self) -> None:
-        assert _mod.state_hosts(_STATE) == {
-            "byse.example",
-            "203.0.113.7",
-            "player.byse.example",
-            "filemoon.example",
-        }
-
-    async def test_a_restored_context_starts_from_the_stores_state(
-        self, tmp_path: Path
+    async def test_the_capture_reads_its_state_timed(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        async def collect(_page: object, hosts: object) -> dict[str, Any]:
+            return {"cookies": [], "origins": []}
+
+        # restores the module's own function after the test
+        monkeypatch.setattr(stealth, "collect_capture_state", collect)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.run = _mod.Run(time.monotonic())
+        _mod.note_keeps(pool)
+
+        state = await stealth.collect_capture_state(
+            MagicMock(), ["a.example", "b.example"]
+        )
+
+        assert state == {"cookies": [], "origins": []}
+        assert pool.run.keep is not None
+        assert pool.run.keep[0] == 2
+
+    def test_the_keep_lines_name_the_runs_that_read(self) -> None:
+        kept = _mod.Run(0.0, keep=(2, 0.0123))
+
+        assert _mod.keep_lines([(1, kept), (2, _mod.Run(0.0))]) == [
+            "state read by run 1: 2 hosts in 12 ms"
+        ]
+        assert _mod.keep_lines([(1, _mod.Run(0.0))]) == ["state read by no run"]
+
+    async def test_a_restored_context_starts_from_the_stores_state(self) -> None:
         context = MagicMock()
         context.route = AsyncMock()
         chromium = MagicMock()
@@ -786,14 +793,16 @@ class TestState:
         browser = MagicMock()
         browser.warmup = AsyncMock(return_value=(chromium, None))
 
-        async with _mod.kept_state(_STATE, tmp_path) as store:
+        async with _mod.capture_store() as store:
+            hosts = ["byse.example", "player.byse.example", "203.0.113.7"]
+            await store.keep_capture_state([*hosts, "filemoon.example"], _STATE)
             pool = _mod.TimedStealthPool(browser_pool=browser, clearance_store=store)
             assert await pool._ensure_context() is context
             assert await pool._ensure_context() is context
 
         chromium.new_context.assert_awaited_once()
         restored = chromium.new_context.await_args.kwargs["storage_state"]
-        # The whole state, through the app's store
+        # The kept state, through the app's store
         assert sorted(c["name"] for c in restored["cookies"]) == sorted(
             c["name"] for c in _STATE["cookies"]
         )

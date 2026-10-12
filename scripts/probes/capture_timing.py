@@ -8,8 +8,9 @@ app's resolver for ``--hoster`` (one that captures in the stealth browser:
 filemoon, supervideo, doodstream, vixeo or an XFS hoster) in a browser of
 the probe's own: a second Chromium on the app's display (the entrypoint's
 Xvfb ``:99``), its temporary files in a directory of its own (removed at
-exit), a stealth pool without a clearance store and no cache, breaker or
-resolver cache, so the probe writes nothing the app reads. Before the
+exit), a stealth pool without a clearance store (with ``--restore`` one in
+a temporary directory) and no cache, breaker or resolver cache, so the
+probe writes nothing the app reads. Before the
 launch it reads the container's available memory, the free ``/dev/shm``
 and whether the app's Chromium runs with ``--disable-dev-shm-usage``; it
 launches nothing when memory or shared memory is short.
@@ -27,15 +28,16 @@ provider's challenge frame such as ``turnstile``, or a request the resolver
 names as its hoster's captcha, split into ``captcha`` and
 ``captcha/verify``, each with when it was first met) and the resolver's
 whole time, then production's two
-bounds. ``--restore`` adds two runs after the others: it takes their
-context's state (cookies, local storage and IndexedDB) and prints its
-make-up (the cookies' names per domain, ids masked, and the keys and
-databases per origin, no values), keeps it under every host it names
-through the app's ``ClearanceStore`` (in a temporary directory, deleted at
-the end), then resolves the link once more in a relaunched browser in a
-fresh context (the cold ``control``) and once in a relaunched browser
-whose context the app creates from the store (``restored``), as after a
-restart of the app. ``--diagnose`` adds per run
+bounds. ``--restore`` lets the runs' captures keep their hosts' state as
+the app does (read from the capture's page into the app's
+``ClearanceStore``, in a temporary directory deleted at the end) and adds
+two runs after the others: it prints how long each capture took to read
+the state it kept and the make-up of the state a new context starts from
+(the cookies' names per domain, ids masked, and the keys, databases and
+records per origin, no values), then resolves the link once more in a
+relaunched browser in a fresh context (the cold ``control``) and once in a
+relaunched browser whose context the app creates from the store
+(``restored``), as after a restart of the app. ``--diagnose`` adds per run
 the page's requests (domain, path with its ids masked as
 ``/api/videos/<id>/embed/playback``, resource type, and the status,
 ``redirect``, the browser's error or ``pending``) and, after the clicks,
@@ -66,10 +68,10 @@ import tempfile
 import threading
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -88,9 +90,6 @@ from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoReso
 from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
 from scavengarr.interfaces.composition import build_http_client
-
-if TYPE_CHECKING:
-    from patchright.async_api import StorageState
 
 RUN_LIMIT_S = 90.0
 MIN_AVAILABLE = 1024 * 1048576  # bytes of memory left for the second browser
@@ -361,6 +360,9 @@ class Run:
     popups: int = 0
     # challenge_mark()s, each with when it was first met
     challenges: list[tuple[str, float]] = field(default_factory=list)
+    # --restore: the hosts whose state the capture kept, and how long it
+    # took to read it
+    keep: tuple[int, float] | None = None
 
 
 def challenge_mark(
@@ -528,13 +530,6 @@ class TimedStealthPool(StealthPool):
             )
         return loaded
 
-    async def saved_state(self) -> StorageState | None:
-        """The context's cookies, local storage and IndexedDB; None before
-        the first page."""
-        if self._context is None:
-            return None
-        return await self._context.storage_state(indexed_db=True)
-
     async def _prepare(self, page: Any) -> None:
         if self.run is not None:
             watch_challenges(
@@ -576,6 +571,22 @@ def note_clicks(pool: TimedStealthPool) -> None:
         return await click_point(page, player)
 
     stealth._click_point = noted
+
+
+def note_keeps(pool: TimedStealthPool) -> None:
+    """Note in ``pool.run`` how long the capture took to read the state
+    it keeps (the capture looks ``collect_capture_state`` up in its
+    module)."""
+    collect = stealth.collect_capture_state
+
+    async def noted(page: Any, hosts: Collection[str]) -> dict[str, Any]:
+        started = time.monotonic()
+        state = await collect(page, hosts)
+        if pool.run is not None:
+            pool.run.keep = (len(hosts), time.monotonic() - started)
+        return state
+
+    stealth.collect_capture_state = noted
 
 
 def note_frames(pool: TimedStealthPool) -> None:
@@ -765,25 +776,24 @@ async def timed_run(
     return run
 
 
-def state_hosts(state: Mapping[str, Any]) -> set[str]:
-    """Every host *state* names: its cookies' domains and its origins'
-    hosts (kept under all of them, the store keeps the whole state)."""
-    cookies = state.get("cookies") or []
-    origins = state.get("origins") or []
-    hosts = {str(c.get("domain", "")).lstrip(".").lower() for c in cookies}
-    hosts |= {urlsplit(str(o.get("origin", ""))).hostname or "" for o in origins}
-    return hosts - {""}
-
-
 @contextlib.asynccontextmanager
-async def kept_state(
-    state: Mapping[str, Any], directory: Path
-) -> AsyncIterator[ClearanceStore]:
-    """A ``ClearanceStore`` over a cache in *directory* that keeps *state*."""
-    async with create_cache("diskcache", directory=str(directory)) as cache:
-        store = ClearanceStore(cache)
-        await store.keep_capture_state(state_hosts(state), state)
-        yield store
+async def capture_store() -> AsyncIterator[ClearanceStore]:
+    """The app's ``ClearanceStore`` over a cache in a temporary directory,
+    deleted at the end."""
+    with tempfile.TemporaryDirectory(prefix="capture-state-") as directory:
+        async with create_cache("diskcache", directory=directory) as cache:
+            yield ClearanceStore(cache)
+
+
+def keep_lines(runs: Iterable[tuple[int | str, Run]]) -> list[str]:
+    """How long each run's capture took to read the state it kept."""
+    lines = [
+        f"state read by run {label}: {_counted(run.keep[0], 'host')}"
+        f" in {run.keep[1] * 1000:.0f} ms"
+        for label, run in runs
+        if run.keep is not None
+    ]
+    return lines or ["state read by no run"]
 
 
 async def restore_runs(
@@ -791,33 +801,31 @@ async def restore_runs(
     browser: SharedBrowserPool,
     resolver: HosterResolverPort,
     url: str,
+    store: ClearanceStore,
 ) -> list[tuple[int | str, Run]]:
-    """--restore: the runs' state, then *url* in a relaunched browser twice:
-    in a fresh context (the control), then in one restored from the state."""
-    state = await pool.saved_state()
+    """--restore: the state the runs' captures kept in *store*, then *url*
+    in a relaunched browser twice: in a fresh context (the control), then in
+    one the app creates from the store."""
+    # The store writes in the background
+    await asyncio.gather(*pool._keep_tasks)
+    state = await store.creation_state()
     if state is None:
-        print("restore: no context to take the state from")
+        print("restore: the runs kept no state")
         return []
     print("\n".join(state_lines(state)))
     runs: list[tuple[int | str, Run]] = []
-    with tempfile.TemporaryDirectory(prefix="capture-state-") as directory:
-        async with kept_state(state, Path(directory)) as store:
-            for label, kept in (("control", None), ("restored", store)):
-                await _close("stealth pool", pool.cleanup())
-                await _close("browser", browser.cleanup())
-                pool._clearance_store = kept
-                started = time.monotonic()
-                await browser.warmup()
-                took = time.monotonic() - started
-                print(f"browser relaunched for the {label} run: {took:.1f} s")
-                print("\n".join(_TABLE))
-                run = await timed_run(pool, resolver, url)
-                runs.append((label, run))
-                print(report_row(label, run), flush=True)
-            # The app keeps a captured stream's state in the background:
-            # done before the store's cache closes
-            await _close("stealth pool", pool.cleanup())
-            pool._clearance_store = None
+    for label, kept in (("control", None), ("restored", store)):
+        await _close("stealth pool", pool.cleanup())
+        await _close("browser", browser.cleanup())
+        pool._clearance_store = kept
+        started = time.monotonic()
+        await browser.warmup()
+        took = time.monotonic() - started
+        print(f"browser relaunched for the {label} run: {took:.1f} s")
+        print("\n".join(_TABLE))
+        run = await timed_run(pool, resolver, url)
+        runs.append((label, run))
+        print(report_row(label, run), flush=True)
     return runs
 
 
@@ -845,8 +853,15 @@ async def probe(args: argparse.Namespace) -> int:
     pool.blocked = tuple(args.block)
     note_clicks(pool)
     note_frames(pool)
+    note_keeps(pool)
     http = build_http_client(config)
+    stores = contextlib.AsyncExitStack()
+    store: ClearanceStore | None = None
     try:
+        if args.restore:
+            # The runs' captures keep their state as the app's do
+            store = await stores.enter_async_context(capture_store())
+            pool._clearance_store = store
         resolver = capture_resolvers(http, pool).get(args.hoster)
         if resolver is None:
             print(f"no capture resolver {args.hoster!r}")
@@ -873,8 +888,9 @@ async def probe(args: argparse.Namespace) -> int:
             run = await timed_run(pool, resolver, args.url)
             runs.append((number, run))
             print(report_row(number, run), flush=True)
-        if args.restore:
-            runs.extend(await restore_runs(pool, browser, resolver, args.url))
+        if store is not None:
+            print("\n".join(keep_lines(runs)))
+            runs.extend(await restore_runs(pool, browser, resolver, args.url, store))
         print(
             f"Production's bounds: resolve {config.http_timeout_resolve_seconds:g} s"
             " (http_timeout_resolve_seconds; the wait for a browser page does not"
@@ -887,9 +903,11 @@ async def probe(args: argparse.Namespace) -> int:
                 print("\n".join(diagnosis_lines(label, run)))
     finally:
         pool.run = None
+        # Its keeps end before the store's cache closes
         await _close("stealth pool", pool.cleanup())
         await _close("browser", browser.cleanup())
         await _close("http client", http.aclose())
+        await _close("capture store", stores.aclose())
     return 0
 
 
@@ -919,7 +937,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--restore",
         action="store_true",
-        help="then resolve in a relaunched browser, cold and restored from the state",
+        help="keep the runs' state as the app does, then resolve in a relaunched"
+        " browser, cold and restored from it",
     )
     return parser
 

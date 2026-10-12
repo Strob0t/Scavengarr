@@ -235,6 +235,18 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       | Vixeo | vixeo.io: 1 localStorage key | no challenge, stream 3.8 s | no challenge, stream 4.7 s | no challenge, stream 3.8 s |
 
       No kept record needed an encoding: plain JSON holds every value the three players keep, so a keep that leaves out the records plain JSON cannot hold (the File values and invalid dates of the code review's finding 8) loses nothing measured here. Limits: one link per hoster, a fresh profile each, the restore seconds after the keep.
+    - **The keep read from the capture's own page (row 97, finding 6; dev container, 16:55 to 16:56 UTC):** the same links, `capture_timing.py --runs 2 --restore`, which now keeps the runs' state as the app does:
+
+      | Hoster | Read (run 1) | State a new context starts from | Run 1 | Control | Restored |
+      |---|---|---|---|---|---|
+      | Filemoon | 2 hosts in 11 ms | n1mwq.org: cookies `byse_device_id` and `byse_viewer_id`, 7 localStorage keys, 1 IndexedDB database (2 records); moflix-stream.link: 3 localStorage keys | captcha 3.9 s, stream 4.5 s | captcha 3.7 s, stream 4.4 s | no challenge, stream 1.8 s |
+      | Dropload | 1 host in 4 ms | dr0pstream.com: cookies `aff`, `file_id` and one with an id-like name | turnstile 0.7 s, stream 9.6 s | turnstile 0.5 s, stream 4.5 s | no challenge, stream 0.7 s |
+      | Vixeo | 1 host in 4 ms | none | no challenge, stream 3.7 s | – | – |
+
+      Filemoon's and Dropload's restored runs met no challenge, as with `storage_state()`. Vixeo kept nothing: its player writes its one localStorage key after the stream request, which the read precedes, and it meets no challenge anyway. A synthetic page in Chromium (two origins, routed, no network) shows the read and the restore of the records plain JSON cannot hold:
+      - **Read:** the read took 3.9 to 5.5 ms over 5 reads, against 40.8 ms for `storage_state(indexed_db=True)`.
+      - **Kept:** a database with only plain records (4 stores, 8 records, a compound key path and a unique index) was kept whole. A database with one plain record beside five others (dates, NaN, a typed array, a date key) was left out, and so was one with a File value and a unique index over invalid dates.
+      - **Restore:** a new context created from the read state read every kept record back. The context from `storage_state()`'s state failed: `Error setting storage state` (finding 8, reproduced).
 
 ### R5: warm-up after a start (gap 5)
 

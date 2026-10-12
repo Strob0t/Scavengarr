@@ -10,15 +10,16 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 import structlog
-from patchright.async_api import Browser, BrowserContext, Page, Request, Route
+from patchright.async_api import Browser, BrowserContext, Frame, Page, Request, Route
 from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.ports.browser_fetcher import (
@@ -34,6 +35,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     ResolutionChallenge,
     challenge_mark,
     mark_resolution_passed,
+    work_clock,
 )
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
@@ -93,8 +95,12 @@ _TARGET_ONLY_CSS = (
 
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
 # A capture with a stream keeps its hosts' state (ClearanceStore), at most
-# once per host in this interval: the serialization covers the whole context
+# once per host in this interval
 _KEEP_INTERVAL_S = 600.0
+# It reads that state from its own page before the page closes, so its
+# resolution waits for the read: at most this long, and not at all when
+# its resolve bound has less left (code review 2026-10-12, finding 6)
+_KEEP_BOUND_S = 0.5
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
 # Dead-file notices of player pages, matched against the visible text only
@@ -112,6 +118,66 @@ _PLAYER_OFFLINE_TEXT: tuple[str, ...] = (
 _VISIBLE_TEXT_JS = (
     "() => document.title + '\\n' + (document.body ? document.body.innerText : '')"
 )
+# The frame's origin's localStorage and IndexedDB as an origin of
+# storage_state() (Playwright's StorageScript format). A database is read
+# whole, and left out when plain JSON cannot hold one of its records (a
+# date, a file, a typed array): a new context cannot always take such a
+# record back (code review 2026-10-12, finding 8), and its page creates a
+# missing database anew rather than meet one with records gone. Null for
+# an opaque origin (a sandboxed frame), which has no storage
+_COLLECT_STATE_JS = """async () => {
+  if (location.origin === "null") return null;
+  const plain = (value, outer = []) => {
+    if (value === null || ["string", "boolean"].includes(typeof value)) return true;
+    if (typeof value === "number") return Number.isFinite(value);
+    if (typeof value !== "object" || outer.includes(value)) return false;
+    const inner = [...outer, value];
+    if (Array.isArray(value)) return value.every((item) => plain(item, inner));
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== null && Object.getPrototypeOf(proto) !== null) return false;
+    return Object.values(value).every((item) => plain(item, inner));
+  };
+  const done = (request) => new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const path = (keyPath) => typeof keyPath === "string" ? {keyPath}
+    : Array.isArray(keyPath) ? {keyPathArray: [...keyPath]} : {};
+  const database = async ({name, version}) => {
+    const db = await done(indexedDB.open(name));
+    try {
+      const names = [...db.objectStoreNames];
+      const tx = names.length ? db.transaction(names, "readonly") : null;
+      const stores = await Promise.all(names.map(async (storeName) => {
+        const store = tx.objectStore(storeName);
+        const [keys, values] = await Promise.all(
+          [done(store.getAllKeys()), done(store.getAll())]);
+        const inline = store.keyPath !== null;
+        if (!values.every((value, i) => plain(value) && (inline || plain(keys[i]))))
+          return null;
+        const records = values.map(
+          (value, i) => inline ? {value} : {key: keys[i], value});
+        const indexes = [...store.indexNames].map((indexName) => {
+          const index = store.index(indexName);
+          return {name: indexName, ...path(index.keyPath),
+                  multiEntry: index.multiEntry, unique: index.unique};
+        });
+        return {name: storeName, autoIncrement: store.autoIncrement,
+                ...path(store.keyPath), records, indexes};
+      }));
+      return stores.includes(null) ? null : {name, version, stores};
+    } finally {
+      db.close();
+    }
+  };
+  const infos = (await indexedDB.databases()).filter((i) => i.name && i.version);
+  return {
+    origin: location.origin,
+    localStorage: Object.keys(localStorage).map(
+      (name) => ({name, value: localStorage.getItem(name)})),
+    indexedDB: (await Promise.all(infos.map(database))).filter(Boolean),
+  };
+}"""
 
 
 @dataclass(frozen=True)
@@ -316,6 +382,38 @@ async def _start_player(
             mark_resolution_passed()
             return None
     return None
+
+
+async def collect_capture_state(page: Page, hosts: Collection[str]) -> dict[str, Any]:
+    """The state of *hosts* in the form of ``storage_state()``, read from
+    *page* itself: its context's cookies, and the localStorage and
+    IndexedDB of each origin one of its frames has on one of *hosts*, read
+    in that frame (once per origin). Unlike ``storage_state()`` it visits
+    no other origin: no hidden page outside the page gate, no race with
+    the browser's recycle, no popup lost to it (code review 2026-10-12,
+    finding 6)."""
+    frames: dict[str, Frame] = {}
+    for frame in page.frames:
+        parts = urlparse(frame.url)
+        if parts.hostname in hosts:
+            frames.setdefault(f"{parts.scheme}://{parts.netloc}", frame)
+    reads = [frame.evaluate(_COLLECT_STATE_JS) for frame in frames.values()]
+    cookies, origins = await asyncio.gather(
+        page.context.cookies(), asyncio.gather(*reads)
+    )
+    # As storage_state(): no origin without storage
+    kept = [o for o in origins if o and (o["localStorage"] or o["indexedDB"])]
+    return {"cookies": cookies, "origins": kept}
+
+
+def _time_left() -> float:
+    """How long the running work's resolve bound (``work_clock``) has
+    left; unbounded outside one or past it (a capture cut after its
+    challenge runs on past its bound)."""
+    clock = work_clock.get()
+    if clock is None or clock.expired() or (when := clock.when()) is None:
+        return math.inf
+    return when - asyncio.get_running_loop().time()
 
 
 class StealthPool:
@@ -638,7 +736,7 @@ class StealthPool:
                 media = await _start_player(page, found, player)
                 log.debug("stealth_capture", url=url, found=media is not None)
                 if media is not None:
-                    self._keep_state(page)
+                    await self._keep_state(page)
                 return media
             except Exception:  # noqa: BLE001
                 log.debug("stealth_capture_error", url=url, exc_info=True)
@@ -646,37 +744,60 @@ class StealthPool:
             finally:
                 await self._close(page)
 
-    def _keep_state(self, page: Page) -> None:
-        """Keep the state of *page*'s host and its frames' hosts in the
-        background (the resolution does not wait), each at most once per
-        ``_KEEP_INTERVAL_S``."""
-        if self._clearance_store is None:
+    async def _keep_state(self, page: Page) -> None:
+        """Keep the state of *page*'s host and its frames' hosts, each at
+        most once per ``_KEEP_INTERVAL_S``: read from the page before it
+        closes (``collect_capture_state()``, at most ``_KEEP_BOUND_S``; not
+        when the resolve bound has less left, so the read never costs the
+        stream), written by the store in the background."""
+        if self._clearance_store is None or _time_left() < _KEEP_BOUND_S:
             return
         now = time.monotonic()
-        hosts = {
-            host
-            for frame in page.frames
-            if (host := urlparse(frame.url).hostname)
-            and now - self._kept.get(host, -_KEEP_INTERVAL_S) >= _KEEP_INTERVAL_S
-        }
+        hosts = sorted(
+            {
+                host
+                for frame in page.frames
+                if (host := urlparse(frame.url).hostname)
+                and now - self._kept.get(host, -_KEEP_INTERVAL_S) >= _KEEP_INTERVAL_S
+            }
+        )
         if not hosts:
             return
         self._kept.update(dict.fromkeys(hosts, now))
-        task = asyncio.create_task(self._save_state(page.context, sorted(hosts)))
-        self._keep_tasks.add(task)
-        task.add_done_callback(self._keep_tasks.discard)
-
-    async def _save_state(self, context: BrowserContext, hosts: list[str]) -> None:
-        assert self._clearance_store is not None
         try:
-            state = await context.storage_state(indexed_db=True)
-            await self._clearance_store.keep_capture_state(hosts, state)
-        except Exception as exc:  # noqa: BLE001  (costs a challenge after a restart)
-            for host in hosts:
-                self._kept.pop(host, None)  # the next stream tries again
+            async with asyncio.timeout(_KEEP_BOUND_S):
+                state = await collect_capture_state(page, hosts)
+        except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001  (costs a challenge after a restart)
+            self._forget(hosts)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             log.warning(
                 "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
             )
+            return
+        duration_ms = int((time.monotonic() - now) * 1000)
+        task = asyncio.create_task(self._save_state(hosts, state, duration_ms))
+        self._keep_tasks.add(task)
+        task.add_done_callback(self._keep_tasks.discard)
+
+    async def _save_state(
+        self, hosts: list[str], state: dict[str, Any], duration_ms: int
+    ) -> None:
+        assert self._clearance_store is not None
+        try:
+            await self._clearance_store.keep_capture_state(
+                hosts, state, duration_ms=duration_ms
+            )
+        except Exception as exc:  # noqa: BLE001  (costs a challenge after a restart)
+            self._forget(hosts)
+            log.warning(
+                "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
+            )
+
+    def _forget(self, hosts: Iterable[str]) -> None:
+        """The next stream of *hosts* keeps their state again."""
+        for host in hosts:
+            self._kept.pop(host, None)
 
     async def resolve_redirect(self, url: str, *, timeout: float) -> Redirect:
         """Return the first off-site URL *url* redirects to.
