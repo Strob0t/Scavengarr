@@ -106,7 +106,7 @@ for page_num in range(1, _MAX_PAGES + 1):
         break
 ```
 
-Plugins that page through results cap the loop from the site's results-per-page, usually as `_MAX_PAGES` (e.g. 200/page = 5 pages, 50/page = 20 pages, 10/page = 100 pages; nox names it `_MAX_SEARCH_PAGES`, dataload and myboerse inherit it from `xenforo.py`); 15 plugins, aniworld, boerse, hdfilme, kinox and moflix among them, have no such constant. `effective_max_results` is `_max_results` (default 1000), lowered during Stremio searches.
+Plugins that page through results cap the loop from the site's results-per-page, usually as `_MAX_PAGES` (e.g. 200/page = 5 pages, 50/page = 20 pages, 10/page = 100 pages; nox names it `_MAX_SEARCH_PAGES`, dataload and myboerse inherit it from `xenforo.py`); 13 plugins, aniworld, boerse, hdfilme, kinox and moflix among them, have no such constant. `effective_max_results` is `_max_results` (default 1000), lowered during Stremio searches.
 
 ---
 
