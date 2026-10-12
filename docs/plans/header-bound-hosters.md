@@ -236,4 +236,13 @@ Row 81's Pi reading made Vixeo opt into row 79's rule (`own_scripts_only=True` i
 | 1 | yes | 3.9 s | 3.9 s (`vidsonic.net`) | 0 | all 11 foreign script sites `blocked` (`al5sm.com`'s tag, the other ad sites, the script host under `vidsonic.net`) |
 | 2 | yes | 3.9 s | 3.9 s (`vidsonic.net`) | 0 | the same |
 
-No regression against row 81's dev runs (4.3 and 4.1 s, the same sites refused by the resolver there). The player's code is inline in its page: the page loads no script of its own site, before or after, so no script the player needs comes from another site. The Pi's proof follows the deploy, as in row 79.
+No regression against row 81's dev runs (4.3 and 4.1 s, the same sites refused by the resolver there). The player's code is inline in its page: the page loads no script of its own site, before or after, so no script the player needs comes from another site.
+
+On the Pi (2026-10-12, 06:33 UTC, production on staging 39f4790, the same link, `scripts/prodctl.py probe capture_timing --hoster vixeo --runs 2 --diagnose` without `--block`, so only the app's rule aborts; after a `prodctl.py stats` pre-check, the app idle):
+
+| Run | Captured | Clicks at | Stream at (CDN) | Popups | Scripts |
+|---:|---|---|---|---:|---|
+| 1 | yes | 5.3 s | 5.5 s (`vidsonic.net`) | 0 | all 11 foreign script sites `blocked`: `al5sm.com`'s tag, `betteradsystem.com`, `mayhapmonisms.com`, `woofbeginner.com`, `runative-syndicate.com`, `cloudfront.net`, `uwterphco.com`, `zutdhkwkm.com`, two hosts of random names under `.cfd` and `.rest` (other names than row 81's), the script host under `vidsonic.net` |
+| 2 | yes | 4.8 s | 5.0 s (`vidsonic.net`) | 0 | the same 11 |
+
+Row 81's plain runs on the Pi gave no stream in 2 of 2, with 3 popups each; with the rule both runs give a stream after one click, as row 81's `--block al5sm.com` call did (5.8 and 5.5 s). The ad traffic the tag pulled in on the Pi (`adsco.re`, `255md.com`, `rtmark.net`) no longer appears. The two random ad hosts changed their names overnight, which a domain list would have missed and the rule does not. Limits: one link, two runs in one profile, one morning.
