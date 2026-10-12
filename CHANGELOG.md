@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Resolver Link Probe Takes a Next Link
+- `scripts/probes/resolver_urls.py --avoid <file>` skips the links an earlier output names, so each resolver keeps its next link (write it with `--out` to a file of its own; the live test reads `resolver-urls.json` only). Used for the four live cases the suite of 2026-10-12 lost (`docs/plans/plugin-domains.md` → Live suite (2026-10-12)): playmate's first link was a removed file, firestream's CDN refuses the dev container on every link, no stream of veev or vidhide passed its CDN's check from here (their offline files are told correctly).
+
 ### Fixed: The Read-Ahead Outlives a Pause
 - A playback the HLS proxy follows keeps its segment order while it idles: 60 s after its last request it loses only its fetches ahead (their memory, counted `dropped` as before), and the playback itself goes only when the least recently used of 8 makes room or its playlist is fetched again (`SegmentReadAhead._sweep` in `infrastructure/stremio/hls_proxy.py`). A player that resumes after a pause without fetching the playlist again gets the next three segments fetched ahead from its first request on.
 - A segment no playback lists counts `miss` (`hls_readahead_total`), so a playback the read-ahead lost shows in the counters instead of leaving them still.
