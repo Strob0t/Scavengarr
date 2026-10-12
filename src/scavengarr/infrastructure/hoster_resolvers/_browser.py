@@ -30,6 +30,7 @@ async def capture_stream(
     own_scripts_only: bool = False,
     challenge_requests: re.Pattern[str] | None = None,
     passive_widget: bool = False,
+    autoplay_wait: float | None = None,
 ) -> ResolvedStream | None:
     """Run the hoster's player in the stealth browser, take its stream request.
 
@@ -44,6 +45,9 @@ async def capture_stream(
     resolution as challenged, as a Cloudflare challenge and a captcha
     provider's frame do. *passive_widget* says the player's captcha widget
     does not gate its stream, so its frame marks nothing (DoodStream).
+    *autoplay_wait* is the wait before the first click for a player that
+    takes it at once (Vixeo); without it the browser waits as long as a
+    player that starts itself needs.
     """
     if stealth_pool is None:
         log.info(f"{hoster}_no_browser", url=embed_url)
@@ -54,6 +58,7 @@ async def capture_stream(
         own_scripts_only=own_scripts_only,
         challenge_requests=challenge_requests,
         passive_widget=passive_widget,
+        autoplay_wait=autoplay_wait,
     )
     if media is None:
         log.info(f"{hoster}_browser_no_stream", url=embed_url)

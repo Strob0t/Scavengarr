@@ -357,6 +357,9 @@ class TestDoodStreamCloudflare:
         # The player's invisible Turnstile does not gate its stream (code
         # review 2026-10-12, finding 3): its frame is no challenge
         assert pool.capture_media.await_args.kwargs["passive_widget"] is True
+        # The wait for a player that starts itself: the Pi met no challenge,
+        # so its click was never measured there (row 103)
+        assert pool.capture_media.await_args.kwargs["autoplay_wait"] is None
 
     @pytest.mark.asyncio
     async def test_challenge_without_browser_returns_none(self) -> None:

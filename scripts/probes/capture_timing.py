@@ -17,20 +17,21 @@ launches nothing when memory or shared memory is short.
 
 ``--timeout`` bounds navigation and the challenge (default: production's
 ``stremio.probe_stealth_timeout_seconds``); the player's clicks keep the
-app's waits, apart from the first with ``--autoplay-wait`` (the wait for a
-player that starts itself, before the first click: 3 s in the app), and
-the registry's bound (``http_timeout_resolve_seconds``) is left out, so a
-slow capture shows its whole time. A run ends after 90 s
-at the latest, the whole probe after its runs' share plus a minute, and at
-exit the probe kills every process it started. Per run it prints the pages
-the browser loaded (the path's first segment, when the load started, how
-long it took), the clicks on the player, when the stream was captured (its
-CDN's domain), the challenges the run met by the app's rule (a captcha
-provider's challenge frame such as ``turnstile``, or a request the resolver
-names as its hoster's captcha, split into ``captcha`` and
-``captcha/verify``, each with when it was first met) and the resolver's
-whole time, then production's two
-bounds. ``--restore`` lets the runs' captures keep their hosts' state as
+app's waits, the first after the resolver's own (3 s for a player that
+starts itself, 0.5 s for Vixeo's) or, with ``--autoplay-wait``, the
+probe's for every resolver alike, and the registry's bound
+(``http_timeout_resolve_seconds``) is left out, so a slow capture shows
+its whole time. A run ends after 90 s at the latest, the whole probe
+after its runs' share plus a minute, and at exit the probe kills every
+process it started. Per run it prints the pages the browser loaded (the
+path's first segment, when the load started, how long it took), the
+clicks on the player, when the stream was captured (its CDN's domain),
+the challenges the run met by the app's rule (a captcha provider's
+challenge frame such as ``turnstile``, or a request the resolver names as
+its hoster's captcha, split into ``captcha`` and ``captcha/verify``, each
+with when it was first met) and the resolver's whole time, then the wait
+before the first click the captures used and production's two bounds.
+``--restore`` lets the runs' captures keep their hosts' state as
 the app does (read from the capture's page into the app's
 ``ClearanceStore``, in a temporary directory deleted at the end) and adds
 two runs after the others: it prints how long each capture took to read
@@ -365,6 +366,8 @@ class Run:
     # --restore: the hosts whose state the capture kept, and how long it
     # took to read it
     keep: tuple[int, float] | None = None
+    # The wait before the first click its capture used; none without one
+    autoplay_wait: float | None = None
 
 
 def challenge_mark(
@@ -499,6 +502,9 @@ class TimedStealthPool(StealthPool):
     # whether its widget is passive (``passive_widget``)
     named: re.Pattern[str] | None = None
     passive_widget: bool = False
+    # --autoplay-wait: the wait before the first click, for every resolver
+    # alike in place of its own
+    autoplay_wait: float | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -555,6 +561,13 @@ class TimedStealthPool(StealthPool):
         # The image's own parameters, whichever version runs the probe
         self.named = kwargs.get("challenge_requests")
         self.passive_widget = kwargs.get("passive_widget", False)
+        if self.autoplay_wait is not None:
+            kwargs["autoplay_wait"] = self.autoplay_wait
+        if self.run is not None:
+            wait = kwargs.get("autoplay_wait")
+            self.run.autoplay_wait = (
+                stealth._MEDIA_AUTOPLAY_WAIT_S if wait is None else wait
+            )
         media = await super().capture_media(url, **kwargs)
         if self.run is not None and media is not None:
             self.run.stream_at = time.monotonic() - self.run.started
@@ -562,14 +575,19 @@ class TimedStealthPool(StealthPool):
         return media
 
 
-def autoplay_wait(seconds: float | None) -> float:
-    """The capture's wait for a player that starts itself, before its first
-    click: *seconds* for the probe's runs, the app's without them (the
-    capture reads ``_MEDIA_AUTOPLAY_WAIT_S`` from its module at every
-    start)."""
-    if seconds is not None:
-        stealth._MEDIA_AUTOPLAY_WAIT_S = seconds
-    return stealth._MEDIA_AUTOPLAY_WAIT_S
+def wait_lines(
+    runs: Iterable[tuple[int | str, Run]], *, override: float | None
+) -> list[str]:
+    """The wait before the first click the runs' captures used, the
+    probe's (*override*) or each resolver's own; none when no run reached
+    a capture (a resolution over HTTP)."""
+    waits = sorted(
+        {run.autoplay_wait for _, run in runs if run.autoplay_wait is not None}
+    )
+    if not waits:
+        return []
+    whose = "the resolver's" if override is None else "the probe's"
+    return [f"autoplay wait: {', '.join(f'{wait:g} s' for wait in waits)} ({whose})"]
 
 
 def note_clicks(pool: TimedStealthPool) -> None:
@@ -609,8 +627,10 @@ def note_frames(pool: TimedStealthPool) -> None:
     in its module)."""
     start_player = stealth._start_player
 
-    async def noted(page: Any, found: Any, player: str | None) -> CapturedMedia | None:
-        media = await start_player(page, found, player)
+    async def noted(
+        page: Any, found: Any, player: str | None, **kwargs: Any
+    ) -> CapturedMedia | None:
+        media = await start_player(page, found, player, **kwargs)
         if pool.diagnose and pool.run is not None:
             pool.run.frames = await frame_notes(page)
         return media
@@ -865,6 +885,7 @@ async def probe(args: argparse.Namespace) -> int:
     pool = TimedStealthPool(browser_pool=browser, timeout_ms=int(timeout * 1000))
     pool.diagnose = args.diagnose
     pool.blocked = tuple(args.block)
+    pool.autoplay_wait = args.autoplay_wait
     note_clicks(pool)
     note_frames(pool)
     note_keeps(pool)
@@ -880,10 +901,9 @@ async def probe(args: argparse.Namespace) -> int:
         if resolver is None:
             print(f"no capture resolver {args.hoster!r}")
             return 1
-        wait = autoplay_wait(args.autoplay_wait)
         print(
             f"# capture_timing: {args.hoster} · {urlsplit(args.url).hostname}"
-            f" · navigation bound {timeout:g} s · autoplay wait {wait:g} s"
+            f" · navigation bound {timeout:g} s"
         )
         started = time.monotonic()
         chromium, _ = await browser.warmup()
@@ -906,13 +926,14 @@ async def probe(args: argparse.Namespace) -> int:
         if store is not None:
             print("\n".join(keep_lines(runs)))
             runs.extend(await restore_runs(pool, browser, resolver, args.url, store))
-        print(
+        bounds = (
             f"Production's bounds: resolve {config.http_timeout_resolve_seconds:g} s"
             " (http_timeout_resolve_seconds; the wait for a browser page does not"
             f" count), navigation and challenge"
             f" {config.stremio.probe_stealth_timeout_seconds:g} s"
             " (stremio.probe_stealth_timeout_seconds)"
         )
+        print("\n".join([*wait_lines(runs, override=args.autoplay_wait), bounds]))
         if args.diagnose:
             for label, run in runs:
                 print("\n".join(diagnosis_lines(label, run)))
@@ -960,8 +981,8 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="S",
-        help="the capture's wait for a player that starts itself, before its"
-        " first click (default: the app's)",
+        help="the capture's wait before its first click, for every resolver"
+        " alike (default: each resolver's own)",
     )
     return parser
 

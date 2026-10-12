@@ -95,6 +95,9 @@ _TARGET_ONLY_CSS = (
     ":is({targets}), :is({targets}) * {{ pointer-events: auto !important; }}"
 )
 
+# The wait for a player that starts itself, before the first click; a
+# resolver whose player takes that click at once names a shorter one
+# (``autoplay_wait``, row 103)
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
 # A capture with a stream keeps its hosts' state (ClearanceStore), at most
 # once per host in this interval
@@ -368,12 +371,19 @@ async def _click_point(page: Page, player: str | None) -> tuple[float, float]:
 
 
 async def _start_player(
-    page: Page, found: asyncio.Future[CapturedMedia], player: str | None
+    page: Page,
+    found: asyncio.Future[CapturedMedia],
+    player: str | None,
+    *,
+    autoplay_wait: float | None = None,
 ) -> CapturedMedia | None:
-    """Wait for autoplay, then click the player (``_click_point``) until it
+    """Wait for autoplay (*autoplay_wait*, ``_MEDIA_AUTOPLAY_WAIT_S``
+    without it), then click the player (``_click_point``) until it
     requests its stream, says the file is gone (some players tell only
     after the click) or the clicks are used up."""
-    waits = (_MEDIA_AUTOPLAY_WAIT_S, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
+    if autoplay_wait is None:
+        autoplay_wait = _MEDIA_AUTOPLAY_WAIT_S
+    waits = (autoplay_wait, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
     for attempt, wait_s in enumerate(waits):
         if attempt:
             await page.mouse.click(*await _click_point(page, player))
@@ -728,6 +738,7 @@ class StealthPool:
         own_scripts_only: bool = False,
         challenge_requests: re.Pattern[str] | None = None,
         passive_widget: bool = False,
+        autoplay_wait: float | None = None,
     ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
@@ -742,9 +753,12 @@ class StealthPool:
         *timeout* bounds navigation and the Cloudflare challenge; without
         one the pool's own applies (``stremio.probe_stealth_timeout_seconds``,
         the resolvers' capture). The player clicks after it are bounded by
-        the pool's own waits. *own_scripts_only* aborts the scripts of other
-        sites than the page's and its frames' (``_allow_own_player_resources``):
-        an ad tag that takes the clicks. A captcha provider's frame and a
+        the pool's own waits; the first comes after *autoplay_wait*, for a
+        player that takes it at once (Vixeo), and without it after the wait
+        for a player that starts itself (``_MEDIA_AUTOPLAY_WAIT_S``).
+        *own_scripts_only* aborts the scripts of other sites than the page's
+        and its frames' (``_allow_own_player_resources``): an ad tag that
+        takes the clicks. A captcha provider's frame and a
         request that *challenge_requests* matches (the hoster's own captcha)
         mark the hoster resolution the capture runs in (``challenge_mark``),
         as an interstitial does; *passive_widget* says the player's widget
@@ -796,7 +810,9 @@ class StealthPool:
                         log.info("stealth_capture_offline", url=url)
                         mark_resolution_passed()
                         return None
-                media = await _start_player(page, found, player)
+                media = await _start_player(
+                    page, found, player, autoplay_wait=autoplay_wait
+                )
                 log.debug("stealth_capture", url=url, found=media is not None)
                 if media is not None:
                     await self._keep_state(page)

@@ -985,6 +985,42 @@ class TestStealthPoolCaptureMedia:
         assert page.mouse.click.await_count == 2
         page.mouse.click.assert_awaited_with(640, 360)
 
+    async def test_a_capture_clicks_after_its_own_autoplay_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A player that takes its first click at once is clicked sooner than
+        the wait for a player that starts itself (row 103: Vixeo, 0.5 s)."""
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        monkeypatch.setattr(mod, "_MEDIA_AUTOPLAY_WAIT_S", 60.0)
+        shared_pool, _, context = _mock_pool_stack()
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+        context.new_page = AsyncMock(return_value=page)
+
+        async with asyncio.timeout(5):
+            media = await StealthPool(browser_pool=shared_pool).capture_media(
+                "https://vixeo.io/e/abc", timeout=10, autoplay_wait=0.01
+            )
+
+        assert media is not None
+        page.mouse.click.assert_awaited_once_with(640, 360)
+
+    async def test_without_a_wait_of_its_own_a_capture_waits_for_autoplay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``autoplay_wait=None`` is the module's wait, read at every capture."""
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        monkeypatch.setattr(mod, "_MEDIA_AUTOPLAY_WAIT_S", 0.2)
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+
+        started = time.monotonic()
+        media = await self._capture(page)
+
+        assert media is not None
+        assert time.monotonic() - started >= 0.2
+        page.mouse.click.assert_awaited_once()
+
     @staticmethod
     def _locate(page: MagicMock, *, count: int, box: dict[str, float] | None) -> None:
         """*page*'s locator finds *count* elements, the first laid out at *box*."""

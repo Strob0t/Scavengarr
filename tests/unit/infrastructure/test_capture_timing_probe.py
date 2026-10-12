@@ -3,7 +3,6 @@ of scripts/probes/capture_timing.py."""
 
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 import os
 import signal
@@ -222,41 +221,63 @@ class TestAutoplayWait:
 
         assert args.autoplay_wait == 1.5
 
-    def test_without_the_option_the_apps_wait_stays(
+    @staticmethod
+    def _waits(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+        """The waits the app's capture is called with."""
+        waits: list[object] = []
+
+        async def capture(*_args: object, **kwargs: object) -> None:
+            waits.append(kwargs.get("autoplay_wait"))
+
+        monkeypatch.setattr(StealthPool, "capture_media", capture)
+        return waits
+
+    async def test_the_probes_wait_overrides_each_resolvers(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        waits = self._waits(monkeypatch)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.autoplay_wait = 1.5
+        pool.run = _mod.Run(time.monotonic())
+
+        await pool.capture_media("https://vixeo.io/e/abc", autoplay_wait=0.5)
+        await pool.capture_media("https://byse.example/e/abc", autoplay_wait=None)
+
+        assert waits == [1.5, 1.5]
+        assert pool.run.autoplay_wait == 1.5
+
+    async def test_without_the_option_each_resolver_keeps_its_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits = self._waits(monkeypatch)
         # restored after the test
         monkeypatch.setattr(stealth, "_MEDIA_AUTOPLAY_WAIT_S", 3.0)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        vixeo, byse = _mod.Run(time.monotonic()), _mod.Run(time.monotonic())
 
-        assert _mod.autoplay_wait(None) == 3.0
-        assert stealth._MEDIA_AUTOPLAY_WAIT_S == 3.0
+        pool.run = vixeo
+        await pool.capture_media("https://vixeo.io/e/abc", autoplay_wait=0.5)
+        pool.run = byse
+        await pool.capture_media("https://byse.example/e/abc", autoplay_wait=None)
 
-    async def test_the_capture_clicks_after_the_probes_wait(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # restored after the test
-        monkeypatch.setattr(
-            stealth, "_MEDIA_AUTOPLAY_WAIT_S", stealth._MEDIA_AUTOPLAY_WAIT_S
-        )
+        assert waits == [0.5, None]
+        # The wait each capture used: the app's for a resolver without one
+        assert (vixeo.autoplay_wait, byse.autoplay_wait) == (0.5, 3.0)
 
-        async def click_point(_page: object, _player: object) -> tuple[float, float]:
-            return 1.0, 2.0
+    def test_the_report_names_the_wait_the_captures_used(self) -> None:
+        runs = [
+            (1, _mod.Run(0.0, autoplay_wait=0.5)),
+            (2, _mod.Run(0.0, autoplay_wait=0.5)),
+        ]
 
-        monkeypatch.setattr(stealth, "_click_point", click_point)
-        found: asyncio.Future[CapturedMedia] = (
-            asyncio.get_running_loop().create_future()
-        )
-        media = CapturedMedia("https://edge.cdn.example.com/master.m3u8", None)
-        page = MagicMock()
-        # The player requests its stream on the click
-        page.mouse.click = AsyncMock(side_effect=lambda *_: found.set_result(media))
-
-        assert _mod.autoplay_wait(0.05) == 0.05
-        started = time.monotonic()
-        assert await stealth._start_player(page, found, None) is media
-        # The app's own wait is 3 s
-        assert time.monotonic() - started < 1.0
-        page.mouse.click.assert_awaited_once_with(1.0, 2.0)
+        assert _mod.wait_lines(runs, override=None) == [
+            "autoplay wait: 0.5 s (the resolver's)"
+        ]
+        assert _mod.wait_lines(runs, override=0.5) == [
+            "autoplay wait: 0.5 s (the probe's)"
+        ]
+        # A resolution over HTTP reaches no capture
+        assert _mod.wait_lines([(1, _mod.Run(0.0))], override=None) == []
 
 
 def test_blocks_repeat() -> None:
@@ -482,6 +503,21 @@ class TestFrames:
         )
 
         assert pool.run.frames == []
+
+    async def test_the_capture_hands_its_wait_on_through_the_note(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits: list[object] = []
+
+        async def start_player(*_args: object, **kwargs: object) -> None:
+            waits.append(kwargs.get("autoplay_wait"))
+
+        monkeypatch.setattr(stealth, "_start_player", start_player)
+        _mod.note_frames(_mod.TimedStealthPool(browser_pool=MagicMock()))
+
+        await stealth._start_player(MagicMock(), None, None, autoplay_wait=0.5)
+
+        assert waits == [0.5]
 
 
 class TestDiagnosedPool:
