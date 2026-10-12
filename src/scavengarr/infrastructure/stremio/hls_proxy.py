@@ -7,6 +7,14 @@ the initial manifest fetch.  The HLS proxy endpoint solves this by
 fetching each resource server-side with the correct headers and
 rewriting absolute CDN URLs in manifests so the HLS player fetches
 subsequent resources through the proxy as well.
+
+Read-ahead (``SegmentReadAhead``): a player loads the segments one after
+another over one connection, and a CDN that throttles each connection
+(FireStream: 1.5 to 3.9 Mbit/s for a 2.9 Mbit/s title) starves it. When
+the player asks for segment *n*, the proxy fetches *n+1* and *n+2* into
+memory and serves them from there when asked: two to three connections
+in flight instead of one (7.3 against 1.8 Mbit/s for that title from the
+Pi, ``scripts/probes/hls_throughput.py``, 2026-10-07).
 """
 
 from __future__ import annotations
@@ -14,12 +22,15 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncGenerator
-from urllib.parse import urljoin, urlparse, urlsplit
+from collections.abc import AsyncGenerator, Callable, Mapping
+from dataclasses import dataclass, field
+from urllib.parse import ParseResult, SplitResult, urljoin, urlparse, urlsplit
 
 import httpx
 import structlog
 
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
@@ -35,8 +46,25 @@ _manifest_cache: dict[str, tuple[bytes, str, float]] = {}
 # Global semaphore for CDN proxy fetches (prevents stampede).
 _CDN_SEMAPHORE = asyncio.Semaphore(50)
 
-# Segments go out in pieces of this size (``stream_hls_segment``)
+# Segments and files go out in pieces of this size (``_body``)
 _SEGMENT_CHUNK = 65536
+
+# The first byte of a direct file can take a while (Vinovo: about 30 s):
+# the read timeout of a file request (``stream_file``)
+_FILE_READ_TIMEOUT_S = 60.0
+# The CDN's answer headers a proxied file passes to the player
+# (``_file_headers``: Content-Length only when it frames the body)
+_FILE_HEADERS = (
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "content-encoding",
+)
+# A 206 answer's span: ``bytes <first>-<last>/<size or *>``
+_CONTENT_RANGE_RE = re.compile(r"bytes (\d+)-(\d+)/(?:\d+|\*)")
+# The player's request headers a proxied file forwards to the CDN
+_RANGE_HEADERS = ("Range", "If-Range")
 
 # URI attribute of an HLS tag (EXT-X-MEDIA, EXT-X-KEY, EXT-X-MAP, …)
 _URI_ATTR_RE = re.compile(r'URI="([^"]*)"')
@@ -57,6 +85,16 @@ def cdn_base_from_url(video_url: str) -> str:
     else:
         base_path = "/"
     return f"{parsed.scheme}://{parsed.netloc}{base_path}"
+
+
+def _same_origin(a: SplitResult | ParseResult, b: SplitResult | ParseResult) -> bool:
+    """Whether two URLs name the same scheme and host; the host without case.
+
+    VidHide names its CDN host in mixed case in the stream URL and in lower
+    case in its playlists: compared as written, its segments stayed
+    unproxied and failed in the player (403, a token bound to the server).
+    """
+    return (a.scheme, a.netloc.lower()) == (b.scheme, b.netloc.lower())
 
 
 def _proxy_uri(uri: str, cdn_base: str, proxy_base: str, playlist_dir: str) -> str:
@@ -85,7 +123,7 @@ def _proxy_uri(uri: str, cdn_base: str, proxy_base: str, playlist_dir: str) -> s
             return f"{proxy_base}{playlist_dir}{uri}"
         if target.scheme not in ("http", "https"):
             return uri
-    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+    if not _same_origin(target, base):
         return uri
     query = f"?{target.query}" if target.query else ""
     return f"{proxy_base}{target.path}{query}"
@@ -179,12 +217,22 @@ async def fetch_hls_resource(
     return body, ct
 
 
+def resolve_query_string(request_query: str, video_url: str) -> str:
+    """The query of a CDN request: the player's, else the stream URL's
+    (auth tokens)."""
+    if request_query:
+        return request_query
+    return urlparse(video_url).query
+
+
 async def stream_hls_segment(
     http_client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str],
     *,
     head: bool = False,
+    on_sent: Callable[[int], None] | None = None,
+    read_ahead: SegmentReadAhead | None = None,
 ) -> tuple[AsyncGenerator[bytes], str]:
     """Stream an HLS segment from CDN without buffering full body.
 
@@ -200,8 +248,17 @@ async def stream_hls_segment(
     (``Content-Encoding``, which the proxy does not forward) is decoded.
 
     For a HEAD request (*head*) the iterator is empty: the CDN's answer
-    is closed after its status and headers, before its bytes.
+    is closed after its status and headers, before its bytes. *on_sent*
+    is told the bytes that went out when the body ends, an aborted
+    transfer's included. With *read_ahead* a GET starts the fetches of
+    the next segments and is answered from memory when its own was
+    fetched ahead.
     """
+    if read_ahead is not None and not head:
+        read_ahead.schedule(url, http_client, headers)
+        ahead = await read_ahead.take(url)
+        if ahead is not None:
+            return _pieces(ahead.body, on_sent=on_sent), ahead.content_type
     async with _CDN_SEMAPHORE:
         resp = await http_client.send(
             http_client.build_request(
@@ -218,17 +275,559 @@ async def stream_hls_segment(
         resp.raise_for_status()
 
     ct = resp.headers.get("content-type", "application/octet-stream")
+    return _body(resp, head=head, on_sent=on_sent), ct
 
-    async def _iter() -> AsyncGenerator[bytes]:
+
+async def _body(
+    resp: httpx.Response,
+    *,
+    head: bool,
+    on_sent: Callable[[int], None] | None = None,
+) -> AsyncGenerator[bytes]:
+    """*resp*'s body in ``_SEGMENT_CHUNK`` pieces, the answer closed at the
+    end; empty for HEAD (*head*), the answer closed before its bytes.
+    *on_sent* is told the bytes that went out when the body ends, an
+    aborted transfer's included.
+
+    The one generator of a proxied body, closing the CDN's answer itself.
+    A counting wrapper that closed it from its own ``finally`` raced the
+    event loop's finalizer: a body the player dropped was collected with
+    its wrapper, both closed in one pass ("aclose(): asynchronous
+    generator is already running", production 2026-10-07).
+    """
+    sent = 0
+    try:
+        if head:
+            return
+        async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
+            sent += len(chunk)
+            yield chunk
+    finally:
+        await resp.aclose()
+        if on_sent is not None:
+            on_sent(sent)
+
+
+async def _pieces(
+    body: bytes, *, on_sent: Callable[[int], None] | None = None
+) -> AsyncGenerator[bytes]:
+    """A body from memory in ``_SEGMENT_CHUNK`` pieces; *on_sent* as in
+    ``_body``."""
+    sent = 0
+    try:
+        for start in range(0, len(body), _SEGMENT_CHUNK):
+            piece = body[start : start + _SEGMENT_CHUNK]
+            sent += len(piece)
+            yield piece
+    finally:
+        if on_sent is not None:
+            on_sent(sent)
+
+
+# ---------------------------------------------------------------------------
+# Read-ahead: the segments after the one the player asks for
+# ---------------------------------------------------------------------------
+
+# Segments fetched ahead of the player per playback
+_AHEAD = 3
+# Playbacks (media playlists the proxy rewrote) followed at once
+_MAX_PLAYBACKS = 8
+# A segment larger than this is left to the player's own request
+_MAX_AHEAD_BYTES = 16 * 1024 * 1024
+# A playback without a request for this long is dropped
+_IDLE_SECONDS = 60.0
+# A CDN that answered a fetch ahead with 429 gets none for this long
+_THROTTLE_SECONDS = 600.0
+
+
+@dataclass(frozen=True)
+class AheadSegment:
+    """A segment fetched ahead: its bytes and content type."""
+
+    body: bytes
+    content_type: str
+
+
+@dataclass
+class _Playback:
+    """A media playlist's segments in order and the fetches ahead."""
+
+    urls: list[str]
+    index: dict[str, int]
+    last_request: float
+    ahead: dict[str, asyncio.Task[AheadSegment | None]] = field(default_factory=dict)
+    # No more fetches ahead: an undeclared body grew past the cap
+    stopped: bool = False
+
+
+def listed_segments(
+    rewritten: str, proxy_base: str, cdn_base: str, video_url: str
+) -> list[str]:
+    """The CDN URLs of the segments a rewritten media playlist lists, in
+    order: what the proxy fetches when the player asks for a line
+    (``build_cdn_url`` of the proxied path with the line's query, else the
+    stream URL's). Playlists and lines of other origins are left out."""
+    urls: list[str] = []
+    for line in rewritten.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped.startswith(proxy_base):
+            continue
+        path, _, query = stripped[len(proxy_base) :].partition("?")
+        if path.endswith(".m3u8"):
+            continue
         try:
-            if head:
-                return
-            async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
-                yield chunk
-        finally:
-            await resp.aclose()
+            urls.append(
+                build_cdn_url(cdn_base, path, resolve_query_string(query, video_url))
+            )
+        except ValueError:
+            continue
+    return urls
 
-    return _iter(), ct
+
+class SegmentReadAhead:
+    """The segments after the one the player asks for, fetched into memory.
+
+    ``remember()`` takes a rewritten media playlist's segment URLs in order
+    (a playlist fetched again keeps the fetches of segments it still
+    lists). ``schedule()`` starts the fetches of the ``_AHEAD`` segments
+    after the requested one and drops the ones the player passed or
+    jumped away from (``dropped``); ``take()`` answers the requested
+    segment from memory when it was fetched ahead, a fetch in flight
+    awaited (``hit``), else ``None`` (``miss``). Each fetch is an
+    ``hls_readahead`` stage under ``_CDN_SEMAPHORE``: ``ok``, ``failed``,
+    ``too_large`` (over ``_MAX_AHEAD_BYTES``: left to the player; a declared
+    length costs the headers only, a body without one that grows past the
+    cap is cut and ends the playback's fetches ahead) or ``throttled`` (the
+    CDN answered 429: no fetches ahead for its host for
+    ``_THROTTLE_SECONDS``).
+    A playback is dropped ``_IDLE_SECONDS`` after its last request, and
+    the least recently used one when ``_MAX_PLAYBACKS`` are followed.
+    """
+
+    def __init__(
+        self,
+        *,
+        telemetry: TelemetryPort = NO_TELEMETRY,
+        max_bytes: int = _MAX_AHEAD_BYTES,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._telemetry = telemetry
+        self._max_bytes = max_bytes
+        self._clock = clock
+        # media playlist URL -> playback
+        self._playbacks: dict[str, _Playback] = {}
+        # segment URL -> media playlist URL
+        self._playlist_of: dict[str, str] = {}
+        # CDN host -> no fetches ahead until (monotonic)
+        self._throttled: dict[str, float] = {}
+
+    def remember(self, playlist_url: str, segment_urls: list[str]) -> None:
+        """*playlist_url* lists *segment_urls* in this order."""
+        if not segment_urls:
+            return
+        now = self._clock()
+        self._sweep(now)
+        playback = _Playback(
+            urls=list(segment_urls),
+            index={url: i for i, url in enumerate(segment_urls)},
+            last_request=now,
+        )
+        old = self._playbacks.pop(playlist_url, None)
+        if old is not None:
+            for url, task in old.ahead.items():
+                if url in playback.index:
+                    playback.ahead[url] = task
+                else:
+                    self._drop(task)
+            self._unlist(old)
+        while len(self._playbacks) >= _MAX_PLAYBACKS:
+            oldest = min(self._playbacks, key=lambda k: self._playbacks[k].last_request)
+            self._forget(self._playbacks.pop(oldest))
+        self._playbacks[playlist_url] = playback
+        for url in segment_urls:
+            self._playlist_of[url] = playlist_url
+
+    def schedule(
+        self, url: str, http_client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> None:
+        """The player asks for *url*: fetch the segments after it."""
+        playback = self._playback(url)
+        if playback is None:
+            return
+        now = self._clock()
+        playback.last_request = now
+        self._sweep(now)
+        position = playback.index[url]
+        wanted = playback.urls[position : position + 1 + _AHEAD]
+        for other in [u for u in playback.ahead if u not in wanted]:
+            self._drop(playback.ahead.pop(other))
+        if playback.stopped or self._throttled.get(urlsplit(url).netloc, 0.0) > now:
+            return
+        for next_url in wanted[1:]:
+            if next_url not in playback.ahead:
+                playback.ahead[next_url] = asyncio.create_task(
+                    self._fetch(playback, next_url, http_client, headers)
+                )
+
+    async def take(self, url: str) -> AheadSegment | None:
+        """*url* from memory when it was fetched ahead, else ``None``."""
+        playback = self._playback(url)
+        if playback is None:
+            return None
+        task = playback.ahead.pop(url, None)
+        if task is None:
+            self._telemetry.count("hls_readahead", "miss")
+            return None
+        await asyncio.wait([task])
+        segment = None if task.cancelled() else task.result()
+        self._telemetry.count("hls_readahead", "miss" if segment is None else "hit")
+        return segment
+
+    async def aclose(self) -> None:
+        """Cancel the fetches in flight and forget every playback."""
+        for playback in list(self._playbacks.values()):
+            self._forget(playback)
+        self._playbacks.clear()
+
+    def _playback(self, url: str) -> _Playback | None:
+        key = self._playlist_of.get(url)
+        return None if key is None else self._playbacks.get(key)
+
+    def _sweep(self, now: float) -> None:
+        for key, playback in list(self._playbacks.items()):
+            if playback.last_request + _IDLE_SECONDS <= now:
+                self._forget(self._playbacks.pop(key))
+
+    def _forget(self, playback: _Playback) -> None:
+        for task in playback.ahead.values():
+            self._drop(task)
+        playback.ahead.clear()
+        self._unlist(playback)
+
+    def _unlist(self, playback: _Playback) -> None:
+        for url in playback.urls:
+            self._playlist_of.pop(url, None)
+
+    def _drop(self, task: asyncio.Task[AheadSegment | None]) -> None:
+        """A fetch (done or in flight) the player will not ask for."""
+        task.cancel()
+        self._telemetry.count("hls_readahead", "dropped")
+
+    async def _fetch(
+        self,
+        playback: _Playback,
+        url: str,
+        http_client: httpx.AsyncClient,
+        headers: dict[str, str],
+    ) -> AheadSegment | None:
+        with self._telemetry.stage("hls_readahead") as stage:
+            try:
+                async with _CDN_SEMAPHORE:
+                    resp = await http_client.send(
+                        http_client.build_request(
+                            "GET", url, headers=_player_headers(headers)
+                        ),
+                        stream=True,
+                        follow_redirects=True,
+                    )
+                try:
+                    if resp.status_code == 429:
+                        self._throttle(url)
+                        stage.outcome = "throttled"
+                        return None
+                    resp.raise_for_status()
+                    declared = resp.headers.get("content-length", "")
+                    if declared.isdigit() and int(declared) > self._max_bytes:
+                        # left to the player: the headers cost one round trip
+                        stage.outcome = "too_large"
+                        return None
+                    content_type = resp.headers.get(
+                        "content-type", "application/octet-stream"
+                    )
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in resp.aiter_bytes(chunk_size=_SEGMENT_CHUNK):
+                        size += len(chunk)
+                        if size > self._max_bytes:
+                            # the cap's bytes were read for nothing: no
+                            # more fetches ahead for this playback
+                            stage.outcome = "too_large"
+                            playback.stopped = True
+                            return None
+                        chunks.append(chunk)
+                finally:
+                    await resp.aclose()
+            except httpx.HTTPError as exc:
+                stage.outcome = "failed"
+                log.info(
+                    "hls_readahead_failed",
+                    cdn=extract_domain(url),
+                    error=type(exc).__name__,
+                )
+                return None
+            return AheadSegment(b"".join(chunks), content_type)
+
+    def _throttle(self, url: str) -> None:
+        host = urlsplit(url).netloc
+        self._throttled[host] = self._clock() + _THROTTLE_SECONDS
+        log.warning(
+            "hls_readahead_throttled",
+            cdn=extract_domain(url),
+            seconds=int(_THROTTLE_SECONDS),
+        )
+
+
+@dataclass(frozen=True)
+class FileAnswer:
+    """A direct file's answer from its CDN: the status (200, 206, or 416 for
+    a range it cannot serve), the headers of ``_FILE_HEADERS`` it carried
+    and its body in pieces."""
+
+    status: int
+    headers: dict[str, str]
+    chunks: AsyncGenerator[bytes]
+
+
+async def stream_file(
+    http_client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    *,
+    player: Mapping[str, str] | None = None,
+    head: bool = False,
+    on_sent: Callable[[int], None] | None = None,
+) -> FileAnswer:
+    """A direct file streamed from its CDN for the player, byte range included.
+
+    The request carries the stored *headers* over the player's User-Agent,
+    ``Accept-Encoding: identity`` (the byte offsets must hold, so nothing
+    is decoded) and the ``Range`` and ``If-Range`` headers of *player*'s
+    request when it sent them, and reads with ``_FILE_READ_TIMEOUT_S``.
+    The CDN's status passes through with the headers of ``_FILE_HEADERS``
+    (``_file_headers``: Content-Length only when it frames the body); the
+    body goes out undecoded in ``_SEGMENT_CHUNK`` pieces without buffering
+    the file, resumed once when the CDN ends it before the promised length
+    (``_file_body``). For HEAD (*head*) the body is empty and the CDN's answer is
+    closed after its headers. *on_sent* is told the bytes that went out
+    when the body ends, an aborted transfer's included.
+
+    Raises ``httpx.HTTPStatusError`` for an error answer other than 416
+    (closed first) and ``httpx.HTTPError`` when the CDN cannot be reached.
+    """
+    request_headers = {**_player_headers(headers), "Accept-Encoding": "identity"}
+    for name in _RANGE_HEADERS:
+        value = player.get(name) if player is not None else None
+        if value:
+            request_headers[name] = value
+    client_timeout = http_client.timeout
+    timeout = httpx.Timeout(
+        connect=client_timeout.connect,
+        read=_FILE_READ_TIMEOUT_S,
+        write=client_timeout.write,
+        pool=client_timeout.pool,
+    )
+    async with _CDN_SEMAPHORE:
+        resp = await http_client.send(
+            http_client.build_request(
+                "GET", url, headers=request_headers, timeout=timeout
+            ),
+            stream=True,
+            follow_redirects=True,
+        )
+        if resp.is_error and resp.status_code != 416:
+            await resp.aclose()
+            resp.raise_for_status()
+    body = _file_body(
+        http_client, url, request_headers, timeout, resp, head=head, on_sent=on_sent
+    )
+    return FileAnswer(resp.status_code, _file_headers(resp), body)
+
+
+class FileCut(Exception):
+    """The CDN ended a file's body before the promised length, the one
+    resume included. Raised out of the body: the player's connection
+    aborts instead of ending as if the file were complete, and the player
+    asks again with a range of its own."""
+
+
+def _file_headers(resp: httpx.Response) -> dict[str, str]:
+    """The headers of ``_FILE_HEADERS`` the CDN's answer carried,
+    Content-Length only when it frames the body: with ``Transfer-Encoding``
+    the body is chunked and the header is not its length (RFC 9112 section
+    6.3 has an intermediary drop it), and uvicorn refuses a body shorter
+    than the header."""
+    passed = {
+        name: resp.headers[name] for name in _FILE_HEADERS if name in resp.headers
+    }
+    if "transfer-encoding" in resp.headers:
+        passed.pop("content-length", None)
+    return passed
+
+
+def _file_span(resp: httpx.Response) -> tuple[int, int | None]:
+    """The first byte's offset in the file and the bytes the answer promises:
+    from ``Content-Range`` for a 206, from a framing ``Content-Length`` for
+    a 200; ``(0, None)`` when the answer promises no length (chunked, 416)."""
+    match = _CONTENT_RANGE_RE.fullmatch(resp.headers.get("content-range", ""))
+    if resp.status_code == 206 and match is not None:
+        first, last = int(match.group(1)), int(match.group(2))
+        return first, last - first + 1
+    length = resp.headers.get("content-length", "")
+    if (
+        resp.status_code == 200
+        and "transfer-encoding" not in resp.headers
+        and length.isdigit()
+    ):
+        return 0, int(length)
+    return 0, None
+
+
+@dataclass
+class _FileTransfer:
+    """A proxied file's progress: the first byte's offset in the file, the
+    bytes the answer promised (``None``: no length) and the bytes sent."""
+
+    url: str
+    first: int
+    expected: int | None
+    sent: int = 0
+    resumed: bool = False
+
+    @property
+    def done(self) -> bool:
+        return self.expected is not None and self.sent >= self.expected
+
+    def take(self, chunk: bytes) -> bytes:
+        """The part of *chunk* within the promised length, counted as sent."""
+        if self.expected is not None:
+            chunk = chunk[: self.expected - self.sent]
+        self.sent += len(chunk)
+        return chunk
+
+    def cut(self) -> FileCut:
+        """The transfer's end short of the promise, logged once."""
+        log.warning(
+            "hls_proxy_file_cut",
+            cdn=extract_domain(self.url),
+            sent=self.sent,
+            expected=self.expected,
+            resumed=self.resumed,
+        )
+        return FileCut(
+            f"{self.sent} of {self.expected} bytes sent, resumed: {self.resumed}"
+        )
+
+
+async def _range_answer(
+    http_client: httpx.AsyncClient,
+    url: str,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+    *,
+    first: int,
+    last: int,
+) -> httpx.Response | None:
+    """The file asked for again from byte *first* to *last*, the request's
+    other headers kept (``If-Range`` included: a changed file answers 200):
+    the CDN's answer when it is a 206 from *first*, else ``None`` (closed)."""
+    headers = {**request_headers, "Range": f"bytes={first}-{last}"}
+    async with _CDN_SEMAPHORE:
+        resp = await http_client.send(
+            http_client.build_request("GET", url, headers=headers, timeout=timeout),
+            stream=True,
+            follow_redirects=True,
+        )
+    if resp.status_code != 206 or _file_span(resp)[0] != first:
+        await resp.aclose()
+        return None
+    return resp
+
+
+async def _resume(
+    http_client: httpx.AsyncClient,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+    resp: httpx.Response,
+    transfer: _FileTransfer,
+    error: httpx.TransportError | None,
+) -> httpx.Response:
+    """The CDN's answer for the rest of the file after *resp* ended short
+    of the promise (*error*: the transport error that ended it, if any),
+    once per transfer; ``FileCut`` when the transfer cannot go on."""
+    if transfer.expected is None or transfer.resumed:
+        raise transfer.cut() from error
+    await resp.aclose()
+    try:
+        fresh = await _range_answer(
+            http_client,
+            transfer.url,
+            request_headers,
+            timeout,
+            first=transfer.first + transfer.sent,
+            last=transfer.first + transfer.expected - 1,
+        )
+    except httpx.HTTPError as exc:
+        raise transfer.cut() from exc
+    if fresh is None:
+        raise transfer.cut() from error
+    transfer.resumed = True
+    log.info(
+        "hls_proxy_file_resumed",
+        cdn=extract_domain(transfer.url),
+        at=transfer.sent,
+        expected=transfer.expected,
+    )
+    return fresh
+
+
+async def _file_body(
+    http_client: httpx.AsyncClient,
+    url: str,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+    resp: httpx.Response,
+    *,
+    head: bool,
+    on_sent: Callable[[int], None] | None,
+) -> AsyncGenerator[bytes]:
+    """A file's body in ``_SEGMENT_CHUNK`` pieces, undecoded (the byte
+    offsets must hold), the CDN's answer closed at the end; empty for HEAD
+    (*head*). *on_sent* is told the bytes that went out when the body ends.
+
+    A body the CDN ends before the promised length (``_file_span``; a
+    transport error mid-body, or a clean end short of it, which ended the
+    player's answer early: uvicorn's "Response content shorter than
+    Content-Length", 9 times in 48 h of production, 2026-10-07) is resumed
+    once with a ``Range`` request from the next byte, continuing the same
+    answer (``_resume``, ``hls_proxy_file_resumed``). When the resume fails
+    or ends short too, ``FileCut`` goes out of the body with one
+    ``hls_proxy_file_cut`` warning. An answer without a promised length
+    (chunked) ends where the CDN ends it; a transport error cuts it.
+    """
+    transfer = _FileTransfer(url, *_file_span(resp))
+    try:
+        if head:
+            return
+        while not transfer.done:
+            error: httpx.TransportError | None = None
+            try:
+                async for chunk in resp.aiter_raw(chunk_size=_SEGMENT_CHUNK):
+                    piece = transfer.take(chunk)
+                    if piece:
+                        yield piece
+                    if transfer.done:
+                        break
+            except httpx.TransportError as exc:
+                error = exc
+            if transfer.done or (transfer.expected is None and error is None):
+                return
+            resp = await _resume(
+                http_client, request_headers, timeout, resp, transfer, error
+            )
+    finally:
+        await resp.aclose()
+        if on_sent is not None:
+            on_sent(transfer.sent)
 
 
 def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:
@@ -244,7 +843,7 @@ def build_cdn_url(cdn_base: str, path: str, query_string: str = "") -> str:
     """
     url = urljoin(cdn_base, path)
     base, target = urlparse(cdn_base), urlparse(url)
-    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+    if not _same_origin(target, base):
         raise ValueError(f"path leaves the stream's CDN: {path[:80]}")
     if query_string:
         url = f"{url}?{query_string}"

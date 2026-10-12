@@ -33,7 +33,7 @@ from prometheus_client.exposition import CONTENT_TYPE_PLAIN_0_0_4
 
 from scavengarr.domain.ports.telemetry import AttributeValue, StageName, ValueName
 from scavengarr.infrastructure.telemetry.collectors import ContainerCollector
-from scavengarr.infrastructure.version import APP_VERSION
+from scavengarr.infrastructure.version import build_identity
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.telemetry.tracing import TracedStage, Tracing
@@ -90,6 +90,13 @@ _STAGES: dict[StageName, _StageSpec] = {
         ("kind",),
         (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0),
         "HLS proxy requests until the answer starts",
+        traced=False,
+    ),
+    # A segment fetched ahead of the player (4 s of video, mostly 1 to 4 MB)
+    "hls_readahead": _StageSpec(
+        (),
+        (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 7.0, 15.0),
+        "HLS segments fetched ahead of the player",
         traced=False,
     ),
     # The stealth browser's pages: the wait for one and the work on it, by
@@ -223,9 +230,10 @@ class Telemetry:
             registry=self.registry,
         )
         self._loop_lag_ms: deque[float] = deque(maxlen=LAG_WINDOW)
-        Info("scavengarr_build", "Scavengarr version", registry=self.registry).info(
-            {"version": APP_VERSION}
-        )
+        # One series by construction: its labels name the build, not a set
+        Info(
+            "scavengarr_build", "Scavengarr version and build", registry=self.registry
+        ).info(build_identity())
         ProcessCollector(registry=self.registry)
         self.registry.register(ContainerCollector())
         PlatformCollector(registry=self.registry)
@@ -253,7 +261,9 @@ class Telemetry:
         self, name: StageName, labels: dict[str, str], outcome: str, seconds: float
     ) -> None:
         """Record an ended stage (called by the stage)."""
-        self._durations[name].labels(**labels).observe(seconds)
+        duration = self._durations[name]
+        # A stage without labels of its own has a plain histogram
+        (duration.labels(**labels) if labels else duration).observe(seconds)
         self._outcomes[name].labels(**labels, outcome=outcome).inc()
 
     def start_span(self, name: StageName, labels: dict[str, str]) -> TracedStage | None:

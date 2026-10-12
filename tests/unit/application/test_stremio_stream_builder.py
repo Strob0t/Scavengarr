@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from scavengarr.application.stremio.stream_builder import (
+    FILE_NAME,
     HLS_MASTER,
+    apply_resolution,
     build_cache_link,
     build_stream_from_resolved,
     deduplicate_by_hoster,
+    format_size,
     format_stream,
     is_direct_video_url,
     stream_link_id,
@@ -445,6 +450,48 @@ class TestBuildStreamFromResolved:
         assert result.behavior_hints["bingeGroup"] == "scavengarr|de"
         assert result.behavior_hints["notWebReady"] is True
 
+    def test_an_address_bound_file_goes_through_the_file_proxy(self) -> None:
+        """Its CDN plays the file only for the address that resolved it
+        (finding 17): the proxy fetches it, so the player needs no
+        headers."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.mixdrop.example/v.mp4?s=abc",
+                headers={"Referer": "https://mixdrop.ag/"},
+                address_bound=True,
+            )
+        )
+        assert result.url == (
+            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}/{FILE_NAME}"
+        )
+        assert result.behavior_hints == {
+            "bingeGroup": "scavengarr|de",
+            "notWebReady": True,
+        }
+
+    def test_an_address_bound_hls_stream_keeps_its_playlist_proxy(self) -> None:
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.example.com/video/master.m3u8",
+                is_hls=True,
+                address_bound=True,
+            )
+        )
+        assert result.url.endswith(f"/proxy/{self._SID}/{HLS_MASTER}")
+
+    def test_a_client_bound_file_stays_on_play(self) -> None:
+        """VEEV binds the URL to the player's headers, not to the address:
+        /play resolves it for the player, which then fetches the CDN
+        itself."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.veev.example/v.mp4",
+                headers={"User-Agent": "Stremio/1.0", "Accept-Language": "de"},
+            )
+        )
+        assert result.url == f"{self._BASE_URL}/api/v1/stremio/play/{self._SID}"
+        assert "proxyHeaders" in result.behavior_hints
+
     def test_echo_url_returns_none(self) -> None:
         """When resolver echoes back the embed page URL, skip it."""
         original = "https://voe.sx/e/abc123"
@@ -500,6 +547,20 @@ class TestStreamLinks:
         assert link.is_hls is False
         assert link.resolved_at > 0
 
+    def test_the_link_carries_the_address_binding(self) -> None:
+        ranked = RankedStream(url="https://dood.to/e/a", hoster="doodstream")
+        resolved = ResolvedStream(
+            video_url="https://cdn.dood.example/a.mp4", address_bound=True
+        )
+
+        assert build_cache_link("sid", ranked, resolved).address_bound is True
+        assert (
+            build_cache_link(
+                "sid", ranked, ResolvedStream(video_url="https://cdn.example/a.mp4")
+            ).address_bound
+            is False
+        )
+
     def test_the_link_keeps_the_time_of_the_resolution(self) -> None:
         """A resolution from the registry's cache can be an hour old."""
         ranked = RankedStream(url="https://voe.sx/e/a", hoster="voe")
@@ -516,3 +577,47 @@ class TestStreamLinks:
 
         assert link.video_url == ""
         assert link.resolved_at == 0.0
+
+
+class TestMeasurements:
+    """The quality and size the playback check measured, merged into the
+    stream the answer shows."""
+
+    _RANKED = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
+    _VIDEO = "https://cdn.example/v.mp4"
+
+    @pytest.mark.parametrize(
+        ("size_bytes", "text"),
+        [
+            (1_500_000_000, "1.4 GB"),
+            (700 * 2**20, "700 MB"),
+            (2**30, "1.0 GB"),
+            (1000, "1 MB"),
+        ],
+    )
+    def test_format_size_like_the_plugins(self, size_bytes: int, text: str) -> None:
+        assert format_size(size_bytes) == text
+
+    def test_measured_quality_replaces_the_badge(self) -> None:
+        ranked = replace(self._RANKED, quality=StreamQuality.HD_1080P)
+        resolved = ResolvedStream(self._VIDEO, quality=StreamQuality.HD_720P)
+
+        assert apply_resolution(ranked, resolved).quality is StreamQuality.HD_720P
+
+    def test_badge_kept_without_a_measurement(self) -> None:
+        ranked = replace(self._RANKED, quality=StreamQuality.HD_720P)
+
+        merged = apply_resolution(ranked, ResolvedStream(self._VIDEO))
+
+        assert merged is ranked
+
+    def test_measured_size_fills_a_missing_one(self) -> None:
+        resolved = ResolvedStream(self._VIDEO, size_bytes=1_500_000_000)
+
+        assert apply_resolution(self._RANKED, resolved).size == "1.4 GB"
+
+    def test_plugin_size_wins(self) -> None:
+        ranked = replace(self._RANKED, size="1.5 GB")
+        resolved = ResolvedStream(self._VIDEO, size_bytes=1_400_000_000)
+
+        assert apply_resolution(ranked, resolved).size == "1.5 GB"

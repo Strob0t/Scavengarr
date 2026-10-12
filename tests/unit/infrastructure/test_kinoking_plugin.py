@@ -116,7 +116,15 @@ _SERVERS = [
     },
 ]
 
-_MOVIE_HTML = f"""<html><body><h1>Iron Man</h1>
+_MOVIE_HTML = f"""<html><head>
+<meta name="keywords" content="Iron Man, Iron Man kostenlos, Iron Man 2008,
+ Action filme kostenlos, Action stream, Abenteuer filme kostenlos,
+ kinofilm kostenlos">
+<script type="application/ld+json">
+{{"@context":"https://schema.org","@type":"Movie",
+ "name":"Iron Man","dateCreated":"2008-04-30"}}
+</script>
+</head><body><h1>Iron Man</h1>
 <script>
     const SERVERS = {json.dumps(_SERVERS)};
     const other = 1;
@@ -146,14 +154,26 @@ _EPISODES = [
     },
 ]
 
-_SERIES_HTML = f"""<html><body><h1>KINOKING</h1>
+_SERIES_HTML = f"""<html><head>
+<meta name="keywords" content="Iron Man - die Zukunft beginnt,
+ Science-Fiction serien kostenlos, serie kostenlos">
+</head><body><h1>KINOKING</h1>
 <script>
     const seriesTitle = "Iron Man - die Zukunft beginnt";
+    const seriesYear = '2010';
     const allEpisodesData = {json.dumps(_EPISODES)};
 </script></body></html>"""
 
 
-def _mock_site(search_html: str = _SEARCH_HTML) -> respx.Route:
+# TMDB's German genre name, the way the site writes its keywords
+_ANIME_SERIES_HTML = _SERIES_HTML.replace(
+    "Science-Fiction serien kostenlos", "Animation serien kostenlos"
+)
+
+
+def _mock_site(
+    search_html: str = _SEARCH_HTML, series_html: str = _SERIES_HTML
+) -> respx.Route:
     search = respx.get(_BASE + "/index.php").mock(
         side_effect=lambda request: httpx.Response(
             200,
@@ -161,7 +181,7 @@ def _mock_site(search_html: str = _SEARCH_HTML) -> respx.Route:
         )
     )
     respx.get(_BASE + "/movie.php").respond(200, text=_MOVIE_HTML)
-    respx.get(_BASE + "/series.php").respond(200, text=_SERIES_HTML)
+    respx.get(_BASE + "/series.php").respond(200, text=series_html)
     return search
 
 
@@ -217,6 +237,34 @@ class TestMovieLinks:
     def test_no_servers(self) -> None:
         assert _mod._movie_links("<html></html>") == []
         assert _mod._movie_links("const SERVERS = [not json];\n") == []
+
+
+class TestPageMeta:
+    """Year and genres of a movie or series page."""
+
+    def test_movie_year_from_the_schema_block(self) -> None:
+        assert _mod._page_year(_MOVIE_HTML) == 2008
+
+    def test_series_year_from_the_script_constant(self) -> None:
+        assert _mod._page_year(_SERIES_HTML) == 2010
+
+    def test_no_year(self) -> None:
+        assert _mod._page_year("<html></html>") is None
+
+    def test_genres_from_the_keywords(self) -> None:
+        assert _mod._page_genres(_MOVIE_HTML) == ["Action", "Abenteuer"]
+        assert _mod._page_genres(_SERIES_HTML) == ["Science-Fiction"]
+
+    def test_genres_with_an_html_entity(self) -> None:
+        html = (
+            '<meta name="keywords" '
+            'content="Dune, Sci-Fi &amp; Fantasy serien kostenlos">'
+        )
+        assert _mod._page_genres(html) == ["Sci-Fi & Fantasy"]
+
+    def test_no_genres(self) -> None:
+        assert _mod._page_genres("<html></html>") == []
+        assert _mod._page_genres('<meta name="keywords" content="Iron Man">') == []
 
 
 class TestEpisodes:
@@ -284,6 +332,10 @@ class TestSearch:
         episode = next(r for r in results if r.title.endswith("S01E01"))
         assert episode.category == 5000
         assert episode.source_url == f"{_BASE}/series.php?id=10767"
+        assert movie.metadata["year"] == 2008
+        assert movie.metadata["genres"] == "Action, Abenteuer"
+        assert episode.metadata["year"] == 2010
+        assert episode.metadata["genres"] == "Science-Fiction"
 
     @respx.mock
     @pytest.mark.asyncio
@@ -358,15 +410,39 @@ class TestSearch:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_anime_request_gets_the_series(self) -> None:
-        """kinoking does not tell anime apart; results keep the site's label."""
+    async def test_animation_series_is_anime(self) -> None:
+        """A series whose keywords name Animation is 5070; a 5000 request
+        still gets it (the parent covers the child)."""
+        plug = _make_plugin()
+        _mock_site(series_html=_ANIME_SERIES_HTML)
+
+        results = await plug.search("Iron Man", category=5000)
+        await plug.cleanup()
+
+        assert [r.category for r in results] == [5070, 5070]
+        assert results[0].metadata["genres"] == "Animation"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_anime_request_gets_only_anime(self) -> None:
+        plug = _make_plugin()
+        _mock_site(series_html=_ANIME_SERIES_HTML)
+
+        results = await plug.search("Iron Man", category=5070)
+        await plug.cleanup()
+
+        assert [r.category for r in results] == [5070, 5070]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_anime_request_skips_other_series(self) -> None:
         plug = _make_plugin()
         _mock_site()
 
         results = await plug.search("Iron Man", category=5070)
         await plug.cleanup()
 
-        assert [r.category for r in results] == [5000, 5000]
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_category_the_site_does_not_serve(self) -> None:

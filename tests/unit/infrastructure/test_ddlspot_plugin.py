@@ -147,6 +147,9 @@ def _make_mock_context(
 ) -> AsyncMock:
     """Create a mock BrowserContext that yields pages in order."""
     context = AsyncMock()
+    # The default-timeout setters are synchronous (playwright.timeout_ms)
+    context.set_default_timeout = MagicMock()
+    context.set_default_navigation_timeout = MagicMock()
     if pages:
         context.new_page = AsyncMock(side_effect=pages)
     else:

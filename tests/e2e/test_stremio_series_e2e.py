@@ -29,9 +29,13 @@ from fastapi.testclient import TestClient
 
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import (
+    EpisodeMeta,
+    EpisodeRef,
+    SeriesMeta,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.series_meta import NO_SERIES_META, SeriesMetaPort
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.plugins.constants import (
@@ -80,6 +84,32 @@ class _FakeSeriesPlugin:
     ) -> list[SearchResult]:
         self.calls.append(
             {"query": query, "category": category, "season": season, "episode": episode}
+        )
+        return list(self._results)
+
+
+class _FakeLocatingPlugin(_FakeSeriesPlugin):
+    """A plugin that locates episodes: it records the reference too."""
+
+    locates_episodes = True
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {
+                "query": query,
+                "category": category,
+                "season": season,
+                "episode": episode,
+                "episode_ref": episode_ref,
+            }
         )
         return list(self._results)
 
@@ -136,6 +166,7 @@ def _make_series_app(
     plugins: dict[str, _FakeSeriesPlugin],
     config: StremioConfig | None = None,
     validate_passthrough: bool = True,
+    series_meta: SeriesMetaPort | None = None,
 ) -> tuple[FastAPI, dict[str, _FakeSeriesPlugin]]:
     """Build a FastAPI app with a real StremioStreamUseCase.
 
@@ -144,6 +175,7 @@ def _make_series_app(
         plugins: Mapping of plugin name to fake plugin.
         config: Optional StremioConfig overrides.
         validate_passthrough: If True, validate_results passes input through.
+        series_meta: The catalog (Cinemeta) port; none answers no record.
 
     Returns:
         (app, plugins_dict) so tests can inspect plugin call records.
@@ -186,6 +218,7 @@ def _make_series_app(
         max_results_var=search_max_results,
         stream_link_repo=stream_link_repo,
         pool=ConcurrencyPool(),
+        series_meta=series_meta or NO_SERIES_META,
     )
 
     app = FastAPI()
@@ -390,8 +423,10 @@ class TestNarutoShippudenE2E:
             assert call["season"] == 3
             assert call["episode"] == 12
 
-    def test_unparseable_titles_kept(self) -> None:
-        """Results with non-standard titles (no SxxExx) pass through the filter."""
+    def test_a_pack_without_episode_labels_is_dropped(self) -> None:
+        """A title without an episode number and links without episode
+        labels is dropped (it would pass with every episode); the S01E05
+        result answers alone."""
         results = [
             SearchResult(
                 title="Naruto Shippuden - Komplettbox",
@@ -418,8 +453,7 @@ class TestNarutoShippudenE2E:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/{self._IMDB}:1:5.json")
 
         streams = resp.json()["streams"]
-        # Both kept: pack title (unparseable) + S01E05
-        assert len(streams) == 2
+        assert len(streams) == 1
 
     def test_title_mismatch_filtered(self) -> None:
         """Results for a different anime are dropped by title-match filter."""
@@ -875,3 +909,66 @@ class TestSeriesEdgeCases:
         streams = resp.json()["streams"]
         assert len(streams) == 1
         assert "S21E1042" in streams[0]["description"]
+
+    def test_a_locating_plugin_places_the_episode_by_the_reference(self) -> None:
+        """One Piece S5E2: the catalog lists 8, 22, 17 and 13 episodes for the
+        seasons before, so the reference's absolute number is 62. The plugin
+        that locates episodes gets the reference and answers the site's
+        staffel-2/episode-1 as S5E2; a plugin without the capability is
+        called as before."""
+        laboon = "The First Line of Defense? The Giant Whale Laboon Appears!"
+        meta = SeriesMeta(
+            name="One Piece",
+            year=1999,
+            genres=("Animation",),
+            episodes=tuple(
+                EpisodeMeta(
+                    season=s,
+                    episode=e,
+                    name=laboon if (s, e) == (5, 2) else f"S{s}E{e}",
+                    released="2001-03-21" if (s, e) == (5, 2) else None,
+                )
+                for s, count in ((1, 8), (2, 22), (3, 17), (4, 13), (5, 9))
+                for e in range(1, count + 1)
+            ),
+        )
+        series_meta = AsyncMock()
+        series_meta.lookup = AsyncMock(return_value=(meta, "found"))
+        located = SearchResult(
+            title="One Piece",
+            download_link="https://voe.sx/e/op62",
+            download_links=[
+                {
+                    "hoster": "VOE",
+                    "link": "https://voe.sx/e/op62",
+                    "language": "German Sub",
+                }
+            ],
+            category=5070,
+            metadata={
+                "source_plugin": "aniworld",
+                "season": 5,
+                "episode": 2,
+                "site_season": 2,
+                "site_episode": 1,
+                "episode_located_by": "number",
+            },
+        )
+        locating = _FakeLocatingPlugin("aniworld", results=[located])
+        other = _FakeSeriesPlugin("sto", results=[])
+        app, _ = _make_series_app(
+            title_info=TitleMatchInfo(title="One Piece", year=1999),
+            plugins={"aniworld": locating, "sto": other},
+            series_meta=series_meta,
+        )
+
+        resp = TestClient(app).get(
+            f"{_PREFIX}/stremio/stream/series/tt0388629:5:2.json"
+        )
+
+        streams = resp.json()["streams"]
+        assert len(streams) == 1
+        assert locating.calls[0]["episode_ref"] == EpisodeRef(
+            5, 2, laboon, "2001-03-21", absolute=62
+        )
+        assert "episode_ref" not in other.calls[0]

@@ -1,0 +1,43 @@
+# Weekly dependency updates; CI (ci.yml) runs on every pull request.
+# Merge rule: AGENTS.md §4.
+version: 2
+updates:
+  # Poetry (pyproject.toml, poetry.lock): Dependabot handles Poetry as "pip"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+
+  # Actions in .github/workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    labels:
+      - "dependencies"
+
+  # Base images of Dockerfile.prod (Dependabot reads every file whose name
+  # contains "dockerfile")
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    labels:
+      - "dependencies"

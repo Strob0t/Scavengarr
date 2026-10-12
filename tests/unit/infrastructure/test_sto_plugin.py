@@ -7,12 +7,16 @@ import importlib.util
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
+import structlog.testing
 
+from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.plugins.base import PluginUnreachableError
 from scavengarr.domain.ports.browser_fetcher import ClickThrough
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "sto.py"
@@ -219,8 +223,9 @@ class TestPluginAttributes:
         assert plugin.mode == "httpx"
 
     def test_domains_list(self) -> None:
-        # s.to is gone (NXDOMAIN, dead in JDownloader's SerienStreamTo)
-        assert _DOMAINS == ["serienstream.to", "186.2.175.5"]
+        # s.to is gone (NXDOMAIN, dead in JDownloader's SerienStreamTo);
+        # serienstream.cx is on the site's own list, serien.domains (row 74)
+        assert _DOMAINS == ["serienstream.to", "serienstream.cx", "186.2.175.5"]
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +260,7 @@ class TestDomainVerification:
 
         ok_resp = MagicMock()
         ok_resp.status_code = 200
-        ok_resp.url = httpx.URL("https://186.2.175.5/")
+        ok_resp.url = httpx.URL("https://serienstream.cx/")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(side_effect=[fail_resp, ok_resp])
@@ -264,6 +269,25 @@ class TestDomainVerification:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
+        assert "serienstream.cx" in plugin.base_url
+
+    @pytest.mark.asyncio
+    async def test_the_address_comes_after_the_names(self) -> None:
+        plugin = _make_plugin()
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 503
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.url = httpx.URL("https://186.2.175.5/")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(side_effect=[fail_resp, fail_resp, ok_resp])
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
         assert "186.2.175.5" in plugin.base_url
 
     @pytest.mark.asyncio
@@ -274,10 +298,10 @@ class TestDomainVerification:
         mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert "serienstream.to" in plugin.base_url  # Fallback to primary
+        assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:
@@ -619,8 +643,10 @@ class TestSeasonsAndParallelism:
 
         results = await plugin.search("stranger things")
 
+        # ints, as the Stremio episode filter reads them
         seasons = {r.metadata["season"] for r in results}
-        assert seasons == {"1", "2", "3", "4"}
+        assert seasons == {1, 2, 3, 4}
+        assert all(isinstance(r.metadata["episode"], int) for r in results)
 
     @pytest.mark.asyncio
     async def test_season_scrape_resolves_hosters_in_parallel(self) -> None:
@@ -985,6 +1011,63 @@ class TestCloudflareFallback:
         fetcher.fetch_text.assert_awaited_once()
 
 
+class TestGatedStreamRequest:
+    """A stream request (season and episode) answers with resolved hoster
+    links only: a link-out that stayed on the site reaches the serienstream
+    resolver, which cannot follow it (``serienstream_invalid_url``, the Pi's
+    VPN address, 2026-10-07). Torznab never asks for one episode."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fetcher(self) -> Iterator[None]:
+        yield
+        _StoPlugin.set_browser_fetcher(None)
+
+    async def _scrape(self, client: httpx.AsyncClient) -> list[dict[str, object]]:
+        plugin = _make_plugin()
+        plugin._client = client
+        plugin.base_url = "https://s.to"
+        detail = _SeriesDetailParser("https://s.to")
+        return await plugin._scrape_single_episode("stranger-things", 1, 1, detail)
+
+    @respx.mock
+    async def test_all_gated_drops_the_result(self) -> None:
+        _gated_site(respx.mock, trusted="laravel_session=passed")
+        _StoPlugin.set_browser_fetcher(_gate_fetcher(None))
+
+        async with httpx.AsyncClient() as client:
+            with structlog.testing.capture_logs() as logs:
+                episodes = await self._scrape(client)
+
+        assert episodes == []
+        dropped = [e for e in logs if e["event"] == "sto_gated_links_dropped"]
+        assert len(dropped) == 1
+        assert dropped[0]["count"] == 3
+        assert dropped[0]["log_level"] == "info"
+        assert "url" not in dropped[0]
+
+    @respx.mock
+    async def test_mixed_keeps_the_resolved_links(self) -> None:
+        def _link_out(request: httpx.Request) -> httpx.Response:
+            token = request.url.params["t"]
+            if token == "def456":
+                return httpx.Response(302, headers={"location": "https://vidoza.net/x"})
+            return httpx.Response(200, text=_GATE_PAGE)
+
+        respx.mock.get(_EPISODE_URL).respond(200, text=_EPISODE_HTML)
+        respx.mock.get(url__startswith="https://s.to/r").mock(side_effect=_link_out)
+
+        async with httpx.AsyncClient() as client:
+            with structlog.testing.capture_logs() as logs:
+                episodes = await self._scrape(client)
+
+        assert len(episodes) == 1
+        links = episodes[0]["links"]
+        assert isinstance(links, list)
+        assert [link["link"] for link in links] == ["https://vidoza.net/x"]
+        dropped = [e for e in logs if e["event"] == "sto_gated_links_dropped"]
+        assert [e["count"] for e in dropped] == [2]
+
+
 class TestGatedSeasons:
     """Torznab scrapes whole seasons: about 950 link-outs for "Dark", of which
     the gate let 3 through per pass (VPN IP, 2026-10-04), in 83 s. Seasons
@@ -1076,3 +1159,213 @@ class TestGatedSeasons:
             await plugin._episode_links(_EPISODE_URL, pass_gate=False)
 
         assert link_outs.call_count == requested
+
+
+# ---------------------------------------------------------------------------
+# Episode location (a Stremio request's reference) for anime
+# ---------------------------------------------------------------------------
+
+
+def _anime_rows(season: int, rows: list[tuple[str, str]]) -> str:
+    """A season page's episode table in the live layout."""
+    body = "".join(
+        f'<tr class="episode-row" onclick="window.location=\'/serie/one-piece/'
+        f"staffel-{season}/episode-{n}'\">"
+        f'<th scope="row" class="text-center episode-number-cell">{n}</th>'
+        f'<td class="episode-title-cell">'
+        f'<strong class="episode-title-ger">{german}</strong>'
+        f'<span class="episode-title-eng"> {english} </span></td>'
+        f'<td class="episode-watch-cell"><img alt="VOE"></td></tr>'
+        for n, (german, english) in enumerate(rows, start=1)
+    )
+    return (
+        '<table><tbody><tr class="text-uppercase"><th>Nr.</th><td>Titel</td></tr>'
+        f"{body}</tbody></table>"
+    )
+
+
+_ANIME_SERIES_HTML = (
+    "<html><body><h1>One Piece</h1>"
+    '<a href="/genre/anime">Anime</a><a href="/genre/action">Action</a>'
+    '<a href="/serie/one-piece/staffel-0">Specials</a>'
+    '<a href="/serie/one-piece/staffel-1">Staffel 1</a>'
+    '<a href="/serie/one-piece/staffel-2">Staffel 2</a>'
+    + _anime_rows(1, [("Hier kommt Ruffy", "Episode 001")])
+    + "</body></html>"
+)
+_ANIME_SEASON_2_HTML = "<html><body>" + _anime_rows(
+    2, [("Ein Bad in Magensäure", "Episode 062"), ("Das Versprechen", "Episode 063")]
+)
+_LABOON = "The First Line of Defense? The Giant Whale Laboon Appears!"
+_LABOON_REF = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62)
+
+
+def _anime_client() -> tuple[AsyncMock, list[str]]:
+    """A site listing One Piece (anime, two seasons and specials) and Stranger
+    Things (a series); the paths fetched."""
+    paths: list[str] = []
+
+    async def _get(url: str, **kw: object) -> object:
+        url = str(url)
+        path = url.removeprefix("https://s.to")
+        paths.append(path.split("?")[0])
+        if "/r?t=" in url:
+            return _mock_response(
+                status_code=302, headers={"location": "https://voe.sx/e/resolved"}
+            )
+        if "/suche" in url:
+            params = kw.get("params") or {}
+            first = int(params.get("page", 1)) == 1  # type: ignore[union-attr]
+            page = _search_page(
+                ("one-piece", "One Piece"), ("stranger-things", "Stranger Things")
+            )
+            return _mock_response(text=page if first else _EMPTY_SEARCH_HTML)
+        if "/episode-" in url:
+            return _mock_response(text=_EPISODE_HTML)
+        if path == "/serie/one-piece" or path == "/serie/one-piece/staffel-1":
+            return _mock_response(text=_ANIME_SERIES_HTML)
+        if path == "/serie/one-piece/staffel-2":
+            return _mock_response(text=_ANIME_SEASON_2_HTML)
+        if path.startswith("/serie/stranger-things"):
+            return _mock_response(text=_SERIES_DETAIL_HTML)
+        return _mock_response(status_code=404)
+
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(side_effect=_get)
+    return client, paths
+
+
+def _anime_plugin(cache: AsyncMock | None = None) -> tuple[Any, list[str]]:
+    plugin: Any = _make_plugin()
+    plugin._domain_verified = True
+    plugin.base_url = "https://s.to"
+    plugin._cache = cache
+    plugin._client, paths = _anime_client()
+    return plugin, paths
+
+
+class TestLocatesEpisodes:
+    def test_declares_the_capability(self) -> None:
+        assert _StoPlugin.locates_episodes is True
+
+    async def test_an_anime_episode_comes_from_the_located_page(self) -> None:
+        plugin, paths = _anime_plugin()
+
+        with structlog.testing.capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=5, episode=2, episode_ref=_LABOON_REF
+            )
+
+        anime = [r for r in results if r.category == 5070]
+        assert len(anime) == 1
+        assert anime[0].title == "One Piece - S05E02 - Ein Bad in Magensäure"
+        assert anime[0].source_url == "https://s.to/serie/one-piece/staffel-2/episode-1"
+        assert anime[0].metadata == {
+            "series": "One Piece",
+            "genres": "Anime, Action",
+            "season": 5,
+            "episode": 2,
+            "site_season": 2,
+            "site_episode": 1,
+            "episode_located_by": "number",
+        }
+        assert "/serie/one-piece/staffel-2/episode-1" in paths
+        assert not any("/staffel-5/" in path for path in paths)
+        # the specials (staffel-0) are no regular season
+        assert "/serie/one-piece/staffel-0" not in paths
+        located = next(e for e in logs if e["event"] == "sto_episode_located")
+        assert (
+            located.items()
+            >= {
+                "slug": "one-piece",
+                "season": 5,
+                "episode": 2,
+                "absolute": 62,
+                "site_season": 2,
+                "site_episode": 1,
+                "located_by": "number",
+            }.items()
+        )
+
+    async def test_the_runners_entry_reaches_the_reference(self) -> None:
+        plugin, paths = _anime_plugin()
+
+        results = await plugin.isolated_search(
+            "one piece", 5000, season=5, episode=2, episode_ref=_LABOON_REF
+        )
+
+        assert [r.source_url for r in results if r.category == 5070] == [
+            "https://s.to/serie/one-piece/staffel-2/episode-1"
+        ]
+
+    async def test_a_series_keeps_the_requests_numbers(self) -> None:
+        # Stranger Things is no anime: the reference does not apply
+        plugin, paths = _anime_plugin()
+        ref = EpisodeRef(1, 1, "Chapter One: The Vanishing of Will Byers", absolute=1)
+
+        results = await plugin.search(
+            "stranger things", season=1, episode=1, episode_ref=ref
+        )
+
+        series = [r for r in results if r.category == 5000]
+        assert len(series) == 1
+        assert series[0].metadata["season"] == 1
+        assert series[0].metadata["episode"] == 1
+        assert "site_season" not in series[0].metadata
+        assert "/serie/stranger-things/staffel-1/episode-1" in paths
+
+    async def test_an_episode_not_located_gives_no_anime_result(self) -> None:
+        plugin, paths = _anime_plugin()
+        ref = EpisodeRef(9, 9, "Nothing Like It", absolute=999)
+
+        with structlog.testing.capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=9, episode=9, episode_ref=ref
+            )
+
+        assert [r for r in results if r.category == 5070] == []
+        assert not any(
+            "/serie/one-piece/" in path and "/episode-" in path for path in paths
+        )
+        missed = next(e for e in logs if e["event"] == "sto_episode_not_located")
+        assert (
+            missed.items() >= {"slug": "one-piece", "absolute": 999, "rows": 3}.items()
+        )
+
+    async def test_without_a_reference_the_page_comes_from_the_numbers(self) -> None:
+        plugin, paths = _anime_plugin()
+
+        results = await plugin.search("one piece", season=2, episode=1)
+
+        anime = [r for r in results if r.category == 5070]
+        assert len(anime) == 1
+        assert anime[0].metadata["season"] == 2
+        assert anime[0].metadata["episode"] == 1
+        assert "site_season" not in anime[0].metadata
+        assert "/serie/one-piece/staffel-2/episode-1" in paths
+
+    async def test_the_index_is_kept_for_a_week(self) -> None:
+        cache = AsyncMock()
+        cache.get.return_value = None
+        plugin, _ = _anime_plugin(cache)
+
+        await plugin.search("one piece", season=5, episode=2, episode_ref=_LABOON_REF)
+
+        key, rows = cache.set.await_args.args
+        assert key == "sto:episodes:v1:one-piece"
+        assert cache.set.await_args.kwargs == {"ttl": 7 * 24 * 3600}
+        assert rows == [
+            [1, 1, "Hier kommt Ruffy", "", 1],
+            [2, 1, "Ein Bad in Magensäure", "", 62],
+            [2, 2, "Das Versprechen", "", 63],
+        ]
+
+        cache.get.return_value = rows
+        again, paths = _anime_plugin(cache)
+
+        results = await again.search(
+            "one piece", season=5, episode=2, episode_ref=_LABOON_REF
+        )
+
+        assert len([r for r in results if r.category == 5070]) == 1
+        assert not any(path.endswith(("/staffel-1", "/staffel-2")) for path in paths)

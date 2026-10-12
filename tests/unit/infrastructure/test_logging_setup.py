@@ -158,3 +158,20 @@ class TestThirdPartyUrls:
     def test_own_events_keep_their_urls(self) -> None:
         # The app's events follow their own rules (CDNs by domain only)
         assert setup._shorten_urls not in setup._structlog_processors()
+
+
+class TestRequestLoggers:
+    """httpx and httpcore log each request: from WARNING up unless DEBUG."""
+
+    @pytest.mark.parametrize("name", ["httpx", "httpcore", "httpcore.http11"])
+    def test_quiet_at_info(self, name: str) -> None:
+        assert setup._logger_level(name, "INFO") == "WARNING"
+
+    @pytest.mark.parametrize("level", ["DEBUG", "WARNING", "ERROR"])
+    def test_follow_other_levels(self, level: str) -> None:
+        # DEBUG keeps the request trace; above INFO they are quiet anyway
+        assert setup._logger_level("httpx", level) == level
+
+    def test_other_loggers_follow_the_app(self) -> None:
+        assert setup._logger_level("scavengarr.plugins", "INFO") == "INFO"
+        assert setup._logger_level("httpx_extra", "INFO") == "INFO"

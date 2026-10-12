@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
+
+import structlog
 
 from scavengarr.application.stremio.resolution import HosterResolution
 from scavengarr.domain.entities.stremio import RankedStream, ResolvedStream
@@ -271,3 +274,21 @@ class TestPageClaim:
 
         assert seen == [claim, claim]
         assert page_claim.get() is None
+
+
+class TestLogContext:
+    async def test_a_resolution_logs_its_plugin(self) -> None:
+        """hoster_without_resolver names the plugin that handed out the link."""
+        seen: dict[str, object] = {}
+
+        async def _resolve(url: str, hoster: str) -> ResolvedStream | None:
+            seen[url] = structlog.contextvars.get_contextvars().get("plugin")
+            return _video(url)
+
+        resolution, _ = _resolution(_resolve)
+
+        resolution.update([replace(_VOE, source_plugin="kinoger"), _DOOD])
+        await _settle(resolution)
+
+        assert seen == {_VOE.url: "kinoger", _DOOD.url: None}
+        assert "plugin" not in structlog.contextvars.get_contextvars()

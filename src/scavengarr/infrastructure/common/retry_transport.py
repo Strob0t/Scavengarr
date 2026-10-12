@@ -1,4 +1,9 @@
-"""httpx transport with per-domain rate limiting and 429/503 retry."""
+"""httpx transport with per-domain rate limiting and 429/503 retry.
+
+A 403 or 503 that is a Cloudflare challenge (``cf-mitigated: challenge``,
+or a challenge page) is the edge talking, not the origin: it is returned
+at once, neither retried nor fed back to the rate limiter.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ import random
 import httpx
 import structlog
 
+from scavengarr.infrastructure.captcha.detect import detect_challenge
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 
 log = structlog.get_logger(__name__)
@@ -15,6 +21,24 @@ log = structlog.get_logger(__name__)
 _DEFAULT_RETRYABLE = frozenset({429, 503})
 # cf-cache-status values of responses served from Cloudflare's cache
 _CACHED_STATUSES = frozenset({"HIT", "STALE", "UPDATING"})
+# Statuses a Cloudflare challenge page comes with
+_CHALLENGE_STATUSES = frozenset({403, 503})
+
+
+async def _is_challenge(response: httpx.Response) -> bool:
+    """Whether *response* is a challenge: Cloudflare's header, or an HTML
+    body ``detect_challenge`` recognises (read here; it stays readable)."""
+    if response.status_code not in _CHALLENGE_STATUSES:
+        return False
+    if response.headers.get("cf-mitigated", "").lower() == "challenge":
+        return True
+    if "text/html" not in response.headers.get("content-type", "").lower():
+        return False
+    await response.aread()
+    return (
+        detect_challenge(response.status_code, response.text, response.headers)
+        is not None
+    )
 
 
 def _parse_retry_after(headers: httpx.Headers) -> float | None:
@@ -75,6 +99,12 @@ class RetryTransport(httpx.AsyncBaseTransport):
             await self._rate_limiter.acquire(url_str)
 
             response = await self._wrapped.handle_async_request(request)
+
+            # The edge's challenge, not the origin's answer: a retry gets
+            # the same page, and the origin's rate is not the issue
+            if await _is_challenge(response):
+                log.debug("http_challenge", url=url_str, status=response.status_code)
+                return response
 
             if response.status_code not in self._retryable:
                 # Adaptive feedback: successful response

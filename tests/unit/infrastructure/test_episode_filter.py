@@ -61,14 +61,15 @@ class TestFilterByEpisode:
         assert len(filtered) == 1
         assert filtered[0].title == "Show S01E02"
 
-    def test_keeps_unparseable_titles(self) -> None:
-        """Results without season/episode info are kept (benefit of the doubt)."""
+    def test_drops_titles_without_episode_info(self) -> None:
+        """A result without an episode number and without labelled links (a
+        show page) is dropped: it would pass with every episode."""
         results = [
             _make_search_result(title="Random Movie Title"),
             _make_search_result(title="Show S01E03"),
         ]
         filtered = filter_by_episode(results, season=1, episode=3)
-        assert len(filtered) == 2
+        assert [r.title for r in filtered] == ["Show S01E03"]
 
     def test_season_only_keeps_all_episodes_of_season(self) -> None:
         results = [
@@ -151,8 +152,9 @@ class TestFilterByEpisode:
         filtered = filter_by_episode(results, season=1, episode=5)
         assert len(filtered) == 0
 
-    def test_unparseable_title_no_labels_kept(self) -> None:
-        """Links without episode labels -> kept (kinoger-style, just hosters)."""
+    def test_unparseable_title_no_labels_dropped(self) -> None:
+        """Links without episode labels (just hosters) -> dropped: a show
+        page without an episode number would leak other episodes."""
         links = [
             {"hoster": "VOE", "link": "https://voe.sx/e/abc", "label": "Stream HD+"},
             {"hoster": "Filemoon", "link": "https://fm.sx/e/def", "label": "Stream SD"},
@@ -160,9 +162,7 @@ class TestFilterByEpisode:
         results = [
             _make_search_result(title="Naruto Shippuden", download_links=links),
         ]
-        filtered = filter_by_episode(results, season=1, episode=5)
-        assert len(filtered) == 1
-        assert len(filtered[0].download_links) == 2
+        assert filter_by_episode(results, season=1, episode=5) == []
 
     def test_streamcloud_massive_episode_list_filtered(self) -> None:
         """100 episode links from all seasons reduced to 2 links for S02E03."""
@@ -372,7 +372,146 @@ class TestSeasonTitles:
         r = _make_search_result(title="Show S02", download_links=self._LINKS)
         assert filter_by_episode([r], season=1, episode=1) == []
 
-    def test_links_without_labels_kept(self) -> None:
+    def test_links_without_labels_dropped(self) -> None:
         links = [{"hoster": "VOE", "link": "https://voe.sx/e/a", "label": ""}]
         r = _make_search_result(title="Show - Staffel 1", download_links=links)
-        assert filter_by_episode([r], season=1, episode=2) == [r]
+        assert filter_by_episode([r], season=1, episode=2) == []
+
+    def test_a_season_request_keeps_links_without_labels(self) -> None:
+        links = [{"hoster": "VOE", "link": "https://voe.sx/e/a", "label": ""}]
+        r = _make_search_result(title="Show - Staffel 1", download_links=links)
+        assert filter_by_episode([r], season=1, episode=None) == [r]
+
+
+class TestWithoutLeaks:
+    """The spec scenarios of continue-cut-searches: metadata first, no
+    episode number -> labelled links only, an episode without a season
+    names season 1."""
+
+    _LINKS = [
+        {"hoster": "VOE", "link": "https://voe.sx/e/4", "label": "S01E04 VOE"},
+        {"hoster": "VOE", "link": "https://voe.sx/e/5", "label": "S01E05 VOE"},
+    ]
+
+    def test_show_page_without_labelled_links_is_dropped(self) -> None:
+        links = [{"hoster": "VOE", "link": "https://voe.sx/e/a", "label": "VOE"}]
+        r = _make_search_result(title="Severance", download_links=links)
+        assert filter_by_episode([r], season=1, episode=5) == []
+
+    def test_season_pack_passes_with_the_episodes_link_only(self) -> None:
+        r = _make_search_result(title="Severance S01", download_links=self._LINKS)
+        filtered = filter_by_episode([r], season=1, episode=5)
+        assert len(filtered) == 1
+        assert filtered[0].download_links == [self._LINKS[1]]
+        assert filtered[0].download_link == "https://voe.sx/e/5"
+
+    def test_an_episode_without_a_season_is_dropped_for_season_2(self) -> None:
+        r = _make_search_result(title="Severance E05")
+        assert filter_by_episode([r], season=2, episode=5) == []
+
+    def test_an_episode_without_a_season_passes_for_season_1(self) -> None:
+        r = _make_search_result(title="Severance E05")
+        assert filter_by_episode([r], season=1, episode=5) == [r]
+
+    def test_metadata_is_trusted(self) -> None:
+        r = _make_search_result(title="Severance", metadata={"season": 2, "episode": 5})
+        assert filter_by_episode([r], season=2, episode=5) == [r]
+
+    def test_metadata_of_another_episode_drops(self) -> None:
+        r = _make_search_result(title="Severance", metadata={"season": 2, "episode": 4})
+        assert filter_by_episode([r], season=2, episode=5) == []
+
+    def test_metadata_comes_before_the_title(self) -> None:
+        """A page that knows its episode outranks a release name."""
+        r = _make_search_result(
+            title="Severance S01E04", metadata={"season": 2, "episode": 5}
+        )
+        assert filter_by_episode([r], season=2, episode=5) == [r]
+
+    def test_a_metadata_string_is_ignored(self) -> None:
+        """Older plugins stored the season as a string: the title decides."""
+        r = _make_search_result(
+            title="Severance S02E05", metadata={"season": "1", "episode": "4"}
+        )
+        assert filter_by_episode([r], season=2, episode=5) == [r]
+
+    def test_a_metadata_season_with_the_episode_from_the_title(self) -> None:
+        """A page that knows its season but not its episode: the season from
+        the metadata, the episode from the title."""
+        r = _make_search_result(title="Severance E05", metadata={"season": 2})
+        assert filter_by_episode([r], season=2, episode=5) == [r]
+        assert filter_by_episode([r], season=1, episode=5) == []
+
+
+class TestEpisodeWords:
+    """Labels name an episode in words too: ``Folge 5``, ``Episode 12``,
+    ``Ep. 3``, ``E05``; no season with them."""
+
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            ("Folge 5 VOE", (None, 5)),
+            ("Episode 12 - Doodstream", (None, 12)),
+            ("Ep. 3", (None, 3)),
+            ("ep 3", (None, 3)),
+            ("E05 VOE", (None, 5)),
+            ("VOE", (None, None)),
+            ("VOE 1080p", (None, None)),
+            ("Staffel 1", (None, None)),
+            ("x265 HEVC", (None, None)),
+            ("S01E05 Folge 7", (1, 5)),  # the full pattern comes first
+        ],
+    )
+    def test_words(self, label: str, expected: tuple[int | None, int | None]) -> None:
+        assert parse_episode_from_label(label) == expected
+
+
+class TestTitleNamedEpisodes:
+    """A result whose title names the episode is narrowed by its link labels
+    too: a page titled after the episode but linking the whole season leaked
+    the other episodes."""
+
+    _LINKS = [
+        {"hoster": "VOE", "link": "https://voe.sx/e/4", "label": "Folge 4 VOE"},
+        {"hoster": "VOE", "link": "https://voe.sx/e/5", "label": "Folge 5 VOE"},
+        {"hoster": "DOOD", "link": "https://dood.to/e/5", "label": "1x5 Doodstream"},
+    ]
+
+    def test_keeps_the_links_of_its_episode(self) -> None:
+        r = _make_search_result(title="Severance S01E05", download_links=self._LINKS)
+        filtered = filter_by_episode([r], season=1, episode=5)
+        assert len(filtered) == 1
+        assert filtered[0].download_links == self._LINKS[1:]
+        assert filtered[0].download_link == "https://voe.sx/e/5"
+
+    def test_dropped_when_every_labelled_link_names_another_episode(self) -> None:
+        links = [
+            self._LINKS[0],
+            {"hoster": "VOE", "link": "https://voe.sx/e/6", "label": "E06"},
+        ]
+        r = _make_search_result(title="Severance S01E05", download_links=links)
+        assert filter_by_episode([r], season=1, episode=5) == []
+
+    def test_links_without_labels_pass_with_the_title(self) -> None:
+        links = [{"hoster": "VOE", "link": "https://voe.sx/e/a", "label": "VOE"}]
+        r = _make_search_result(title="Severance S01E05", download_links=links)
+        assert filter_by_episode([r], season=1, episode=5) == [r]
+
+    def test_unlabelled_links_stay_beside_the_episodes(self) -> None:
+        """A mirror without a label is no other episode: it stays."""
+        links = [
+            {"hoster": "VOE", "link": "https://voe.sx/e/a", "label": "VOE"},
+            *self._LINKS,
+        ]
+        r = _make_search_result(title="Severance S01E05", download_links=links)
+        filtered = filter_by_episode([r], season=1, episode=5)
+        assert filtered[0].download_links == self._LINKS[1:]
+
+    def test_a_metadata_episode_is_narrowed_too(self) -> None:
+        r = _make_search_result(
+            title="Severance",
+            metadata={"season": 1, "episode": 5},
+            download_links=self._LINKS,
+        )
+        filtered = filter_by_episode([r], season=1, episode=5)
+        assert filtered[0].download_links == self._LINKS[1:]

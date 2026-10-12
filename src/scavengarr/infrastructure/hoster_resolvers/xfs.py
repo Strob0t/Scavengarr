@@ -33,13 +33,13 @@ from scavengarr.infrastructure.hoster_resolvers._verify import (
     verify_video_url,
 )
 from scavengarr.infrastructure.hoster_resolvers._video_extract import extract_video_url
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
 
-_BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # Captcha widgets in front of a player (Turnstile / reCAPTCHA play button)
 # that the stealth browser's click passes; ALTCHA needs its own solver
@@ -160,7 +160,7 @@ class XFSResolver:
         automatically submit it before attempting video URL extraction.
         """
         embed_url = self._build_embed_url(url, file_id)
-        headers = {"User-Agent": _BROWSER_UA}
+        headers = {"User-Agent": DEFAULT_USER_AGENT}
 
         try:
             resp = await self._http.get(

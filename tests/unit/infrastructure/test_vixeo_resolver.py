@@ -46,6 +46,8 @@ class TestVixeoResolver:
         assert result.video_url == _HLS
         assert result.is_hls is True
         assert pool.capture_media.await_args.args[0] == _URL
+        # The player's ad tag stays out (row 81: on the Pi it took every click)
+        assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
 
     async def test_login_page_is_not_resolved(self) -> None:
         pool = AsyncMock()

@@ -19,23 +19,24 @@ JDownloader `.crawljob`) and are only served via Torznab. *Engine* is
 browser. *Mirrors* counts the extra domains tried when the primary one
 is unreachable.
 
-41 plugins: 18 with streams (used by the Stremio addon), 23 with direct downloads.
+42 plugins: 19 with streams (used by the Stremio addon), 23 with direct downloads.
 
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
 | `animeloads` | www.anime-loads.org | 1 | Downloads | Playwright | de |
-| `aniworld` | aniworld.to | 0 | Streams | httpx | de |
-| `boerse` | boerse.am | 5 | Downloads | Playwright | de |
+| `aniworld` | aniworld.to | 1 | Streams | httpx | de |
+| `boerse` | boerse.am | 4 | Downloads | Playwright | de |
 | `burningseries` | burningseries.ac | 2 | Downloads | httpx | de |
 | `byte` | byte.to | 0 | Downloads | httpx | de |
 | `cine` | cine.to | 0 | Downloads | httpx | de |
-| `cineby` | cineby.gd | 7 | Streams | httpx | en |
+| `cineby` | db.videasy.net | 0 | Streams | httpx | en |
 | `crawli` | crawli.net | 1 | Downloads | httpx | de |
 | `dataload` | www.data-load.me | 0 | Downloads | httpx | de |
 | `ddlspot` | www.ddlspot.com | 0 | Downloads | Playwright | de |
 | `ddlvalley` | www.ddlvalley.me | 0 | Downloads | Playwright | en |
 | `einschalten` | einschalten.in | 0 | Streams | httpx | de |
 | `filmfans` | filmfans.org | 0 | Downloads | httpx | de |
+| `filmo` | filmo.to | 0 | Streams | httpx | de, en |
 | `filmpalast` | filmpalast.to | 0 | Streams | httpx | de |
 | `fireani` | fireani.me | 0 | Streams | httpx | de |
 | `haschcon` | haschcon.com | 0 | Streams | httpx | de |
@@ -60,7 +61,7 @@ is unreachable.
 | `scnsrc` | www.scnsrc.me | 5 | Downloads | Playwright | en |
 | `serienfans` | serienfans.org | 0 | Downloads | httpx | de |
 | `serienjunkies` | serienjunkies.org | 0 | Downloads | httpx | de |
-| `sto` | serienstream.to | 1 | Streams | httpx | de |
+| `sto` | serienstream.to | 2 | Streams | httpx | de |
 | `streamcloud` | streamcloud.download | 1 | Streams | httpx | de |
 | `streamkiste` | streamkiste.bid | 5 | Streams | httpx | de |
 | `warezomen` | warezomen.com | 0 | Downloads | httpx | de |

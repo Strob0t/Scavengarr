@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -10,6 +11,7 @@ from pydantic import (
     AliasPath,
     BaseModel,
     Field,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -151,8 +153,14 @@ def _normalize_path(value: Any) -> Path:
     raise TypeError(f"Expected path-like value, got: {type(value)!r}")
 
 
-class CacheConfig(BaseSettings):
-    """Cache configuration (backend-agnostic)."""
+class CacheConfig(BaseModel):
+    """Cache configuration (backend-agnostic).
+
+    A plain model like the other sections: validated from the merged config
+    dict, never from the environment (as a ``BaseSettings`` it read
+    unprefixed ``CACHE_*`` variables below the YAML; the environment speaks
+    through ``EnvOverrides``, ``SCAVENGARR_CACHE_*``).
+    """
 
     backend: Literal["diskcache", "redis"] = Field(
         default="diskcache",
@@ -175,6 +183,7 @@ class CacheConfig(BaseSettings):
     # Shared settings
     ttl_seconds: int = Field(
         default=3600,
+        ge=0,
         description="Default TTL for cache entries (seconds)",
     )
     search_ttl_seconds: int = Field(
@@ -194,24 +203,12 @@ class CacheConfig(BaseSettings):
         description="Max parallel cache ops (semaphore limit)",
     )
 
-    model_config = SettingsConfigDict(
-        # Not read: this section is validated from the merged config dict.
-        # Env overrides are SCAVENGARR_CACHE_* (see EnvOverrides).
-        env_prefix="CACHE_",
-        case_sensitive=False,
-    )
-
 
 class StremioConfig(BaseModel):
     """Configuration for Stremio addon and stream sorting.
 
     All values configurable via YAML (stremio section) or ENV vars.
     """
-
-    preferred_language: str = Field(
-        default="de",
-        description="Preferred audio language code for stream ranking.",
-    )
 
     language_scores: dict[str, int] = Field(
         default={
@@ -286,12 +283,22 @@ class StremioConfig(BaseModel):
         default=30.0,
         gt=0,
         description=(
-            "Plugin search budget per Stremio search, counted from the "
-            "request start (plugins waiting for a concurrency slot use it up "
-            "too; a stale search-cache entry's refresh: from its own start); "
-            "plugins still running then are cut, queued ones skipped. "
-            "The answer does not wait for the search: plugins still running "
-            "when it goes out fill the search cache."
+            "Each plugin search, from the moment the plugin holds a "
+            "concurrency slot; also the request's answer budget unless "
+            "answer_budget_seconds is set. A plugin past it is cut; its "
+            "earlier results stay."
+        ),
+    )
+    answer_budget_seconds: float | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "The request's answer budget, counted from the request start (a "
+            "stale search-cache entry's refresh: from its own start): the "
+            "request stops waiting for the search then and answers with the "
+            "results known so far; plugins still running are not cut, their "
+            "results reach the search cache for the next request. Unset: the "
+            "plugin timeout; a value above it counts as the plugin timeout."
         ),
     )
     plugin_health_interval_seconds: float = Field(
@@ -300,8 +307,8 @@ class StremioConfig(BaseModel):
         description=(
             "How often every Stremio plugin's site is checked (HEAD on its "
             "domains); searches skip plugins whose site did not answer (twice, "
-            "30 s apart), and those are checked again every 5 minutes. 0 turns "
-            "the check off."
+            "30 s apart), and those are checked again 5 minutes later, then at "
+            "doubling pauses up to this interval. 0 turns the check off."
         ),
     )
     stream_deadline_seconds: float = Field(
@@ -323,10 +330,6 @@ class StremioConfig(BaseModel):
     title_year_bonus: float = Field(
         default=0.2,
         description="Score bonus when result year matches reference year.",
-    )
-    title_year_penalty: float = Field(
-        default=0.3,
-        description="Score penalty when result year does not match reference year.",
     )
     title_sequel_penalty: float = Field(
         default=0.35,
@@ -390,8 +393,10 @@ class StremioConfig(BaseModel):
     probe_stealth_timeout_seconds: float = Field(
         default=15.0,
         description=(
-            "Page timeout of the stealth browser (Patchright) used by "
-            "browser-based resolvers and the Cloudflare fallback, in seconds."
+            "Timeout of a resolver's stream capture in the stealth browser "
+            "(Patchright), in seconds: the embed page's navigation and "
+            "Cloudflare challenge. The httpx plugins' Cloudflare fallback "
+            "has its own budget."
         ),
     )
     resolve_target_count: int = Field(
@@ -409,29 +414,30 @@ class StremioConfig(BaseModel):
         default=False,
         description="Use scoring to limit plugin selection per request.",
     )
-    stremio_deadline_ms: int = Field(
-        default=2000,
-        description=(
-            "Unused (kept so existing configs stay valid); the overall budget "
-            "is stream_deadline_seconds."
-        ),
-    )
     max_plugins_scored: int = Field(
         default=5,
         description="Top-N plugins when scoring is active.",
-    )
-    max_items_total: int = Field(
-        default=50,
-        description="Global result cap across all plugins.",
-    )
-    max_items_per_plugin: int = Field(
-        default=20,
-        description="Per-plugin result cap in scored mode.",
     )
     exploration_probability: float = Field(
         default=0.15,
         description="Chance to include a random mid-score plugin.",
     )
+
+
+@dataclass(frozen=True)
+class ConfigSource:
+    """Where ``load_config`` took a configuration from, for the startup log."""
+
+    file: Path | None = None
+    # Dotted YAML paths no field accepts (sorted); loading ignored them
+    unknown_keys: tuple[str, ...] = ()
+    # The changed values' dotted paths and the layer that set each one:
+    # "defaults", "yaml", "env" or "cli"
+    value_sources: dict[str, str] = field(default_factory=dict)
+    # SCAVENGARR_<SECTION>_<KEY> names no key of the section has (sorted)
+    unknown_env: tuple[str, ...] = ()
+    # (flat alias, sectioned name) pairs set to different values; the alias won
+    env_conflicts: tuple[tuple[str, str], ...] = ()
 
 
 class AppConfig(BaseModel):
@@ -443,6 +449,14 @@ class AppConfig(BaseModel):
     - Environment variables are handled by EnvOverrides(BaseSettings) to allow strict
       precedence control (defaults < YAML < ENV < CLI) in load.py.
     """
+
+    # Set by load_config(); not a setting, so no layer can change it
+    _source: ConfigSource = PrivateAttr(default_factory=ConfigSource)
+
+    @property
+    def source(self) -> ConfigSource:
+        """Where ``load_config`` took this configuration from."""
+        return self._source
 
     # General
     app_name: str = Field(default="scavengarr", description="Application name.")
@@ -570,7 +584,11 @@ class AppConfig(BaseModel):
             "playwright_timeout_ms",
             AliasPath("playwright", "timeout_ms"),
         ),
-        description="Playwright timeout in milliseconds.",
+        description=(
+            "Default timeout of the Playwright plugins' pages in milliseconds: "
+            "navigation and actions without an explicit one. The Cloudflare "
+            "wait has its own 30 s."
+        ),
     )
 
     # Logging (YAML section: logging.*)
@@ -605,24 +623,7 @@ class AppConfig(BaseModel):
     # Cache (disk-only placeholder) (YAML section: cache.*)
     cache: CacheConfig = Field(default_factory=CacheConfig)
 
-    cache_dir: Path = Field(
-        default=Path("./.cache/scavengarr"),
-        validation_alias=AliasChoices(
-            "cache_dir",
-            AliasPath("cache", "dir"),
-        ),
-        description="Cache directory (disk).",
-    )
-    cache_ttl_seconds: int = Field(
-        default=3600,
-        validation_alias=AliasChoices(
-            "cache_ttl_seconds",
-            AliasPath("cache", "ttl_seconds"),
-        ),
-        description="Cache TTL in seconds.",
-    )
-
-    @field_validator("plugin_dir", "cache_dir", mode="before")
+    @field_validator("plugin_dir", mode="before")
     @classmethod
     def _validate_paths(cls, v: Any) -> Path:
         return _normalize_path(v)
@@ -714,13 +715,6 @@ class AppConfig(BaseModel):
             raise ValueError("playwright_timeout_ms must be > 0")
         return v
 
-    @field_validator("cache_ttl_seconds")
-    @classmethod
-    def _validate_cache_ttl(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("cache_ttl_seconds must be >= 0")
-        return v
-
     @model_validator(mode="after")
     def _derive_defaults(self) -> "AppConfig":
         # Default log format: console in dev/test, json in prod.
@@ -737,6 +731,9 @@ class EnvOverrides(BaseSettings):
     - load.py creates EnvOverrides() to read SCAVENGARR_* variables,
       converts to dict of set values, merges into YAML/defaults,
       then validates AppConfig.
+    - These are the explicit flat names; every other setting is read as
+      SCAVENGARR_<SECTION>_<KEY> by load.py (``_env_layer``), and a flat
+      name wins over the sectioned name of the same key.
 
     Supported env var examples (flat, explicit):
     - SCAVENGARR_PLUGIN_DIR

@@ -87,17 +87,24 @@ def _clean_title(title: str) -> str:
 _EPISODE_NUM_RE = re.compile(r"(\d{1,2})\s*[xX]\s*(\d{1,4})")
 
 
-_STAFFEL_RE = re.compile(r"staffel\s*(\d{1,3})", re.IGNORECASE)
+# "Staffel 3", "4. Staffel", "2 Staffel" and the site's "5 Stafffel"
+_STAFFEL_RE = re.compile(r"staf+el\s*(\d{1,3})|\b(\d{1,3})\.?\s*staf+el", re.IGNORECASE)
+
+
+def _season_of(title: str) -> int | None:
+    """The season *title* names ("X - Staffel N", "X - N Staffel"), else None."""
+    m = _STAFFEL_RE.search(title)
+    return int(m.group(1) or m.group(2)) if m else None
 
 
 def _other_season(title: str, season: int) -> bool:
-    """True when *title* names a season ("X - Staffel N") other than *season*.
+    """True when *title* names a season other than *season*.
 
     megakino has one page per season; a title without season number is
     kept (single-season shows).
     """
-    m = _STAFFEL_RE.search(title)
-    return m is not None and int(m.group(1)) != season
+    found = _season_of(title)
+    return found is not None and found != season
 
 
 def _label_matches_episode(label: str, episode: int) -> bool:
@@ -297,6 +304,8 @@ class _DetailPageParser:
         self.stream_links: list[dict[str, str]] = []
 
         self.title = ""
+        # megakino has one page per season, its title names it (1 without)
+        self.season = 1
         self.year = ""
         self.runtime = ""
         self.genres: list[str] = []
@@ -320,6 +329,7 @@ class _DetailPageParser:
             self.title = _clean_title(h1.text())
             if self.title:
                 break
+        self.season = _season_of(self.title) or 1
 
         # Year/runtime: <div class="pmovie__year">
         for div in tree.css("div.pmovie__year"):
@@ -393,7 +403,9 @@ class _DetailPageParser:
                 continue
             name = option.text().strip()
             domain = _domain_from_url(link)
-            label = f"1x{episode} {name or domain}" if episode else name or domain
+            label = name or domain
+            if episode:
+                label = f"{self.season}x{episode} {label}"
             self.stream_links.append(
                 {
                     "hoster": name.lower() if name else domain,
@@ -536,7 +548,7 @@ class MegakinoPlugin(HttpxPluginBase):
             description_parts.append(parser.description)
         description = " ".join(description_parts) if description_parts else ""
 
-        metadata: dict[str, str] = {
+        metadata: dict[str, str | int] = {
             "year": parser.year,
             "genres": ", ".join(genres),
             "quality": quality,
@@ -544,6 +556,11 @@ class MegakinoPlugin(HttpxPluginBase):
             "site_rating": parser.site_rating,
             "poster_url": parser.poster_url,
         }
+        if parser.is_series and episode is not None:
+            # the page's season and the episode kept above, for the Stremio
+            # episode filter
+            metadata["season"] = parser.season
+            metadata["episode"] = episode
 
         return SearchResult(
             title=title,

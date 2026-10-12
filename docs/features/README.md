@@ -10,11 +10,11 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 
 | Fact | Value |
 |---|---|
-| Version | 0.3.0 |
+| Version | 0.4.0 |
 | Python | 3.12–3.14 (Docker image: 3.14) |
-| Plugins | 41 (35 httpx + 6 Playwright) |
-| Hoster resolvers | 60 (25 individual + 10 generic DDL + 25 XFS) |
-| Tests | 5271 offline (5032 unit + 194 E2E + 45 integration) + 41 live (2026-10-06) |
+| Plugins | 42 (36 httpx + 6 Playwright) |
+| Hoster resolvers | 62 (27 individual + 10 generic DDL + 25 XFS) |
+| Tests | 6485 offline (6204 unit + 214 E2E + 67 integration) + 42 live (2026-10-11) |
 | Architecture | Clean Architecture |
 
 ---
@@ -76,9 +76,9 @@ Scavengarr is a self-hosted, container-ready **Torznab/Newznab indexer** and **S
 | [Code Review Fixes](../plans/code-review-fixes.md) | Done: 79 findings of the full `staging` review fixed in four waves (security, results, robustness, plugin categories); open observations listed |
 | [Captcha Solving](../plans/captcha-solving.md) | Done: shared challenge detector, grab-time link resolution (nox ALTCHA, animeloads image captcha), vinovo/DoodStream without captcha, clearance cookies across restarts, optional Byparr sidecar |
 | [Next Steps](../plans/next-steps.md) | In progress: status snapshot of 2026-09-29 (live run, release, CI) and prioritized next steps, incl. the stremio.lan live test setup |
-| [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06: snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
+| [Ideas Backlog](../plans/ideas-backlog.md) | Decided 2026-10-06, round 2 added 2026-10-07 (round tooling, checks in worktrees, docs path guard, plugin long-term record, configuration by environment, HLS read-ahead to discuss): snapshot of production and repository, six new findings (httpx log noise, discarded stream quality and size, hosters without a resolver, no build identity, kinox without yield, hand-made deployment), 16 evaluated ideas, the decisions, and the handoff to the implementing agent (order, working rules, task specifications; the larger items as OpenSpec changes `add-anime-ids`, `persist-resolver-state`, `add-container-image`, `add-stream-media-quality`) |
 | [Stremio Stream Split](../plans/stremio-stream-split.md) | Proposed 2026-10-06 (item I14): split the 942-line stream use case into phase collaborators under `application/stremio/` (title resolution, plugin selection, title search, resolve flow, answer assembly) in five behaviour-preserving commits; exclusive-access rule |
-| [Browser Page Budget](../plans/browser-page-budget.md) | Implemented 2026-10-06, to be measured in the seventh round: the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
+| [Browser Page Budget](../plans/browser-page-budget.md) | Implemented 2026-10-06, measured in the seventh round (2026-10-07: kinoger works again, the sixth round's 13 of 13 timeouts did not recur): the stealth browser's pages by urgency (play, earliest deadline, background last), the wait kept out of the resolve timeout, and a page count that follows waits, CPU and memory; `browser_page` metrics |
 
 ### Refactoring History
 
@@ -140,7 +140,7 @@ src/scavengarr/
     scoring/                 # EWMA scoring, health/search probers, scheduler
     config/                  # Pydantic schema, loader, defaults
     logging/                 # structlog setup
-    common/                  # Parsers, converters, rate limiter, retry transport
+    common/                  # Parsers, rate limiter, retry transport
     captcha/                 # Challenge detection, ALTCHA solver
     telemetry/               # Prometheus metrics, OpenTelemetry tracing, event-loop lag
     circuit_breaker.py       # Circuit breaker (plugins and hosters)

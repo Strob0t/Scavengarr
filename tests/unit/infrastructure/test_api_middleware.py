@@ -28,8 +28,9 @@ class TestRateLimitExemptions:
     def test_playback_and_health_are_not_counted(self) -> None:
         """A playing stream loads a segment every few seconds (dozens at
         start) and asks ``/play`` again for each seek (8 requests within a
-        second at a playback start in production, 2026-10-06); health
-        probes come from the orchestrator."""
+        second at a playback start in production, 2026-10-06), and a
+        proxied file is asked for a range per seek; health probes come
+        from the orchestrator."""
         app = Starlette(
             routes=[
                 Route("/", _hello),
@@ -43,6 +44,7 @@ class TestRateLimitExemptions:
 
         for _ in range(10):
             assert client.get("/api/v1/stremio/proxy/abc/seg1.ts").status_code == 200
+            assert client.get("/api/v1/stremio/proxy/abc/file").status_code == 200
             assert client.get("/api/v1/stremio/play/abc").status_code == 200
             assert client.get("/api/v1/healthz").status_code == 200
 

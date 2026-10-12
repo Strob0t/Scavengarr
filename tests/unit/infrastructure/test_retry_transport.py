@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
@@ -233,3 +234,105 @@ class TestCachedRetryableResponse:
 
         assert resp.status_code == 200
         assert transport._wrapped.handle_async_request.call_count == 2
+
+
+_CHALLENGE_HTML = "<html><title>Just a moment...</title>challenge-platform</html>"
+
+
+def _respx_transport(router: respx.MockRouter, max_retries: int = 3) -> RetryTransport:
+    """A RetryTransport whose inner transport answers from *router*."""
+    return RetryTransport(
+        wrapped=httpx.MockTransport(router.async_handler),
+        rate_limiter=DomainRateLimiter(default_rps=0.0, burst=10),
+        max_retries=max_retries,
+        backoff_base=1.0,
+        max_backoff=30.0,
+    )
+
+
+class TestChallengeAnswer:
+    """A 403 or 503 that is a Cloudflare challenge is the edge talking, not
+    the origin: retrying it gets the same page, and halving the domain's
+    rate for it starves a site that was never overloaded."""
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("status", [403, 503])
+    async def test_a_challenge_header_is_returned_at_once(self, status: int) -> None:
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.get("https://example.com/page").respond(
+            status, headers={"cf-mitigated": "challenge"}, text=_CHALLENGE_HTML
+        )
+        transport = _respx_transport(router)
+        with (
+            patch.object(transport._rate_limiter, "record_throttle") as throttle,
+            patch.object(transport._rate_limiter, "record_success") as success,
+            patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m,
+        ):
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == status
+        assert route.call_count == 1
+        m.sleep.assert_not_awaited()
+        throttle.assert_not_called()
+        success.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_a_challenge_page_without_the_header_is_returned_at_once(
+        self,
+    ) -> None:
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.get("https://example.com/page").respond(
+            503, html=_CHALLENGE_HTML
+        )
+        transport = _respx_transport(router)
+        with (
+            patch.object(transport._rate_limiter, "record_throttle") as throttle,
+            patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m,
+        ):
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 503
+        assert "Just a moment" in resp.text  # the body stays readable
+        assert route.call_count == 1
+        throttle.assert_not_called()
+
+    @pytest.mark.asyncio()
+    async def test_a_plain_503_is_still_retried(self) -> None:
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.get("https://example.com/page").mock(
+            side_effect=[
+                httpx.Response(503, html="<html>Service Unavailable</html>"),
+                httpx.Response(200, text="ok"),
+            ]
+        )
+        transport = _respx_transport(router)
+        with (
+            patch.object(transport._rate_limiter, "record_throttle") as throttle,
+            patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m,
+        ):
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        throttle.assert_called_once()
+
+    @pytest.mark.asyncio()
+    async def test_a_429_waits_for_retry_after(self) -> None:
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.get("https://example.com/page").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "2"}),
+                httpx.Response(200, text="ok"),
+            ]
+        )
+        transport = _respx_transport(router)
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        m.sleep.assert_awaited_once_with(2.0)

@@ -23,13 +23,19 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from html import unescape
 from typing import Any
 
 from selectolax.lexbor import LexborHTMLParser
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
-from scavengarr.infrastructure.plugins.categories import served_category
+from scavengarr.infrastructure.plugins.categories import (
+    STREAM_CATEGORIES,
+    filter_by_category,
+    served_category,
+    stream_category,
+)
 from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
@@ -51,6 +57,14 @@ _MAX_MIRRORS_PER_SERVER = 3
 _SERVERS_RE = re.compile(r"const SERVERS = (\[.*?\]);\s*\n", re.DOTALL)
 _EPISODES_RE = re.compile(r"const allEpisodesData = (\[.*?\]);", re.DOTALL)
 _SERIES_TITLE_RE = re.compile(r'seriesTitle = "([^"]*)"')
+# The year: a movie page's schema.org block ("dateCreated" is the release
+# date), a series page's script constant (the series' year, used in its own
+# link requests). The genres: the keywords meta names each as
+# "<genre> filme kostenlos" or "<genre> serien kostenlos"
+_DATE_CREATED_RE = re.compile(r'"dateCreated":\s*"((?:19|20)\d{2})')
+_SERIES_YEAR_RE = re.compile(r"seriesYear = '((?:19|20)\d{2})'")
+_KEYWORDS_RE = re.compile(r'<meta name="keywords" content="([^"]*)"')
+_KEYWORD_GENRE_RE = re.compile(r"([^,]+?) (?:filme|serien) kostenlos")
 # "Server A1 (DE)", "VOE (FILMO EN)" -> language code; "VOE (LIVE)" has none
 _SERVER_LANG_RE = re.compile(r"\((?:[A-Z]+ )?([A-Z]{2})\)\s*$")
 _LINK_SPLIT_RE = re.compile(r"[\s,;|]+")
@@ -80,6 +94,26 @@ def _link(url: str) -> dict[str, str] | None:
     if not hoster or hoster in _AGGREGATOR_HOSTS:
         return None
     return {"hoster": hoster, "link": url}
+
+
+def _page_year(html: str) -> int | None:
+    """A movie's release year or a series' year from its page, if shown."""
+    m = _DATE_CREATED_RE.search(html) or _SERIES_YEAR_RE.search(html)
+    return int(m.group(1)) if m else None
+
+
+def _page_genres(html: str) -> list[str]:
+    """The genres a movie or series page names in its keywords meta
+    (entities unescaped: "Sci-Fi &amp; Fantasy" is "Sci-Fi & Fantasy")."""
+    m = _KEYWORDS_RE.search(html)
+    if m is None:
+        return []
+    genres: list[str] = []
+    for genre in _KEYWORD_GENRE_RE.findall(unescape(m.group(1))):
+        genre = genre.strip()
+        if genre and genre not in genres:
+            genres.append(genre)
+    return genres
 
 
 def _movie_links(html: str) -> list[dict[str, str]]:
@@ -238,13 +272,22 @@ class KinokingPlugin(HttpxPluginBase):
             self._log.debug("kinoking_no_links", url=source_url)
             return None
 
+        metadata: dict[str, Any] = {
+            "tmdb": card.get("tmdb", ""),
+            "quality": card.get("quality", ""),
+            "genres": ", ".join(_page_genres(html)),
+        }
+        year = _page_year(html)
+        if year is not None:
+            metadata["year"] = year
+
         return SearchResult(
             title=card["title"],
             download_link=links[0]["link"],
             download_links=links,
             source_url=source_url,
             category=2000,
-            metadata={"tmdb": card.get("tmdb", ""), "quality": card.get("quality", "")},
+            metadata=metadata,
         )
 
     async def _build_series_results(
@@ -262,6 +305,11 @@ class KinokingPlugin(HttpxPluginBase):
         m = _SERIES_TITLE_RE.search(html)
         series_title = m.group(1) if m else card["title"]
         episodes = _pick_episodes(_load_json_array(_EPISODES_RE, html), season, episode)
+        year = _page_year(html)
+        genre_list = _page_genres(html)
+        genres = ", ".join(genre_list)
+        # Series 5000, anime and animation series 5070 (from the genres)
+        category = stream_category(genre_list, is_series=True)
 
         results: list[SearchResult] = []
         for ep in episodes:
@@ -271,18 +319,22 @@ class KinokingPlugin(HttpxPluginBase):
             s_num = ep["season_number"]  # int, see _pick_episodes
             e_num = ep.get("episode_number")
             e_tag = f"E{e_num:02d}" if isinstance(e_num, int) else ""
+            metadata: dict[str, Any] = {
+                "series": series_title,
+                "episode_title": str(ep.get("name") or ""),
+                "tmdb": card.get("tmdb", ""),
+                "genres": genres,
+            }
+            if year is not None:
+                metadata["year"] = year
             results.append(
                 SearchResult(
                     title=f"{series_title} S{s_num:02d}{e_tag}",
                     download_link=links[0]["link"],
                     download_links=links,
                     source_url=source_url,
-                    category=5000,
-                    metadata={
-                        "series": series_title,
-                        "episode_title": str(ep.get("name") or ""),
-                        "tmdb": card.get("tmdb", ""),
-                    },
+                    category=category,
+                    metadata=metadata,
                 )
             )
         if not results:
@@ -294,7 +346,8 @@ class KinokingPlugin(HttpxPluginBase):
         cards: list[dict[str, str]],
         category: int | None,
     ) -> list[dict[str, str]]:
-        """Filter search cards by Torznab category (2000, 5000 or None)."""
+        """Filter search cards by Torznab category (2000, a series
+        category or None)."""
         if category is None:
             return cards
         kind = "movie" if category == 2000 else "series"
@@ -341,8 +394,9 @@ class KinokingPlugin(HttpxPluginBase):
         if category is None and season is not None:
             category = 5000  # a season request is a series request
         if category is not None:
-            # Films 2000, series 5000: anime or HD requests get their parent
-            category = served_category(category, (2000, 5000))
+            # Films 2000, series 5000, anime series 5070 (HD requests get
+            # their parent)
+            category = served_category(category, STREAM_CATEGORIES)
             if category is None:
                 return []  # the site has films and series only
         await self._ensure_client()
@@ -362,7 +416,10 @@ class KinokingPlugin(HttpxPluginBase):
         if not cards:
             return []
 
-        return await self._process_cards(cards, season=season, episode=episode)
+        results = await self._process_cards(cards, season=season, episode=episode)
+        if category is not None:
+            results = filter_by_category(results, category)
+        return results
 
 
 plugin = KinokingPlugin()

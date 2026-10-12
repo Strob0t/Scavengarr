@@ -12,6 +12,8 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "streamcloud.py"
 
 
@@ -609,7 +611,7 @@ class TestStreamcloudDomainFallback:
         assert "streamcloud.plus" in tried[1]
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_first_domain(self) -> None:
+    async def test_no_domain_reachable(self) -> None:
         plug = _StreamcloudPlugin()
         mock_client = AsyncMock()
 
@@ -617,10 +619,11 @@ class TestStreamcloudDomainFallback:
         mock_client.head = AsyncMock(side_effect=httpx.ConnectError("all down"))
 
         plug._client = mock_client
-        await plug._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plug._verify_domain()
 
         assert plug.base_url == "https://streamcloud.download"
-        assert plug._domain_verified is True
+        assert plug._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_verification_if_done(self) -> None:

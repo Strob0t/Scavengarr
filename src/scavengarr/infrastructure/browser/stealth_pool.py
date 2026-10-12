@@ -12,13 +12,14 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
+from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
@@ -60,7 +61,8 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 # capture_media(): wait this long for autoplay, then click the player up to
 # _MEDIA_PLAY_CLICKS times (on ad-funded hosters the first click often only
 # opens a popup), waiting _MEDIA_CLICK_WAIT_S after each click
-# click_through(): bound for the click itself, poll interval for the target
+# click_through(): bound for the click itself (capture_media()'s look-up of
+# the player it clicks too), poll interval for the target
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
 # ...and the time a submitted gate gets for its redirect, past the timeout:
@@ -121,6 +123,50 @@ async def _allow_player_resources(route: Route) -> None:
         await route.continue_()
 
 
+def _site(url: str) -> str:
+    """The host's last two labels: ``n1mwq.org`` for ``a.n1mwq.org``."""
+    host = (urlparse(url).hostname or "").lower()
+    return ".".join(host.split(".")[-2:])
+
+
+# Cloudflare's challenge platform: a Turnstile widget the page loads from it
+# must run, or the page never passes its challenge. By exact host, not the
+# site cloudflare.com: cdnjs.cloudflare.com serves any library
+_CHALLENGE_HOST = "challenges.cloudflare.com"
+
+
+def _foreign_script(resource_type: str, url: str, frame_urls: Iterable[str]) -> bool:
+    """Whether a request is a script of a site that is neither the page's nor
+    one of its frames' (a player's own scripts come from its page's or its
+    frame's site, an ad tag from the ad network's). Scripts of
+    ``_CHALLENGE_HOST`` always pass."""
+    if resource_type != "script":
+        return False
+    if (urlparse(url).hostname or "").lower() == _CHALLENGE_HOST:
+        return False
+    return _site(url) not in {_site(frame_url) for frame_url in frame_urls}
+
+
+async def _allow_own_player_resources(route: Route) -> None:
+    """``_allow_player_resources`` for a capture that runs the page's own
+    scripts only: a script of another site than the page's and its frames'
+    is aborted as the client's block. Filemoon's player frame loads an ad
+    tag that turns every click into a popup, so the player never starts."""
+    request = route.request
+    if request.resource_type == "script":
+        try:
+            frame_urls = [frame.url for frame in request.frame.page.frames]
+        except PlaywrightError:
+            frame_urls = None  # a service worker's request: no frame to judge
+        if frame_urls is not None and _foreign_script(
+            request.resource_type, request.url, frame_urls
+        ):
+            log.debug("stealth_capture_script_blocked", domain=_site(request.url))
+            await route.abort("blockedbyclient")
+            return
+    await _allow_player_resources(route)
+
+
 async def _click_clear_of_layers(page: Page, selector: str) -> None:
     """Click the first match of *selector*; no layer over it takes the click.
 
@@ -171,17 +217,31 @@ async def _shows_offline_notice(page: Page) -> bool:
     return any(marker in lowered for marker in _PLAYER_OFFLINE_TEXT)
 
 
+async def _click_point(page: Page, player: str | None) -> tuple[float, float]:
+    """Where a click starts the player: the centre of the *player* element
+    when the page lays it out, else the page centre (an embed page is the
+    player)."""
+    box = None
+    if player:
+        element = page.locator(player).first
+        if await element.count():
+            box = await element.bounding_box(timeout=_CLICK_TIMEOUT_MS)
+    if box:
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    size = page.viewport_size or {"width": 1280, "height": 720}
+    return size["width"] / 2, size["height"] / 2
+
+
 async def _start_player(
-    page: Page, found: asyncio.Future[CapturedMedia]
+    page: Page, found: asyncio.Future[CapturedMedia], player: str | None
 ) -> CapturedMedia | None:
-    """Wait for autoplay, then click the page centre (the player) until the
-    player requests its stream, says the file is gone (some players tell
-    only after the click) or the clicks are used up."""
+    """Wait for autoplay, then click the player (``_click_point``) until it
+    requests its stream, says the file is gone (some players tell only
+    after the click) or the clicks are used up."""
     waits = (_MEDIA_AUTOPLAY_WAIT_S, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
     for attempt, wait_s in enumerate(waits):
         if attempt:
-            size = page.viewport_size or {"width": 1280, "height": 720}
-            await page.mouse.click(size["width"] / 2, size["height"] / 2)
+            await page.mouse.click(*await _click_point(page, player))
         try:
             return await asyncio.wait_for(asyncio.shield(found), wait_s)
         except TimeoutError:
@@ -218,6 +278,9 @@ class StealthPool:
         self._browser_pool = browser_pool
         # Solved challenges survive restarts (cf_clearance, __ddg* cookies)
         self._clearance_store = clearance_store
+        # The capture timeout of the resolvers (navigation plus challenge):
+        # stremio.probe_stealth_timeout_seconds; the httpx plugins' fallback
+        # passes its own budget to the other operations
         self._timeout_ms = timeout_ms
         # Bounds the pages of all operations (headful pages are heavy)
         self._pages = pages or PageGate(limit=2)
@@ -399,7 +462,14 @@ class StealthPool:
                 await page.close()
         return self._user_agent
 
-    async def capture_media(self, url: str, *, timeout: float) -> CapturedMedia | None:
+    async def capture_media(
+        self,
+        url: str,
+        *,
+        timeout: float | None = None,
+        player: str | None = None,
+        own_scripts_only: bool = False,
+    ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
         For hosters whose stream URL exists only in the running player
@@ -407,8 +477,18 @@ class StealthPool:
         verify you're a human") or whose embed page sits behind Cloudflare.
         The page loads with styles (the context blocks them) so the click
         on the page centre hits the play button; ad popups are closed.
-        *timeout* bounds navigation and the Cloudflare challenge.
+        *player* (a CSS selector) names the element to click instead, on a
+        page that shows its player in a frame below a header (Filemoon's
+        watch page); the page centre stands in while it is not laid out.
+        *timeout* bounds navigation and the Cloudflare challenge; without
+        one the pool's own applies (``stremio.probe_stealth_timeout_seconds``,
+        the resolvers' capture). The player clicks after it are bounded by
+        the pool's own waits. *own_scripts_only* aborts the scripts of other
+        sites than the page's and its frames' (``_allow_own_player_resources``):
+        an ad tag that takes the clicks.
         """
+        if timeout is None:
+            timeout = self._timeout_ms / 1000
         timeout_ms = int(timeout * 1000)
         async with (
             self._pages.page("capture", timeout=timeout),
@@ -438,7 +518,12 @@ class StealthPool:
 
                 page.on("request", _on_request)
                 page.on("popup", _close_popup)
-                await page.route("**/*", _allow_player_resources)
+                await page.route(
+                    "**/*",
+                    _allow_own_player_resources
+                    if own_scripts_only
+                    else _allow_player_resources,
+                )
                 if not await self._navigate(
                     page,
                     url,
@@ -454,7 +539,7 @@ class StealthPool:
                     if await _shows_offline_notice(page):
                         log.info("stealth_capture_offline", url=url)
                         return None
-                media = await _start_player(page, found)
+                media = await _start_player(page, found, player)
                 log.debug("stealth_capture", url=url, found=media is not None)
                 return media
             except Exception:  # noqa: BLE001

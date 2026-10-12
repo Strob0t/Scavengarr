@@ -1,0 +1,562 @@
+{
+ "meta": {
+  "id": "tt0388629",
+  "type": "series",
+  "imdb_id": "tt0388629",
+  "name": "One Piece",
+  "year": "1999–",
+  "releaseInfo": "1999–",
+  "genres": [
+   "Animation",
+   "Action",
+   "Adventure"
+  ],
+  "status": "Continuing",
+  "videos": [
+   {
+    "id": "tt0388629:0:1",
+    "season": 0,
+    "number": 1,
+    "episode": 1,
+    "name": "One Piece: Defeat the Pirate Ganzack! (OVA 1)",
+    "released": "1998-07-26T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:0:2",
+    "season": 0,
+    "number": 2,
+    "episode": 2,
+    "name": "One Piece: The Movie",
+    "released": "2000-03-04T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:1",
+    "season": 1,
+    "number": 1,
+    "episode": 1,
+    "name": "I'm Luffy! The Man Who's Gonna Be King of the Pirates!",
+    "released": "1999-10-20T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:2",
+    "season": 1,
+    "number": 2,
+    "episode": 2,
+    "name": "Enter the Great Swordsman! Pirate Hunter Roronoa Zoro!",
+    "released": "1999-11-17T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:3",
+    "season": 1,
+    "number": 3,
+    "episode": 3,
+    "name": "Morgan versus Luffy! Who's the Mysterious Pretty Girl?",
+    "released": "1999-11-24T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:4",
+    "season": 1,
+    "number": 4,
+    "episode": 4,
+    "name": "Luffy's Past! Enter Red-Haired Shanks!",
+    "released": "1999-12-08T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:5",
+    "season": 1,
+    "number": 5,
+    "episode": 5,
+    "name": "A Terrifying Mysterious Power! Captain Buggy, the Clown Pirate!",
+    "released": "1999-12-15T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:6",
+    "season": 1,
+    "number": 6,
+    "episode": 6,
+    "name": "Desperate Situation! Beast Tamer Mohji Vs. Luffy!",
+    "released": "1999-12-29T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:7",
+    "season": 1,
+    "number": 7,
+    "episode": 7,
+    "name": "Epic Showdown! Swordsman Zoro Vs. Acrobat Cabaji!",
+    "released": "1999-12-29T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:1:8",
+    "season": 1,
+    "number": 8,
+    "episode": 8,
+    "name": "Who Is the Victor? Devil Fruit Power Showdown!",
+    "released": "1999-12-29T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:1",
+    "season": 2,
+    "number": 1,
+    "episode": 1,
+    "name": "The Honorable Liar? Captain Usopp!",
+    "released": "2000-01-12T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:2",
+    "season": 2,
+    "number": 2,
+    "episode": 2,
+    "name": "The Weirdest Guy Ever! Jango the Hypnotist!",
+    "released": "2000-01-19T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:3",
+    "season": 2,
+    "number": 3,
+    "episode": 3,
+    "name": "Expose the Plot! Pirate Butler, Captain Kuro!",
+    "released": "2000-01-26T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:4",
+    "season": 2,
+    "number": 4,
+    "episode": 4,
+    "name": "Clash with the Black Cat Pirates! The Great Battle on the Slope!",
+    "released": "2000-02-02T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:5",
+    "season": 2,
+    "number": 5,
+    "episode": 5,
+    "name": "The Terrifying Duo! Meowban Brothers vs. Zoro!",
+    "released": "2000-02-09T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:6",
+    "season": 2,
+    "number": 6,
+    "episode": 6,
+    "name": "Luffy Back in Action! Miss Kaya's Desperate Resistance!",
+    "released": "2000-02-16T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:7",
+    "season": 2,
+    "number": 7,
+    "episode": 7,
+    "name": "Beat Kuro! Usopp the Man's Tearful Resolve!",
+    "released": "2000-02-23T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:8",
+    "season": 2,
+    "number": 8,
+    "episode": 8,
+    "name": "Protect Kaya! The Usopp Pirates' Great Efforts!",
+    "released": "2000-03-01T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:9",
+    "season": 2,
+    "number": 9,
+    "episode": 9,
+    "name": "Anger Explosion! Kuro vs. Luffy! How it Ends!",
+    "released": "2000-03-08T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:10",
+    "season": 2,
+    "number": 10,
+    "episode": 10,
+    "name": "You're the Weird Creature! Gaimon and His Strange Friends!",
+    "released": "2000-03-15T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:11",
+    "season": 2,
+    "number": 11,
+    "episode": 11,
+    "name": "The Three-Sword Style's Past! Zoro and Kuina's Vow!",
+    "released": "2000-03-22T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:12",
+    "season": 2,
+    "number": 12,
+    "episode": 12,
+    "name": "Famous Cook! Sanji of the Sea Restaurant!",
+    "released": "2000-04-12T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:13",
+    "season": 2,
+    "number": 13,
+    "episode": 13,
+    "name": "Unwelcome Customer! Sanji's Food and Ghin's Debt!",
+    "released": "2000-04-12T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:14",
+    "season": 2,
+    "number": 14,
+    "episode": 14,
+    "name": "The Strongest Pirate Fleet! Commodore Don Krieg!",
+    "released": "2000-04-26T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:15",
+    "season": 2,
+    "number": 15,
+    "episode": 15,
+    "name": "Protect Baratie! The Great Pirate, Red Foot Zeff!",
+    "released": "2000-05-03T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:16",
+    "season": 2,
+    "number": 16,
+    "episode": 16,
+    "name": "Hawk-Eye Mihawk! The Great Swordsman Zoro Falls at Sea!",
+    "released": "2000-05-10T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:17",
+    "season": 2,
+    "number": 17,
+    "episode": 17,
+    "name": "The Deadly Foot Technique Bursts Forth! Sanji Vs. the Invincible Pearl!",
+    "released": "2000-05-17T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:18",
+    "season": 2,
+    "number": 18,
+    "episode": 18,
+    "name": "Zeff and Sanji's Dream! the Illusory All Blue!",
+    "released": "2000-05-24T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:19",
+    "season": 2,
+    "number": 19,
+    "episode": 19,
+    "name": "Cool-headed, Cold-hearted Demon! Pirate Fleet Chief Commander Ghin!",
+    "released": "2000-05-31T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:20",
+    "season": 2,
+    "number": 20,
+    "episode": 20,
+    "name": "I Won't Die! Fierce Battle, Luffy Vs. Krieg!",
+    "released": "2000-06-07T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:21",
+    "season": 2,
+    "number": 21,
+    "episode": 21,
+    "name": "The Conclusion of the Deadly Battle! A Spear of Blind Determination!",
+    "released": "2000-06-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:2:22",
+    "season": 2,
+    "number": 22,
+    "episode": 22,
+    "name": "Set Sail! The Seafaring Cook Sets Off With Luffy!",
+    "released": "2000-06-28T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:1",
+    "season": 3,
+    "number": 1,
+    "episode": 1,
+    "name": "The Worst Man in the Eastern Seas! Fishman Pirate Arlong!",
+    "released": "2000-07-12T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:2",
+    "season": 3,
+    "number": 2,
+    "episode": 2,
+    "name": "Witch of Cocoyashi Village! Arlong's Female Leader!",
+    "released": "2000-07-19T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:3",
+    "season": 3,
+    "number": 3,
+    "episode": 3,
+    "name": "Usopp Dead?! When Is Luffy Going to Make Landfall?!",
+    "released": "2000-07-19T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:4",
+    "season": 3,
+    "number": 4,
+    "episode": 4,
+    "name": "Everyone's Gathered! Usopp Speaks the Truth About Nami!",
+    "released": "2000-07-26T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:5",
+    "season": 3,
+    "number": 5,
+    "episode": 5,
+    "name": "Untold Past! Female Warrior Bellemere!",
+    "released": "2000-08-02T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:6",
+    "season": 3,
+    "number": 6,
+    "episode": 6,
+    "name": "Survive! Mother Bellemere and Nami's Bond!",
+    "released": "2000-08-09T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:7",
+    "season": 3,
+    "number": 7,
+    "episode": 7,
+    "name": "Luffy Rises! Result of the Broken Promise!",
+    "released": "2000-08-16T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:8",
+    "season": 3,
+    "number": 8,
+    "episode": 8,
+    "name": "Luffy in Big Trouble! Fishmen Vs. the Luffy Pirates!",
+    "released": "2000-08-23T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:9",
+    "season": 3,
+    "number": 9,
+    "episode": 9,
+    "name": "Luffy Submerged! Zoro Vs. Hatchan the Octopus!",
+    "released": "2000-08-30T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:10",
+    "season": 3,
+    "number": 10,
+    "episode": 10,
+    "name": "Proud Warriors! Sanji and Usopp's Fierce Battles!",
+    "released": "2000-09-06T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:11",
+    "season": 3,
+    "number": 11,
+    "episode": 11,
+    "name": "Luffy at Full Power! Nami's Determination and the Straw Hat!",
+    "released": "2000-09-13T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:12",
+    "season": 3,
+    "number": 12,
+    "episode": 12,
+    "name": "Explosion! Fishman Arlong's Fierce Assault from the Sea!",
+    "released": "2000-09-27T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:13",
+    "season": 3,
+    "number": 13,
+    "episode": 13,
+    "name": "End of the Fishman Empire! Nami's My Friend!",
+    "released": "2000-09-27T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:14",
+    "season": 3,
+    "number": 14,
+    "episode": 14,
+    "name": "Setting Out With a Smile! Farewell, Hometown Cocoyashi Village!",
+    "released": "2000-10-11T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:15",
+    "season": 3,
+    "number": 15,
+    "episode": 15,
+    "name": "Bounty! Straw Hat Luffy Becomes Known to the World!",
+    "released": "2000-10-25T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:16",
+    "season": 3,
+    "number": 16,
+    "episode": 16,
+    "name": "Chase Straw Hat! Little Buggy's Big Adventure!",
+    "released": "2000-11-01T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:3:17",
+    "season": 3,
+    "number": 17,
+    "episode": 17,
+    "name": "The Wait Is Over! The Return of Captain Buggy!",
+    "released": "2000-11-08T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:1",
+    "season": 4,
+    "number": 1,
+    "episode": 1,
+    "name": "The Town of the Beginning and the End! Landfall at Logue Town!",
+    "released": "2000-11-22T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:2",
+    "season": 4,
+    "number": 2,
+    "episode": 2,
+    "name": "Kitetsu III and Yubashiri! Zoro's New Swords and the Woman Sergeant Major!",
+    "released": "2000-11-22T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:3",
+    "season": 4,
+    "number": 3,
+    "episode": 3,
+    "name": "Usopp Vs. Daddy the Parent! Showdown at High!",
+    "released": "2000-11-29T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:4",
+    "season": 4,
+    "number": 4,
+    "episode": 4,
+    "name": "Fiery Cooking Battle? Sanji Vs. the Beautiful Chef!",
+    "released": "2000-12-06T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:5",
+    "season": 4,
+    "number": 5,
+    "episode": 5,
+    "name": "Buggy's Revenge! The Man Who Smiles On the Execution Platform!",
+    "released": "2000-12-13T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:6",
+    "season": 4,
+    "number": 6,
+    "episode": 6,
+    "name": "The Legend Has Started! Head for the Grand Line!",
+    "released": "2001-01-10T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:7",
+    "season": 4,
+    "number": 7,
+    "episode": 7,
+    "name": "Precursor to a New Adventure! Apis, a Mysterious Girl!",
+    "released": "2001-01-17T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:8",
+    "season": 4,
+    "number": 8,
+    "episode": 8,
+    "name": "Miraculous Creature! Apis's Secret and the Legendary Island!",
+    "released": "2001-01-24T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:9",
+    "season": 4,
+    "number": 9,
+    "episode": 9,
+    "name": "Eric Attacks! Great Escape from Warship Island!",
+    "released": "2001-01-31T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:10",
+    "season": 4,
+    "number": 10,
+    "episode": 10,
+    "name": "A Solitary Island in the Distant Sea! The Legendary Lost Island!",
+    "released": "2001-02-07T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:11",
+    "season": 4,
+    "number": 11,
+    "episode": 11,
+    "name": "Showdown in the Ruins! Tense Zoro Vs. Eric!",
+    "released": "2001-02-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:12",
+    "season": 4,
+    "number": 12,
+    "episode": 12,
+    "name": "Luffy, Completely Surrounded! Commodore Nelson's Secret Strategy!",
+    "released": "2001-02-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:4:13",
+    "season": 4,
+    "number": 13,
+    "episode": 13,
+    "name": "Through the Sky They Soar! The 1000 Year Legend Lives Again!",
+    "released": "2001-02-28T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:5:1",
+    "season": 5,
+    "number": 1,
+    "episode": 1,
+    "name": "An Angry Showdown! Cross the Red Line!",
+    "released": "2001-03-07T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:5:2",
+    "season": 5,
+    "number": 2,
+    "episode": 2,
+    "name": "The First Line of Defense? The Giant Whale Laboon Appears!",
+    "released": "2001-03-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:22:1",
+    "season": 22,
+    "number": 1,
+    "episode": 1,
+    "name": "A New Emperor! Buggy the Genius Jester!",
+    "released": "2023-12-03T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:22:2",
+    "season": 22,
+    "number": 2,
+    "episode": 2,
+    "name": "The War on the Island of Women! A Case Involving Koby the Hero",
+    "released": "2023-12-10T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:22:3",
+    "season": 22,
+    "number": 3,
+    "episode": 3,
+    "name": "Luffy's Dream",
+    "released": "2023-12-17T14:15:00.000Z"
+   },
+   {
+    "id": "tt0388629:22:4",
+    "season": 22,
+    "number": 4,
+    "episode": 4,
+    "name": "Entering a New Chapter! Luffy and Sabo's Paths!",
+    "released": "2024-01-07T14:15:00.000Z"
+   }
+  ]
+ }
+}

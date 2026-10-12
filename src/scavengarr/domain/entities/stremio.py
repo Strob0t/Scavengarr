@@ -24,6 +24,28 @@ class StreamQuality(IntEnum):
     UHD_4K = 60
 
 
+# The lowest width and height of each class, best first
+_RESOLUTION_CLASSES = (
+    (3840, 2160, StreamQuality.UHD_4K),
+    (1920, 1080, StreamQuality.HD_1080P),
+    (1280, 720, StreamQuality.HD_720P),
+)
+
+
+def quality_from_resolution(width: int | None, height: int | None) -> StreamQuality:
+    """The quality class of a video resolution, ``UNKNOWN`` without one.
+
+    By width or by height, whichever gives the higher class: a letterboxed
+    1080p encode (1920x800) is 720p by its height alone.
+    """
+    if width is None or height is None:
+        return StreamQuality.UNKNOWN
+    for min_width, min_height, quality in _RESOLUTION_CLASSES:
+        if width >= min_width or height >= min_height:
+            return quality
+    return StreamQuality.SD
+
+
 @dataclass(frozen=True)
 class StreamLanguage:
     """Language metadata for a stream link."""
@@ -82,12 +104,67 @@ class TitleMatchInfo:
 
     *content_type* controls year tolerance: series span multiple years
     so a wider tolerance (±3) is used versus movies (±1).
+
+    *imdb_id* is the request's IMDb id: a result whose metadata names
+    one is kept or dropped by the id alone.
+
+    *animation* says whether the catalog's genres name "Animation";
+    ``None`` without a catalog meta, and then a result's category is
+    not compared.
     """
 
     title: str
     year: int | None = None
     alt_titles: list[str] = field(default_factory=list)
     content_type: StremioContentType | None = None
+    imdb_id: str | None = None
+    animation: bool | None = None
+
+
+@dataclass(frozen=True)
+class EpisodeMeta:
+    """One episode as the catalog (Cinemeta) lists it: IMDb's season and
+    episode, the English name and the release date (``YYYY-MM-DD``)."""
+
+    season: int
+    episode: int
+    name: str
+    released: str | None = None
+
+
+@dataclass(frozen=True)
+class SeriesMeta:
+    """A title as the catalog (Cinemeta) knows it: name, start year, genres
+    and, for a series, its episodes in the catalog's order (a movie has
+    none)."""
+
+    name: str
+    year: int | None
+    genres: tuple[str, ...]
+    episodes: tuple[EpisodeMeta, ...]
+
+
+@dataclass(frozen=True)
+class EpisodeRef:
+    """Which episode a series request means, for a plugin that locates
+    episodes on the site's own numbering (``locates_episodes``).
+
+    *season* and *episode* are the request's: IMDb's numbering, which
+    Cinemeta counts in. *title* is the episode's English name and *aired*
+    its release date (``YYYY-MM-DD``), both from the Cinemeta list's entry
+    for that season and episode (``None`` when the list lacks it).
+    *absolute* is the episode's number in the series' own count: the
+    entry's position among the list's regular seasons (season 1 and up)
+    ordered by season and episode, or the Kitsu episode number of a
+    request that came as a ``kitsu:`` id when it lies near that position
+    or the list lacks the episode; an estimate the title confirms.
+    """
+
+    season: int
+    episode: int
+    title: str | None = None
+    aired: str | None = None
+    absolute: int | None = None
 
 
 @dataclass(frozen=True)
@@ -97,7 +174,8 @@ class CachedStreamLink:
     The hoster URL stays so the stream can be resolved again: ``/play``
     redirects to ``video_url`` and the HLS proxy fetches it (with
     ``video_headers``) while it is fresh (``resolved_at``), else they
-    resolve the hoster URL again.
+    resolve the hoster URL again. An address-bound file (``address_bound``)
+    is fetched by the proxy as well.
     """
 
     stream_id: str
@@ -108,6 +186,7 @@ class CachedStreamLink:
     video_headers: str = ""  # JSON-encoded headers dict for the CDN
     is_hls: bool = False  # whether the stream is HLS
     resolved_at: float = 0.0  # time.time() of video_url's resolution; 0: none
+    address_bound: bool = False  # the file plays through /proxy/<id>/file
 
 
 @dataclass(frozen=True)
@@ -124,6 +203,11 @@ class ResolvedStream:
     # time.time() of the resolution, stamped by the resolver registry (its
     # cache answers for an hour); 0.0: unknown
     resolved_at: float = 0.0
+    # The file's total size, as the playback check read it (Content-Range)
+    size_bytes: int | None = None
+    # The CDN binds the URL to the address that resolved it (the resolver's
+    # ``address_bound``): a player fetches the file through Scavengarr
+    address_bound: bool = False
 
 
 @dataclass(frozen=True)

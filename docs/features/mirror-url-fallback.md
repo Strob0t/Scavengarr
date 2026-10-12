@@ -2,7 +2,7 @@
 
 # Mirror URL Fallback
 
-> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until a restart.
+> Plugins list their mirror domains in `_domains`; `_verify_domain()` picks the first reachable one as `base_url` and keeps it until a restart. None reachable raises `PluginUnreachableError`.
 
 ---
 
@@ -26,8 +26,8 @@ _verify_domain()  (no-op if already verified or only one domain)
   First success   All failed
        |             |
        v             v
-  base_url =      base_url = _domains[0]
-  that domain     (log warning, search continues)
+  base_url =      PluginUnreachableError
+  that domain     (log warning; the next search checks again)
 ```
 
 Fallback only happens when the plugin calls `await self._verify_domain()` (usually at the start of `search()`). Most plugins have a single domain, where the call is a no-op. Some plugins implement their own loop instead — e.g. `plugins/boerse.py` tries each domain during login.
@@ -62,27 +62,31 @@ async def _verify_domain(self) -> None:
         return
 
     client = await self._ensure_client()
+    answering = None
     for domain in self._domains:
         try:
             resp = await client.head(f"https://{domain}/", timeout=5.0)
-            if resp.status_code < 400:
-                self.base_url = str(resp.url).rstrip("/")  # final URL after redirects
-                self._domain_verified = True
-                return
         except Exception:
             continue
+        if resp.status_code < 400:
+            self._use_domain(domain, resp, pinned=True)  # final URL, stays
+            return
+        if answering is None and _site_answers(resp):  # below 500, or a challenge
+            answering = (domain, resp)
 
-    # All domains failed: keep the primary
-    self.base_url = f"https://{self._domains[0]}"
-    self._domain_verified = True
-    self._log.warning(f"{self.name}_no_domain_reachable", fallback=self._domains[0])
+    if answering is not None:  # an error page or a challenge: the site is up
+        self._use_domain(*answering, pinned=False)  # checked again after 300 s
+        return
+    # No domain answers: the next search checks again
+    self._log.warning(f"{self.name}_no_domain_reachable")
+    raise PluginUnreachableError(self.name)
 ```
 
 Key behaviors:
 - `HEAD` request per domain with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`)
-- The first status `< 400` wins; errors and timeouts move on to the next domain
+- The first status `< 400` wins; errors and timeouts move on to the next domain. Without one, the first domain that answers at all is used (`{name}_domain_answers`): a status below 500 (an error page is still the site) or a challenge read from the HEAD answer's headers by the health prober's rule (`detect_challenge_headers` of `infrastructure/captcha/detect.py`: `cf-mitigated: challenge`, a 403/503 with `cf-ray`, or `Server: ddos-guard`; kinoger answers 403 `cf-mitigated: challenge`); the plugin's own requests decide then, and the browser fallback solves a challenge. Such a domain serves the searches of the next 300 s (`_ANSWERING_DOMAIN_RECHECK_S`) and is checked again then; only a domain answering below 400 stays for the process lifetime, so a transient 429, 403 or 404 at check time does not pin a domain
 - `base_url` uses the final URL after redirects, so a bare domain that redirects to `www.` produces a correct base
-- If all domains fail, the first domain is used and `{name}_no_domain_reachable` is logged
+- If all domains fail, `{name}_no_domain_reachable` is logged and `PluginUnreachableError` (`domain/plugins/base.py`) raised: `base_url` and `_domain_verified` stay as they were, so the next search checks again. A Stremio search marks the plugin unreachable in the health monitor at once, until its recheck finds the site answering ([Stremio Addon](./stremio-addon.md#request-flow)); a Torznab search logs the error and answers without the plugin
 
 ---
 
@@ -94,28 +98,37 @@ async def _verify_domain(self) -> None:
     if self._domain_verified or len(self._domains) <= 1:
         self._domain_verified = True
         return
+    if time.monotonic() < self._domain_recheck_at:
+        return  # an answering-only domain serves until then
 
     page = await self._ensure_page()
+    answering = None
     for domain in self._domains:
         try:
             resp = await page.goto(
                 f"https://{domain}/", timeout=5_000, wait_until="domcontentloaded"
             )
             if resp and await self._passes_cloudflare(page, resp):
-                self.base_url = f"https://{domain}"
+                self.base_url = f"https://{domain}"  # works: stays
                 self._domain_verified = True
                 return
+            if answering is None and resp and 400 <= resp.status < 500 and not challenge:
+                answering = domain  # a plain error page is still the site
         except Exception:
             continue
 
-    self.base_url = f"https://{self._domains[0]}"
-    self._domain_verified = True
-    self._log.warning(f"{self.name}_no_domain_reachable", fallback=self._domains[0])
+    if answering is not None:  # checked again after 300 s
+        self.base_url = f"https://{answering}"
+        self._domain_recheck_at = time.monotonic() + ANSWERING_DOMAIN_RECHECK_S
+        return
+
+    self._log.warning(f"{self.name}_no_domain_reachable")
+    raise PluginUnreachableError(self.name)
 ```
 
 Differences from the httpx fallback:
 - **Browser-based:** navigates the plugin's persistent page instead of sending HTTP requests
-- **Cloudflare-aware:** a domain counts when it answers below 400, or with a Cloudflare challenge page that is solved within `_cf_timeout_ms` (`_passes_cloudflare()`); an error status without a challenge fails
+- **Cloudflare-aware:** a domain works when it answers below 400, or with a Cloudflare challenge page that is solved within `_cf_timeout_ms` (`_passes_cloudflare()`). The httpx base's answering-only rule: without a working domain, the first that answered with a plain error page (4xx without a challenge) serves for `ANSWERING_DOMAIN_RECHECK_S` (300 s, `infrastructure/plugins/constants.py`, shared by both bases) and is checked again (`{name}_domain_answers`). A challenge page the browser did not solve does not count, unlike in the httpx base, whose browser fallback solves challenges per page: here the browser already failed
 - **No redirect tracking:** `base_url` is set to `https://{domain}`, not the final URL
 
 Plugins can override `_verify_domain()`. An override of `_wait_for_cloudflare()` must call the base implementation (Turnstile solver, clearance memo) and add its own condition after it (e.g. `page.wait_for_function()` for a cookie the site's app sets).
@@ -160,7 +173,7 @@ async def _ensure_session(self) -> None:
 Key aspects:
 - **Login-aware:** each domain attempt includes full authentication
 - **Cookie hand-off:** session cookies are injected into per-request contexts via `_prepare_context()`
-- **Fails loudly:** unlike the base classes, it raises when no domain works
+- **Fails loudly:** it raises `RuntimeError` when no domain works (the base classes raise `PluginUnreachableError`)
 
 See [Python Plugins](./python-plugins.md#reference-implementation-boersepy) for the full walkthrough.
 

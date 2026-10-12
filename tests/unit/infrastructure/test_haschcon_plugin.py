@@ -38,6 +38,11 @@ SEARCH_ENTRY_1 = {
     "excerpt": {"rendered": "<p>Ein Wissenschaftler verwandelt sich...</p>"},
     "content": {"rendered": "<div>Review text</div>"},
     "featured_media": 999,
+    # The SEO title carries the film's year; the post date is the upload date
+    "yoast_head_json": {
+        "title": "Die Fliege (1986) – Horror-Klassiker",
+        "og_title": "Die Fliege (1986) – Horror-Klassiker",
+    },
     "_embedded": {
         "wp:term": [
             [
@@ -212,6 +217,30 @@ class TestBuildSearchResult:
             "Horror und Mystery, Science Fiction und Fantasy"
         )
 
+    def test_year_from_the_seo_title(self, haschcon_mod):
+        p = haschcon_mod.HaschconPlugin()
+        sr = p._build_search_result(SEARCH_ENTRY_1, None)
+
+        assert sr.metadata["year"] == 1986
+        assert sr.published_date == "2025"  # the upload date, as before
+
+    def test_no_year_without_one_in_the_seo_title(self, haschcon_mod):
+        p = haschcon_mod.HaschconPlugin()
+        entry = {
+            **SEARCH_ENTRY_1,
+            "yoast_head_json": {"title": "Die Fliege – Horror-Klassiker"},
+        }
+        sr = p._build_search_result(entry, None)
+
+        assert "year" not in sr.metadata
+
+    def test_upload_year_is_not_the_film_year(self, haschcon_mod):
+        p = haschcon_mod.HaschconPlugin()
+        sr = p._build_search_result(SEARCH_ENTRY_2, None)
+
+        assert sr.published_date == "2024"
+        assert "year" not in sr.metadata
+
     def test_tags_as_actors(self, haschcon_mod):
         p = haschcon_mod.HaschconPlugin()
         sr = p._build_search_result(SEARCH_ENTRY_1, None)
@@ -348,7 +377,9 @@ class TestPluginSearch:
         return p
 
     @pytest.mark.asyncio
-    async def test_search_returns_results(self, plugin, mock_client):
+    async def test_search_scrapes_the_relevant_hits_only(self, plugin, mock_client):
+        """WordPress also matches the text of a post: "Dracula" is no hit
+        for "fliege", so its player page is not loaded."""
         search_resp = _make_json_response(
             SEARCH_RESULTS,
             headers={"X-WP-TotalPages": "1"},
@@ -368,10 +399,10 @@ class TestPluginSearch:
 
         results = await plugin.search("fliege")
 
-        assert len(results) == 2
-        assert results[0].title == "Die Fliege"
+        assert [r.title for r in results] == ["Die Fliege"]
         assert results[0].download_link == "https://www.youtube.com/watch?v=A7RnUnGoaMk"
-        assert results[1].download_link == "https://www.dailymotion.com/video/x9kk3e0"
+        requested = [str(c.args[0]) for c in mock_client.get.await_args_list]
+        assert not [url for url in requested if "/player-embed/id/67890/" in url]
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, plugin):
@@ -490,7 +521,8 @@ class TestPluginSearch:
 
         results = await plugin.search("dracula")
 
-        assert len(results) == 2
+        # Page 1's "Die Fliege" is no hit for "dracula"
+        assert [r.source_url for r in results] == [SEARCH_ENTRY_2["link"]]
         assert call_count == 2
 
 

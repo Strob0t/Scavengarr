@@ -128,6 +128,8 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `ClientBoundResolverPort` | `ports/hoster_resolver.py` | async | extends `HosterResolverPort`: `bound_headers` (property), `resolve_for_client` (a link for one player's headers) |
 | `PluginScoreStorePort` | `ports/plugin_score_store.py` | async | `get_snapshot`, `put_snapshot`, `list_snapshots`, `get_last_run`, `set_last_run` |
 | `TmdbClientPort` | `ports/tmdb.py` | async | `find_by_imdb_id`, `get_title_and_year`, `get_title_by_tmdb_id`, `trending_movies`, `trending_tv`, `search_movies`, `search_tv` |
+| `AnimeIdResolverPort` | `ports/anime_ids.py` | async | `translate` (a `kitsu:` request → the IMDb request, or `None`); `NO_ANIME_IDS` translates nothing |
+| `PluginHistoryPort` | `ports/plugin_history.py` | sync | `count` (a plugin's `searches`, `results`, `timeouts`, `dropped`, `challenges`, `checks`, `unreachable` or `unreachable_searches` of today); `NO_PLUGIN_HISTORY` counts nothing |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
 | `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect`, `click_through`, `session` |
@@ -169,18 +171,22 @@ The Application layer contains use cases that orchestrate business logic. It kno
 | `CrawlJobResolveUseCase` | `use_cases/crawljob_resolve.py` | async | Grab time: resolve a job's page URLs via its `GrabResolvingPlugin`, store and return the resolved job; `CrawlJobResolveError` → HTTP 502 |
 | `TorznabCapsUseCase` | `use_cases/torznab_caps.py` | sync | Build `TorznabCaps` for a named plugin (XML is rendered by the presenter) |
 | `TorznabIndexersUseCase` | `use_cases/torznab_indexers.py` | sync | List the loaded plugins (sorted by name; files that failed to load are left out) with version/mode (returns `list[dict]`) |
-| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID → title(s) → cached or shared plugin search per title (fan-out with search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
+| `StremioStreamUseCase` | `use_cases/stremio_stream.py` | async | IMDb ID (a `kitsu:` id translated first, `AnimeIdResolverPort`) → title(s) → cached or shared plugin search per title (fan-out with search deadline) → title/episode filter → convert, sort → resolve one working stream per hoster (answer deadline) → cached play/proxy links; returns `list[StremioStream]` |
 | `StremioLinks` | `use_cases/stremio_links.py` | async | Stored stream links behind `/play` and the HLS proxy: the video URL while under 1 h old, else resolved again (one resolution per link for all requests; per player for hosters whose CDN binds the URL to the player's headers, VEEV; past the resolver cache after a CDN refusal) |
 | `StremioCatalogUseCase` | `use_cases/stremio_catalog.py` | async | TMDB trending and search catalogs (`list[StremioMetaPreview]`) |
 
 Helpers for `StremioStreamUseCase` live in `application/stremio/`:
 
-- `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, a search deadline counted from the request start, circuit breaker, metrics and fallback queries.
+- `title_resolution.py` — `TitleResolver`: the request's title per language (TMDB), the plugins' languages (grouped for the search, each plugin's first for the ranking), and the title match of the results (in a worker thread).
+- `plugin_selection.py` — `PluginSelector`: the plugins that provide streams, and with scored selection on the best scored of them plus the exploration slot.
+- `title_search.py` — `TitleSearch`: one plugin search per title, shared by the requests while it runs (single-flight) and cached (`SearchCache`; a stale entry answers while one background search at a time refreshes it).
+- `plugin_search.py` — `PluginSearchRunner`: plugin fan-out with fair-share concurrency budget, each plugin's full timeout from its slot (the request's answer budget cuts none; a plugin returning after it is `late`), circuit breaker, metrics and fallback queries.
+- `answer.py` — the answer's streams: `rank_streams` (conversion in a worker thread, then the sorter), `with_measurements` (what the resolutions measured, re-ranked), `cache_and_proxy` (`/play/` and HLS proxy URLs, the stream links saved in parallel).
 - `queries.py` — search query normalization (`build_search_query`, `build_search_queries`) and multi-language title references.
 - `stream_builder.py` — `format_stream`, `deduplicate_by_hoster` (only without resolver; with one, resolution picks one stream per hoster), `is_direct_video_url`, behavior hints and cache/proxy link building.
-- `search_cache.py` — `SearchCache`: the title-filtered plugin results per title (`cache.search_ttl_seconds`, stale-while-revalidate). Resolved streams are not cached with them: hoster stream URLs expire, and some are bound to the resolving IP.
+- `search_cache.py` — `SearchCache`: the title-filtered plugin results per title (`cache.search_ttl_seconds`, stale-while-revalidate); an entry names the plugins whose search had not finished when it was written (`missing`), and `merge()` replaces one plugin's results in an entry. Resolved streams are not cached with them: hoster stream URLs expire, and some are bound to the resolving IP.
 - `search_progress.py` — `SearchProgress`: the title-matching results of a running search so far, shared by every request waiting on it (single-flight).
-- `resolution.py` — `HosterResolution`: one request's resolutions; each hoster resolves its best-ranked link, the next only after that one failed.
+- `resolution.py` — `HosterResolution`: one request's resolutions; each hoster resolves its best-ranked link, the next only after that one failed. `ResolveFlow`: when the answer is due (`resolve_target_count` hosters with a video, everything done, or the deadline); a search from the cache answers with the resolver's cached outcomes and resolves its other links in the background, one title at a time.
 
 #### TorznabSearchUseCase — the central orchestrator
 
@@ -255,6 +261,8 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 | `StreamLinkRepository` | `CacheStreamLinkRepository` | `persistence/stream_link_cache.py` |
 | `PluginScoreStorePort` | `CachePluginScoreStore` | `persistence/plugin_score_cache.py` |
 | `TmdbClientPort` | `HttpxTmdbClient` / `ImdbFallbackClient` | `tmdb/client.py` / `tmdb/imdb_fallback.py` |
+| `AnimeIdResolverPort` | `KitsuAnimeIdResolver` (`KitsuAddonClient`, `AnimeIdLists`) | `anime/` |
+| `PluginHistoryPort` | `PluginHistory` (the record in `CachePort`, 180 days) | `plugins/history.py` |
 | `HosterResolverPort` | `XFSResolver`, `GenericDDLResolver`, dedicated `*Resolver` classes | `hoster_resolvers/` |
 | `ClientBoundResolverPort` | `VeevResolver` | `hoster_resolvers/veev.py` |
 | `ConcurrencyPoolPort` | `ConcurrencyPool` (budget: `RequestBudget`) | `concurrency.py` |
@@ -264,18 +272,19 @@ Infrastructure implements the ports defined by Domain and provides concrete adap
 ### Subsystems
 
 - **Cache** (`cache/`): two interchangeable adapters behind `CachePort`. A factory function (`create_cache()`) selects the backend based on configuration.
-- **Plugins** (`plugins/`): discovery, loading and caching of Python plugins. `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`; Playwright plugins share one Chromium via `SharedBrowserPool`.
+- **Plugins** (`plugins/`): discovery, loading and caching of Python plugins. `PluginRegistry` indexes `.py` files lazily and caches loaded plugins in memory. All plugins inherit from `HttpxPluginBase` or `PlaywrightPluginBase`; Playwright plugins share one Chromium via `SharedBrowserPool`. `PluginHealthMonitor` checks the Stremio plugins' sites periodically; `PluginHistory` keeps the plugins' long-term record (searches, results, timeouts, checks and unreachable marks per day, 180 days) in `CachePort` across restarts, for `GET /api/v1/stats/plugins` and the production digest.
 - **Search Engine** (`torznab/search_engine.py`): `HttpxSearchEngine` validates links on plugin results — batch HEAD/GET via `HttpLinkValidator`, promotes alternative links when the primary is dead, drops results with no valid link; results with `validated_links` already set pass through unchanged.
 - **Presenter** (`torznab/presenter.py`): renders Domain entities (`TorznabCaps`, `TorznabItem`) to Torznab-compliant RSS 2.0 XML.
 - **Validation** (`validation/`): HTTP link validation with HEAD-first, GET-fallback strategy, bounded concurrency (global and per host), an in-memory TTL result cache and a skip list for hosts that refuse connections (60 s, doubling up to 15 min).
 - **Persistence** (`persistence/`): `CachePort`-backed repositories (CrawlJobs, stream links, plugin scores) with JSON serialization.
 - **Configuration** (`config/`): layered config loading (defaults < YAML < ENV < CLI) with Pydantic validation.
 - **Logging** (`logging/`): structured logging via structlog with an async `QueueHandler` for non-blocking emission.
-- **Common** (`common/`): `to_int`, `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF; its `GuardedNetworkBackend` connects to the checked addresses, so no second DNS lookup can rebind them), `AsyncioNetworkBackend` (the connections underneath: asyncio streams, TLS in the event loop instead of in Python as with httpx's default anyio backend).
-- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry`, XFS/generic-DDL/dedicated resolvers; `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
+- **Common** (`common/`): `parse_size_to_bytes`, `DomainRateLimiter`/`TokenBucket` (optionally adaptive), `RetryTransport` (429/503 retry + rate limiting), `PrivateAddressGuard` (the shared client refuses non-public targets, SSRF; its `GuardedNetworkBackend` connects to the checked addresses, so no second DNS lookup can rebind them), `AsyncioNetworkBackend` (the connections underneath: asyncio streams, TLS in the event loop instead of in Python as with httpx's default anyio backend).
+- **Hoster resolvers** (`hoster_resolvers/`): `HosterResolverRegistry` (its state outlives restarts through `HosterStateStore`), XFS/generic-DDL/dedicated resolvers; `StealthPool` (in `infrastructure/browser/`) for Cloudflare-protected pages and for capturing the stream request of players that build it at runtime (`capture_media`: manifests/MP4 by URL, extension-less CDN URLs by the video element's request type). See [Hoster Resolvers](../features/hoster-resolvers.md).
 - **Browser fetchers and anti-bot** (`browser/`, `captcha/`): `BrowserFetcherPort` implementations `StealthPool` and `SolverFetcher` (Byparr/FlareSolverr sidecar), chained by `ChainedBrowserFetcher` (`fetch_text`, `resolve_redirect`, `click_through` for link-out gates, which only the own browser can do, and `session`: the site's cookies and User-Agent after a passed challenge, so plain HTTP requests can go on); `PageGate` hands out the stealth browser's pages by the work's `PageClaim` (the context variable `page_claim` of the browser port, set by the application around searches and resolutions), and `PageBudget` adapts their count to the waits, the CPU and the free memory (`ResourceSampler`); `ClearanceStore` keeps challenge cookies in `CachePort` across restarts; `detect_challenge` classifies challenges and captchas; `solve_altcha` solves ALTCHA proof of work. See [Captcha Solving](../plans/captcha-solving.md).
 - **Stremio** (`stremio/`): stream converter, sorter, title matcher, release parser, episode filter, HLS proxy.
 - **TMDB** (`tmdb/`): `HttpxTmdbClient` and the key-less `ImdbFallbackClient`.
+- **Anime ids** (`anime/`): `KitsuAnimeIdResolver` translates the anime catalogs' `kitsu:` requests into IMDb requests with the Anime Kitsu addon's meta (`KitsuAddonClient`, a title's record cached 30 days) and Fribb's anime-lists as the fallback (`AnimeIdLists`, a week).
 - **Scoring** (`scoring/`): EWMA plugin scoring, health/search probers, query pool, background `ScoringScheduler`.
 - **Runtime services** (top-level modules): `PluginCircuitBreaker`, `ConcurrencyPool`, `GracefulShutdown`, `detect_resources()` (cgroup-aware).
 - **Telemetry** (`telemetry/`): `Telemetry` implements `TelemetryPort` with prometheus-client (stage durations and outcomes, values, the JSON statistics) and, with `telemetry.tracing_endpoint`, OpenTelemetry spans (`tracing.py`, loaded only then), scrape-time collectors for circuit breakers and the container's cgroup, the event-loop lag monitor. See [Observability](../features/observability.md).
@@ -299,7 +308,7 @@ The Interfaces layer handles input/output exclusively. It contains no business l
 | `api/torznab/router.py` | `GET /api/v1/torznab/indexers`, `GET /api/v1/torznab/{plugin_name}` (caps/search), `GET /api/v1/torznab/{plugin_name}/health` |
 | `api/download/router.py` | `GET /api/v1/download/{job_id}` (serves `.crawljob` files), `GET /api/v1/download/{job_id}/info` |
 | `api/stremio/router.py` | Stremio addon: `manifest.json`, catalog, catalog search, stream, `play/{stream_id}` (302), HLS `proxy/{stream_id}/{path}`, `health` |
-| `api/stats/router.py` | `GET /api/v1/stats/plugin-scores`, `GET /api/v1/stats/metrics` |
+| `api/stats/router.py` | `GET /api/v1/stats/plugin-scores`, `GET /api/v1/stats/metrics`, `GET /api/v1/stats/plugins` (the plugins' long-term record) |
 | `app.py` | `GET /api/v1/healthz`, `GET /api/v1/readyz`, `GET /metrics` (Prometheus) |
 
 ### CLI (argparse + Uvicorn)
@@ -328,7 +337,7 @@ The composition root is where concrete implementations are wired together. It ru
 ```text
 0.  create_telemetry() (tracing only with telemetry.tracing_endpoint) + event-loop lag monitor, auto-tune concurrency (_auto_tune / _auto_tune_concurrency)
 1.  Cache via create_cache() (cleared on startup when environment == "dev")
-2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase
+2.  httpx.AsyncClient with RetryTransport + DomainRateLimiter + PrivateAddressGuard; shared with HttpxPluginBase, as is the cache (set_cache: aniworld's episode index)
 3.  PluginRegistry + discover() + per-plugin config overrides
 4.  HttpxSearchEngine (HTTP client + cache)
 5.  CacheCrawlJobRepository
@@ -342,8 +351,11 @@ The composition root is where concrete implementations are wired together. It ru
 12. SharedBrowserPool injected into Playwright plugins
 13. ConcurrencyPool
 14. PluginCircuitBreaker
-14b. PluginHealthMonitor task (unless stremio.plugin_health_interval_seconds is 0)
-15. StremioStreamUseCase + StremioCatalogUseCase
+14a. HosterStateStore: restore() (resolutions, redirects and open breakers of the run before), then its write task
+14b. PluginHistory: restore() (the plugins' record of the last 180 days), then its write task
+14c. PluginHealthMonitor task (unless stremio.plugin_health_interval_seconds is 0)
+15. KitsuAnimeIdResolver (the anime catalogs' ids)
+16. StremioStreamUseCase + StremioCatalogUseCase
     → GracefulShutdown.mark_ready()
 ```
 
@@ -353,6 +365,7 @@ The composition root is where concrete implementations are wired together. It ru
 1. Drain in-flight requests (GracefulShutdown, 10 s timeout)
 2. StremioStreamUseCase.aclose(), StremioLinks.aclose(), HosterResolverRegistry.aclose()
    (background searches and resolutions, half-open hoster probes)
+   then HosterStateStore.aclose() and PluginHistory.aclose() (the last snapshot and counts, before the cache closes)
 3. Cancel the scoring, plugin-health and loop-lag tasks
 4. StealthPool.cleanup() (its context lives on the shared browser)
 5. SharedBrowserPool.cleanup()

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from dataclasses import replace
+from dataclasses import fields, replace
 from functools import partial
 from typing import Any
 from urllib.parse import urlparse
@@ -13,7 +14,11 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
-from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.domain.entities.stremio import (
+    ResolvedStream,
+    StreamQuality,
+    quality_from_resolution,
+)
 from scavengarr.domain.ports.hoster_resolver import (
     ClientBoundResolverPort,
     HosterResolverPort,
@@ -22,7 +27,10 @@ from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.browser.page_gate import PageBusy, work_clock
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
-from scavengarr.infrastructure.hoster_resolvers._verify import check_playable
+from scavengarr.infrastructure.hoster_resolvers._verify import (
+    PlaybackCheck,
+    check_playable,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -40,6 +48,9 @@ _MAX_CACHE_SIZE = 10_000
 # Telemetry name of content-type probes (URLs without a hoster resolver)
 _DIRECT = "direct"
 
+# Most hosters without a resolver that are counted (unresolved_hosts)
+_MAX_UNRESOLVED = 1000
+
 # Streaming playlists, which plugins sometimes hand out directly. Not file
 # suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
 _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
@@ -49,10 +60,41 @@ def _is_playlist_url(url: str) -> bool:
     return urlparse(url).path.lower().endswith(_PLAYLIST_SUFFIXES)
 
 
+def _measured(stream: ResolvedStream, check: PlaybackCheck) -> ResolvedStream:
+    """*stream* with what its playback check read: the resolution's quality
+    when the resolver named none or a lower one, and the file's size."""
+    measured = quality_from_resolution(check.width, check.height)
+    return replace(
+        stream,
+        quality=max(stream.quality, measured),
+        size_bytes=check.size_bytes or stream.size_bytes,
+    )
+
+
 def _stamped(stream: ResolvedStream) -> ResolvedStream:
     """*stream* with the time of its resolution: the cache answers with it
     for an hour, and a stored link is fresh by it."""
     return stream if stream.resolved_at else replace(stream, resolved_at=time.time())
+
+
+_STREAM_FIELDS = frozenset(f.name for f in fields(ResolvedStream))
+
+
+def _plain(stream: ResolvedStream) -> dict[str, Any]:
+    """*stream* as builtins only (``export_state``): the snapshot names no
+    class, so moving one cannot make it unreadable. Not ``asdict``: six
+    times slower at the cache's 10,000 entries."""
+    data = {name: getattr(stream, name) for name in _STREAM_FIELDS}
+    data["quality"] = int(stream.quality)
+    return data
+
+
+def _from_plain(data: dict[str, Any]) -> ResolvedStream:
+    """:func:`_plain`'s inverse; a field another version had and this one
+    lacks is dropped, one this version added takes its default."""
+    known = {name: value for name, value in data.items() if name in _STREAM_FIELDS}
+    known["quality"] = StreamQuality(known.get("quality", StreamQuality.UNKNOWN))
+    return ResolvedStream(**known)
 
 
 class _CacheEntry[T]:
@@ -61,7 +103,7 @@ class _CacheEntry[T]:
 
     __slots__ = ("expires_at", "resolver", "value")
 
-    def __init__(self, value: T, ttl: int, resolver: str = "") -> None:
+    def __init__(self, value: T, ttl: float, resolver: str = "") -> None:
         self.value = value
         self.resolver = resolver
         self.expires_at = time.monotonic() + ttl
@@ -102,9 +144,13 @@ class HosterResolverRegistry:
         self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         self._redirect_cache: dict[str, _CacheEntry[str]] = {}
+        # Resolutions and redirects cached (export_state's content)
+        self._changes = 0
         self._resolve_count = 0
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
+        # Probes of links no resolver claims, by hoster (unresolved_hosts)
+        self._unresolved: Counter[str] = Counter()
         for resolver in resolvers or []:
             self.register(resolver)
 
@@ -195,6 +241,65 @@ class HosterResolverRegistry:
             return False, None
         return True, cached.value
 
+    @property
+    def changes(self) -> int:
+        """How often a resolution or a redirect was cached: what
+        :meth:`export_state` holds changed (the state store writes then)."""
+        return self._changes
+
+    def export_state(self) -> dict[str, list[dict[str, Any]]]:
+        """The unexpired resolutions and redirects with their lifetime left
+        (``remaining``, seconds), oldest first, in builtins only: a snapshot
+        that outlives the process (``HosterStateStore``)."""
+        now = time.monotonic()
+        results = [
+            {
+                "url": url,
+                "stream": None if entry.value is None else _plain(entry.value),
+                "remaining": entry.expires_at - now,
+                "resolver": entry.resolver,
+            }
+            for url, entry in self._result_cache.items()
+            if entry.expires_at > now
+        ]
+        redirects = [
+            {"url": url, "target": entry.value, "remaining": entry.expires_at - now}
+            for url, entry in self._redirect_cache.items()
+            if entry.expires_at > now
+        ]
+        return {"results": results, "redirects": redirects}
+
+    def import_state(self, state: Mapping[str, Any], age_s: float) -> tuple[int, int]:
+        """Restore :meth:`export_state`'s entries with their lifetime
+        shortened by *age_s* (the time since the export); the ones that ran
+        out meanwhile stay out. Returns the numbers of resolutions and
+        redirects restored.
+
+        Raises ``KeyError``, ``TypeError`` or ``ValueError`` for a malformed
+        entry, before changing anything.
+        """
+        results: dict[str, _CacheEntry[ResolvedStream | None]] = {}
+        for entry in state["results"]:
+            remaining = float(entry["remaining"]) - age_s
+            stream = entry["stream"]
+            value = None if stream is None else _from_plain(stream)
+            if remaining > 0:
+                results[str(entry["url"])] = _CacheEntry(
+                    value, remaining, str(entry["resolver"])
+                )
+        redirects: dict[str, _CacheEntry[str]] = {}
+        for entry in state["redirects"]:
+            remaining = float(entry["remaining"]) - age_s
+            if remaining > 0:
+                redirects[str(entry["url"])] = _CacheEntry(
+                    str(entry["target"]), remaining
+                )
+        self._result_cache.update(results)
+        self._enforce_max_size(self._result_cache)
+        self._redirect_cache.update(redirects)
+        self._enforce_max_size(self._redirect_cache)
+        return len(results), len(redirects)
+
     async def resolve(
         self, url: str, hoster: str = "", *, refresh: bool = False
     ) -> ResolvedStream | None:
@@ -270,7 +375,20 @@ class HosterResolverRegistry:
                 return await self._resolve_with(resolver, hoster, url, url)
 
         # 4. Fallback: content-type probing
+        self._count_unresolved(hoster_name)
         return await self._probe(url, hoster_name)
+
+    def _count_unresolved(self, hoster: str) -> None:
+        """A link no resolver claims: which resolver to build next."""
+        log.info("hoster_without_resolver", hoster=hoster)
+        # Scraped links name the hosters, so the set is open: new ones stop
+        # counting at the cap, the counted ones go on
+        if hoster in self._unresolved or len(self._unresolved) < _MAX_UNRESOLVED:
+            self._unresolved[hoster] += 1
+
+    def unresolved_hosts(self, top: int = 20) -> dict[str, int]:
+        """The hosters probed for want of a resolver, the most frequent first."""
+        return dict(self._unresolved.most_common(top))
 
     async def _probe(self, url: str, hoster_name: str) -> ResolvedStream | None:
         """Content-type probe of a URL without a resolver (``direct``), cached."""
@@ -293,6 +411,7 @@ class HosterResolverRegistry:
         ttl = _CACHE_TTL_ALIVE if result is not None else _CACHE_TTL_DEAD
         self._result_cache[url] = _CacheEntry(result, ttl, resolver)
         self._enforce_max_size(self._result_cache)
+        self._changes += 1
 
     def _evict_expired(self) -> None:
         """Remove expired entries from result and redirect caches."""
@@ -331,7 +450,9 @@ class HosterResolverRegistry:
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
         A resolver without a check of its own (``needs_playback_check``) is
-        checked with *verify_playback* off too.
+        checked with *verify_playback* off too. A resolver whose CDN binds
+        the URL to the resolving address (``address_bound``) marks its
+        stream, so the player fetches it through Scavengarr.
         """
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
@@ -339,7 +460,7 @@ class HosterResolverRegistry:
         unchecked = getattr(resolver, "needs_playback_check", False) is True
         if (self._verify_playback or unchecked) and self._http_client is not None:
             try:
-                playable = await check_playable(self._http_client, result)
+                check = await check_playable(self._http_client, result)
             except httpx.HTTPError as exc:
                 log.info(
                     "hoster_resolve_check_error",
@@ -347,12 +468,15 @@ class HosterResolverRegistry:
                     error=type(exc).__name__,
                 )
                 return "check_error", None, False
-            if not playable:
+            if not check.playable:
                 log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
                 return "unplayable", None, True
+            result = _measured(result, check)
         log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
         self._record(resolver, failed=False)
+        if getattr(resolver, "address_bound", False) is True:
+            result = replace(result, address_bound=True)
         return "stream", _stamped(result), True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
@@ -563,6 +687,7 @@ class HosterResolverRegistry:
                 )
                 self._redirect_cache[url] = _CacheEntry(final_url, _CACHE_TTL_REDIRECT)
                 self._enforce_max_size(self._redirect_cache)
+                self._changes += 1
                 return final_url
         except httpx.TimeoutException:
             log.debug("hoster_redirect_timeout", url=url)

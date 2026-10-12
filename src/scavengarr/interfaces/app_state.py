@@ -26,13 +26,20 @@ if TYPE_CHECKING:
         SearchEnginePort,
         StreamLinkRepository,
     )
+    from scavengarr.domain.ports.anime_ids import AnimeIdResolverPort
+    from scavengarr.domain.ports.series_meta import SeriesMetaPort
     from scavengarr.domain.ports.tmdb import TmdbClientPort
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
     from scavengarr.infrastructure.concurrency import ConcurrencyPool
     from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
+    from scavengarr.infrastructure.hoster_resolvers.state_store import (
+        HosterStateStore,
+    )
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
+    from scavengarr.infrastructure.plugins.history import PluginHistory
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
+    from scavengarr.infrastructure.stremio.hls_proxy import SegmentReadAhead
     from scavengarr.infrastructure.telemetry import Telemetry
 
 
@@ -60,6 +67,8 @@ class AppState(State):
 
     # Hoster resolution
     hoster_resolver_registry: HosterResolverRegistry
+    # Its resolutions and the open circuit breakers across restarts
+    hoster_state_store: HosterStateStore
 
     # Playwright shared browser pool (single Chromium for all PW plugins)
     shared_browser_pool: SharedBrowserPool | None
@@ -72,10 +81,16 @@ class AppState(State):
 
     # Stremio (optional — requires TMDB API key)
     tmdb_client: TmdbClientPort | None
+    # The Anime Kitsu addon's ids translated into IMDb requests
+    anime_ids: AnimeIdResolverPort
+    # The catalog's record of a title (Cinemeta): its kind and episodes
+    series_meta: SeriesMetaPort
     stremio_stream_uc: StremioStreamUseCase | None
     stremio_catalog_uc: StremioCatalogUseCase | None
     # The stored links behind /play and the HLS proxy
     stremio_links: StremioLinks
+    # The HLS proxy's segments fetched ahead of the player
+    hls_read_ahead: SegmentReadAhead
 
     # Global concurrency pool (fair-share httpx + PW slots)
     concurrency_pool: ConcurrencyPool | None
@@ -95,6 +110,9 @@ class AppState(State):
     # stremio.plugin_health_interval_seconds is 0)
     plugin_health: PluginHealthMonitor | None
     _plugin_health_task: asyncio.Task[None] | None
+    # The plugins' long-term record (searches, results, timeouts, checks,
+    # unreachable marks per day), in the cache across restarts
+    plugin_history: PluginHistory
 
     # Event-loop lag monitor (feeds telemetry)
     _loop_lag_task: asyncio.Task[None]

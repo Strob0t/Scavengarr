@@ -8,11 +8,12 @@ Usage:
 
 The first form runs the plugin's ``search()`` against the live site and
 writes every page it fetched (``_fetch_text`` / ``_safe_fetch``) to
-``.cache/pages/<plugin>/<query>/NN-<context>.html`` plus ``index.json`` (URL,
-method, form data). Cloudflare-challenged pages go through the stealth
-browser, like in the server. The second form stores one of those pages as
-``tests/fixtures/html/<plugin>/<name>.html.gz`` (gzipped, per-visitor values
-scrubbed) for ``tests/unit/infrastructure/test_real_pages.py``.
+``.cache/pages/<plugin>/<query>/NN-<context>.html`` (``.json`` for an API's
+JSON answer) plus ``index.json`` (URL, method, form data). Cloudflare-challenged
+pages go through the stealth browser, like in the server. The second form
+stores one of those pages as ``tests/fixtures/html/<plugin>/<name>.html.gz``
+(``.json.gz`` for a JSON answer; gzipped, per-visitor values scrubbed) for
+``tests/unit/infrastructure/test_real_pages.py``.
 """
 
 from __future__ import annotations
@@ -42,6 +43,13 @@ _SCRUB = [
     (re.compile(r'(<meta name="csrf-token" content=")[^"]+(")'), r"\g<1>0\g<2>"),
     # s.to's encrypted redirect tokens (/r?t=<laravel payload>)
     (re.compile(r"(/r\?t=)[A-Za-z0-9%=+/_-]{20,}"), r"\g<1>scrubbed"),
+    # filmo.to's encrypted link payloads (new per page view) and the
+    # one-time link tokens of /n/<token>
+    (re.compile(r'(data-p=")[^"]+(")'), r"\g<1>0\g<2>"),
+    (re.compile(r"(/n/)[A-Za-z0-9_-]{6,}"), r"\g<1>scrubbed"),
+    # Cloudflare error pages: the Ray ID and the visitor's IP in the footer
+    (re.compile(r"(Ray ID: <strong[^>]*>)[0-9a-f]+"), r"\g<1>0"),
+    (re.compile(r'(cf-footer-ip">)[0-9a-f.:]+'), r"\g<1>0.0.0.0"),
 ]
 
 
@@ -52,9 +60,22 @@ def scrub(html: str) -> str:
     return html
 
 
+def page_suffix(text: str) -> str:
+    """``.json`` for an API's JSON answer, else ``.html``."""
+    if not text.lstrip().startswith(("{", "[")):
+        return ".html"
+    try:
+        json.loads(text)
+    except ValueError:
+        return ".html"
+    return ".json"
+
+
 def store_fixture(plugin: str, page: Path, name: str) -> Path:
-    """Write *page* scrubbed and gzipped as a fixture of *plugin*."""
-    target = _FIXTURE_DIR / plugin / f"{name}.html.gz"
+    """Write *page* scrubbed and gzipped as a fixture of *plugin*
+    (``.json.gz`` for a captured ``.json`` page)."""
+    kind = "json" if page.suffix == ".json" else "html"
+    target = _FIXTURE_DIR / plugin / f"{name}.{kind}.gz"
     target.parent.mkdir(parents=True, exist_ok=True)
     data = scrub(page.read_text()).encode()
     target.write_bytes(gzip.compress(data, compresslevel=9, mtime=0))
@@ -110,8 +131,9 @@ async def capture(plugin_name: str, query: str, args: argparse.Namespace) -> Pat
     index = []
     for number, page in enumerate(pages):
         context = re.sub(r"[^a-z0-9]+", "-", str(page.get("context") or "page"))
-        name = f"{number:02d}-{context.strip('-')}.html"
         text = page.pop("text")
+        suffix = ".html" if text is None else page_suffix(text)
+        name = f"{number:02d}-{context.strip('-')}{suffix}"
         if text is not None:
             (out / name).write_text(text)
         index.append({**page, "file": name, "size": len(text or "")})

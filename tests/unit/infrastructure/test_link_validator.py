@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.validation import http_link_validator
 from scavengarr.infrastructure.validation.http_link_validator import (
     HttpLinkValidator,
@@ -476,3 +477,23 @@ class TestCachePruning:
         assert "https://old.example/x" not in validator._cache
         assert "https://new.example/y" in validator._cache
         assert "gone.example" not in validator._unreachable_until
+
+
+class TestUserAgent:
+    """HEAD and the GET fallback send a browser's User-Agent: hosters behind
+    Cloudflare answer the shared client's bot User-Agent with a challenge,
+    which would mark a live link dead."""
+
+    @pytest.mark.asyncio
+    async def test_head_sends_the_browser_user_agent(self) -> None:
+        client = _mock_client(200)
+        await HttpLinkValidator(client).validate("https://example.com/file")
+        headers = client.head.await_args.kwargs["headers"]
+        assert headers["User-Agent"] == DEFAULT_USER_AGENT
+
+    @pytest.mark.asyncio
+    async def test_the_get_fallback_sends_it_too(self) -> None:
+        client = _mock_client(405, get_status_code=200)
+        await HttpLinkValidator(client).validate("https://example.com/file")
+        headers = client.stream.call_args.kwargs["headers"]
+        assert headers["User-Agent"] == DEFAULT_USER_AGENT

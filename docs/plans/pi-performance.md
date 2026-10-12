@@ -233,13 +233,71 @@ HTTP/2's framing (h2, hpack, hyperframe) runs in Python and costs more CPU on th
 
 The moflix noise was people in its search answer (fixed in e9b1ba1). What could come next, evaluated with research on Stremio clients, other addons, HTTP clients, Chromium and Cloudflare: `optimization-options.md`.
 
+## Playback under search load (2026-10-10, row 56)
+
+**Question.** Does a search slow a playback that runs through the proxy on the Pi? N12 of the ideas backlog proposed that the search runner lower its plugin and browser concurrency while a playback is active; the row asked for the evidence first.
+
+**Setup.** Production (the container started 10:27 UTC from the 09:15 rebuild of staging 8a1dc84), measured with `scripts/playback_under_load.py` from the dev container through the reverse proxy, as a LAN player reaches it. The stream: the strmup HLS link of Der Schuh des Manitu that the tenth round had resolved minutes before (`prodctl.py probe links`), one variant, segments of 8 s and 1.3 to 4.9 MB (about 3.1 Mbit/s of video). Each run plays 20 segments at the playback pace (160 s of video); the proxy's read-ahead follows it (19 hits of 20 in every run, the first segment is the cold fetch). The load: one stream request 10 s into the playback, which goes on until 30 s after the answer. CPU: `docker stats` through Portainer about every 5 s (26 to 30 samples per run). Server view: the `/metrics` deltas of the run. Runs 1 to 3 between about 12:50 and 13:02 UTC, run 4 from 13:05:24 to 13:08:06 UTC. Runs 2 and 3 overlapped the four stream requests of another session's smoke test of `prodctl.py check` (about 12:55 to 13:05 UTC: three series, one movie, answered in 0.1 to 3.9 s), so run 2's plugin searches are not its own title's alone; run 4 ran on an idle production.
+
+| Run | Request (`X-Cache`, answer, streams) | Segments (video) | Stalls | Headers p50 / p90 (ms) | Segment p50 / p90 / max (ms) | Mbit/s | CPU p50 / max (cores) |
+|---|---|---|---|---|---|---|---|
+| 1 idle | none | 20 (160 s) | 0 | 47 / 117 | 652 / 741 / 5201 | 30.3 | 0.00 / 0.27 |
+| 2 Oppenheimer | HIT, 0.0 s, 7 | 20 (160 s) | 0 | 67 / 148 | 637 / 1069 / 4177 | 26.5 | 0.14 / 3.12 |
+| 3 Dune: Part Two (control) | HIT, 0.1 s, 5 | 20 (160 s) | 0 | 57 / 112 | 660 / 828 / 5028 | 29.3 | 0.00 / 0.27 |
+| 4 Everything Everywhere All at Once | MISS, 4.0 s, 5 | 20 (160 s) | 0 | 37 / 51 | 473 / 732 / 2056 | 42.5 | 0.01 / 0.62 |
+
+| Run | `plugin_search` n / mean / p90 | Proxy segment stage n / mean / p90 | Read-ahead fetches n / mean | ok / hit / miss / failed | Loop lag p50 / p90 / max |
+|---|---|---|---|---|---|
+| 1 idle | 0 | 20 / 8 ms / ≤50 ms | 21 / 1.94 s | 21 / 19 / 1 / 0 | ≤5 / ≤5 / ≤5 ms |
+| 2 Oppenheimer | 54 / 2.4 s / ≤4 s | 20 / 14 ms / ≤50 ms | 21 / 1.94 s | 21 / 19 / 1 / 0 | ≤5 ms / ≤5 ms / ≤0.5 s |
+| 3 Dune: Part Two (control) | 2 / 15.3 s / over 15 s | 20 / 9 ms / ≤50 ms | 21 / 1.77 s | 21 / 19 / 1 / 0 | ≤5 / ≤5 / ≤10 ms |
+| 4 Everything Everywhere All at Once | 12 / 3.1 s / ≤7 s | 20 / 9 ms / ≤50 ms | 21 / 1.88 s | 21 / 19 / 1 / 0 | ≤5 / ≤5 / ≤50 ms |
+
+The quantiles of the server view are histogram bucket bounds; "max" is the highest bucket with an observation. Segment "max" of the player view is the first segment in every run, the cold fetch of 4.55 MB (2.1 to 5.2 s, the CDN's pace for a first request), the only segment near its duration; it is the start of a playback, and the loaded runs did not change it.
+
+**What the load was.** Oppenheimer and Dune: Part Two were cache hits with `X-Search-Complete: false`, so their load came as completion searches in the background, not as a waiting request. Run 2 saw 54 plugin searches (mean 2.4 s, p90 ≤4 s) and the container at 3.12 cores peak (the browser plugins), its own completion and the smoke test's four requests together: the heavy case. Run 3 saw two plugin searches of 15 s, a second near-idle control. Run 4 is the clean case: a miss on an idle production, the request waited for the plugins (12 plugin searches, mean 3.1 s, p90 ≤7 s; 0.62 cores peak) and answered at 4.0 s with 5 streams.
+
+**Reading.** The search does not slow the playback. Under the clean full search (run 4) the segments were as fast as idle (p50/p90 473/732 ms against 652/741 ms, headers 37/51 against 47/117 ms, loop lag ≤50 ms). Under the heavy burst (run 2) the playback paid about a third of a second at p90 (1.07 against 0.74 s), the slowest segment after the first took 2.64 s (headers after 0.39 s), the event loop lagged once between 0.25 and 0.5 s, and no segment came near its 8 s; the proxy's own segment stage stayed at 14 ms mean. The segments come from memory: the read-ahead had fetched them (19 hits of 20) while its CDN fetches took 1.8 to 1.9 s mean on their own, so the event loop's busy phases cost the player only the copy of a buffered segment. A player's buffer (Stremio keeps tens of seconds) hides a third of a second entirely. N12 is closed without a scheduling change: nothing in the runner's concurrency needs a playback signal.
+
+**Limits.** One machine on the server's network as the player (the dev container, through the reverse proxy); one hoster's HLS (strmup) with 8 s segments, where the read-ahead hits; the first segment's cold fetch excluded; two loaded runs, one of them clean; CPU from one-second `docker stats` samples every 5 s (peaks between samples are missed). What would change the picture: segments of 2 to 4 s (the same third of a second is a larger share), a playback the read-ahead does not cover (a player jumping, a CDN that answered 429 and switched the read-ahead off for ten minutes), and a file through `/proxy/<id>/file`, where every byte passes the event loop while it is busy (not measured: the instrument plays HLS). A user report of stutter during a search would start there, with a `--file` mode of the instrument.
+
+## Read-ahead depth (2026-10-11, row 68)
+
+**Question.** Does the read-ahead keep enough segments in flight for FireStream's throughput from the Pi? The maintainer's 1080p FireStream playback in Stremio Web (2026-10-11, 11:33 to 11:58 UTC) had no audio dropout in 25 minutes and after a seek, but its picture stalled now and then. Production's numbers for it: one connection carried about 0.44 of real time, the three in flight (the player's request and two segments ahead) about 1.3, below N1's rule of 1.5 times the bitrate.
+
+**Before.** Production's read-ahead counters since the 10:58 UTC start, mostly that playback: 456 hits (from memory or awaited in flight), 111 misses, 123 dropped, 13 failed, 569 fetches in 8.45 s on average (`scavengarr_hls_readahead_seconds`). The player's answers through the proxy: p50 2.2 s, p90 9.6 s, max 27 s.
+
+**Measurement.** `prodctl.py probe hls_throughput -- --imdb movie/tt0816692 --hoster firestream --in-flight 3,4,5 --segments 10`, from the Pi at about 13:18 UTC (production on 69dcc83, nothing playing), one run of 183.8 s. The title: Interstellar on FireStream (CDN `firestream.to`), a media playlist with no variants (2561 segments of 4.0 s, the runs from segment 1250), bitrate 1.6 Mbit/s. No 429 and no failed request.
+
+| Run | Connections | Bytes | Time | Mbit/s | × real time | Ranges |
+|---|---|---|---|---|---|---|
+| one connection | 1 | 8.7 MiB | 84.2 s | 0.9 (0.1–2.0 per segment) | 0.55 | – |
+| read-ahead 2 | 3 | 7.1 MiB | 18.3 s | 3.2 | 2.04 | – |
+| read-ahead 3 | 4 | 7.9 MiB | 14.0 s | 4.8 | 3.01 | – |
+| read-ahead 4 | 5 | 6.9 MiB | 10.8 s | 5.4 | 3.39 | – |
+| 3 ranges | 3 | 7.4 MiB | 40.4 s | 1.5 (1.2–2.1 per segment) | 0.97 | 30 of 30 answered 206 |
+| read-ahead 2 × 3 ranges | 9 | 6.8 MiB | 11.7 s | 4.9 | 3.07 | 30 of 30 answered 206 |
+
+**Reading.**
+- The fourth connection adds about 1.0 times real time, the fifth only about 0.4. The sum flattens near 5 Mbit/s from the Pi, and nine connections carry no more (4.9): a cap of the VPN or the CDN. A stream above about 3.3 Mbit/s (5 / 1.5) therefore reaches 1.5 times real time at no depth.
+- FireStream lists no lower variants, so hls.js has nothing to step down to.
+- N1's rule, connections = ⌈1.5 × bitrate / one connection's rate⌉: this title needs ⌈1.5 × 1.6 / 0.9⌉ = 3 (read-ahead 2, the old depth), the maintainer's playback ⌈1.5 / 0.44⌉ = 4 (read-ahead 3).
+- One constant fits both measured FireStream playbacks: three segments ahead, four connections in flight. That is 3.01 times real time here and about 1.76 at 0.44 per connection there.
+- Filemoon's CDN (one connection 34 times real time from the dev container, 2026-10-11) needs no depth of its own: a deeper read-ahead costs it one more segment in memory. So the depth stays one constant, not one per playback from its fetch times.
+
+**Change.** `_AHEAD = 3` in `src/scavengarr/infrastructure/stremio/hls_proxy.py` (was 2). `_MAX_PLAYBACKS` (8) and `_MAX_AHEAD_BYTES` (16 MiB a segment) stay, so the worst case grows from 256 to 384 MiB (8 × 3 × 16 MiB; production used 407 MiB of 7.6 GiB). A 429 keeps its 10-minute pause. The probe's read-ahead runs follow the proxy's depth (`READ_AHEAD = 3`).
+
+**After.** Pending: the read-ahead metrics (`scavengarr_hls_readahead_seconds`, `_total{outcome}`) and the player's answer times during the maintainer's next 1080p FireStream playback after the rebuild, against the numbers above.
+
+**Limits.** One title and one run from the Pi, 10 segments per run; one connection's pace varied from 0.1 to 2.0 Mbit/s per segment. The maintainer's playback numbers come from production's logs and metrics, not from the probe.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:
 
 - wall time;
 - CPU of the Python and Chromium processes, read from `/proc` before and after;
-- httpx requests per host, counted from the `HTTP Request:` lines of the JSON container log.
+- httpx requests per host, counted from the `HTTP Request:` lines of the JSON container log. httpx writes them at `logging.level: DEBUG` only (since I1, 2026-10-06), so the counts need a run at that level.
 
 At the end it reports the event-loop lag from `/api/v1/stats/metrics`. `--repeat 2` runs a cold and a warm pass. `--py-spy` samples the app process on the Pi and prints the CPU share per category; it needs `cap_add: [SYS_PTRACE]` on the container, and py-spy is installed into `/tmp` and run as root.
 
@@ -251,3 +309,13 @@ PORTAINER_URL=http://<pi-address>:9000 PORTAINER_API_KEY=… \
 ```
 
 On the Docker host, `--docker` uses the docker CLI instead of Portainer. A local server can be profiled with `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …`. Compare runs only when they use the same titles and the same pass (cold or warm).
+`scripts/playback_under_load.py` measures a playback through the proxy while the server searches: a paced player (one segment per `EXTINF` duration, as a player with a full buffer asks) fetches a stored HLS stream's segments through `/api/v1/stremio/proxy/<id>/scavengarr.m3u8` and times each (headers, last byte; a segment slower than its own duration is a stall), `--search` ids are requested during the playback (the searches' wall time, streams and cache headers), `--portainer` samples the container's CPU about every 5 s, and the `/metrics` deltas of the run give the server's view (the proxy's segment stage, the read-ahead's fetches and outcomes, the plugin searches' durations, the event-loop lag; quantiles are histogram bucket bounds). It runs from a machine on the server's network (the dev container reaches production through its reverse proxy) and prints no URLs:
+
+```bash
+poetry run python scripts/playback_under_load.py --base https://scavengarr.lan --insecure \
+  --stream-id <id from prodctl.py probe links> --segments 20 --portainer --label idle
+poetry run python scripts/playback_under_load.py --base https://scavengarr.lan --insecure \
+  --stream-id <id> --segments 20 --portainer --label search --search movie/tt15398776
+```
+
+The rows are those of the tables under "Playback under search load"; compare runs of the same stream only (its segment length sets the pace), and run them while nothing else plays or searches.

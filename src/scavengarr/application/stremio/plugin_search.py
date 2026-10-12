@@ -1,30 +1,48 @@
 """Run plugin searches for Stremio requests.
 
 Fans a set of queries out over a set of plugins within the global
-concurrency budget, with per-plugin timeout, an optional shared deadline,
-circuit breaker, metrics,
-episode filtering and result validation.
+concurrency budget, with per-plugin timeout, circuit breaker, metrics,
+episode filtering and result validation. The request's answer budget cuts
+no plugin: one that returns after it counts as ``late``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generator,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Protocol
 
 import structlog
 
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import (
     PluginProtocol,
+    PluginUnreachableError,
     ResultKey,
     SearchResult,
+    locates_episodes,
     result_key,
 )
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.concurrency import ConcurrencyBudgetPort
+from scavengarr.domain.ports.plugin_history import (
+    NO_PLUGIN_HISTORY,
+    ChallengeFlag,
+    PluginHistoryPort,
+    challenge_flag,
+)
 from scavengarr.domain.ports.plugin_registry import PluginRegistryPort
 from scavengarr.domain.ports.plugin_score_store import PluginScoreStorePort
 from scavengarr.domain.ports.search_engine import SearchEnginePort
@@ -48,9 +66,11 @@ class CircuitBreaker(Protocol):
 
 
 class PluginHealth(Protocol):
-    """Whether a plugin's site answered its last periodic check."""
+    """Whether a plugin's site answered its last periodic check, and the
+    plugins a search found without a reachable domain."""
 
     def is_reachable(self, name: str) -> bool: ...
+    def mark_unreachable(self, name: str) -> None: ...
 
 
 async def current_snapshots(
@@ -101,6 +121,43 @@ BrowserWarmupFn = Callable[[], Coroutine[Any, Any, tuple[Any, Any]]]
 # Receives one plugin's results (of one query) as soon as they are there
 OnResultsFn = Callable[[list[SearchResult]], Awaitable[None]]
 
+# Hears that a plugin's search for every query ended, whether it finished
+# (its results are whole: not cut by a timeout, an error or a cancellation;
+# a plugin skipped on purpose (breaker, health check, mirror group) counts
+# as finished) and how many results the episode filter dropped in its runs
+PluginDoneFn = Callable[[str, bool, int], Awaitable[None]]
+
+# One plugin's run for one query: its results, whether it finished and the
+# results the episode filter dropped
+_PluginRun = tuple[list[SearchResult], bool, int]
+
+
+class _PluginEnds:
+    """Reports each plugin's end once, after its runs for every query.
+
+    A plugin skipped on purpose (health check, breaker, mirror group) is
+    reported finished before the search: nothing of its is missing.
+    """
+
+    def __init__(self, names: Iterable[str], runs: int, report: PluginDoneFn) -> None:
+        self._pending = dict.fromkeys(names, runs)
+        self._unfinished: set[str] = set()
+        self._dropped = dict.fromkeys(names, 0)
+        self._report = report
+
+    async def skipped(self, names: Iterable[str]) -> None:
+        for name in names:
+            await self._report(name, True, 0)
+
+    async def __call__(self, name: str, finished: bool, dropped: int) -> None:
+        """One query's run of *name* ended; the last one reports the plugin."""
+        if not finished:
+            self._unfinished.add(name)
+        self._dropped[name] += dropped
+        self._pending[name] -= 1
+        if self._pending[name] == 0:
+            await self._report(name, name not in self._unfinished, self._dropped[name])
+
 
 class PluginSearchRunner:
     """Search plugins in parallel and collect validated results."""
@@ -120,6 +177,7 @@ class PluginSearchRunner:
         mirror_groups: Mapping[str, str] | None = None,
         plugin_health: PluginHealth | None = None,
         score_store: PluginScoreStorePort | None = None,
+        history: PluginHistoryPort = NO_PLUGIN_HISTORY,
     ) -> None:
         self._plugins = plugins
         self._search_engine = search_engine
@@ -135,6 +193,8 @@ class PluginSearchRunner:
         self._plugin_health = plugin_health
         # Plugin scores pick a mirror group's member
         self._score_store = score_store
+        # The plugins' long-term record: searches, results and timeouts per day
+        self._history = history
         # Breaker keys of mirror members that gave nothing while their
         # standby delivered: they rank behind the other members until they
         # deliver again
@@ -148,9 +208,11 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
         budget: ConcurrencyBudgetPort,
-        deadline: float | None = None,
+        budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
+        on_plugin_done: PluginDoneFn | None = None,
     ) -> list[SearchResult]:
         """Search plugins with all query variants, deduplicate results.
 
@@ -168,20 +230,30 @@ class PluginSearchRunner:
         of a plugin twice, and the title filter scored them twice (code
         review, 2026-10-06).
 
-        *deadline* (``time.monotonic()`` value) ends the whole search: a
-        plugin still waiting for a slot then is skipped, a running one is
-        cut at the deadline instead of after its own full timeout.
-        *on_results* gets each plugin's new results of each query as soon
-        as they are there.
+        No plugin is cut for the request's answer: each gets its full
+        timeout from the moment it holds a slot, one waiting for a slot when
+        the answer budget passes runs when it gets one, and its results
+        reach *on_results* like any other's. *budget_ends*
+        (``time.monotonic()`` value) only labels the plugins that return
+        after it (telemetry outcome ``late``). *on_results* gets each
+        plugin's new results of each query as soon as they are there;
+        *on_plugin_done* hears of each plugin once its search for every
+        query ended (of a skipped one at once).
 
         Plugins whose site failed the periodic health check are skipped
-        (before a mirror group picks its member).
+        (before a mirror group picks its member). *episode_ref* (the
+        episode's placement) reaches the plugins that locate episodes.
         """
+        asked = list(plugin_names)
         plugin_names = self._reachable(plugin_names)
         scores = await self._mirror_scores(plugin_names, category)
         plugin_names, standbys = self._one_per_mirror_group(
             plugin_names, category, scores
         )
+        ends = None
+        if on_plugin_done is not None:
+            ends = _PluginEnds(plugin_names, len(queries), on_plugin_done)
+            await ends.skipped(name for name in asked if name not in plugin_names)
 
         # --- Fire-and-forget pre-warm for shared Playwright browser ---
         if self._browser_warmup_fn is not None:
@@ -215,10 +287,12 @@ class PluginSearchRunner:
                     category,
                     season=season,
                     episode=episode,
+                    episode_ref=episode_ref,
                     budget=budget,
-                    deadline=deadline,
+                    budget_ends=budget_ends,
                     on_results=_hand_on,
                     standbys=standbys,
+                    on_plugin_done=ends,
                 )
                 for q in queries
             )
@@ -312,21 +386,26 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
         budget: ConcurrencyBudgetPort,
-        deadline: float | None = None,
+        budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
         standbys: Mapping[str, str] | None = None,
+        on_plugin_done: PluginDoneFn | None = None,
     ) -> list[SearchResult]:
         """Search all plugins in parallel with bounded concurrency.
 
         Uses the global concurrency pool's fair-share budget to manage
         httpx and Playwright slot allocation across requests. Each
-        plugin's results go to *on_results* once it has given its slot back.
-        A plugin that gives nothing (no hits, error, timeout) hands the
-        query to its standby in *standbys* (a mirror of its database).
+        plugin's results go to *on_results* once it has given its slot back,
+        then *on_plugin_done* hears whether it finished (a standby's own
+        outcome does not count) and how many results the episode filter
+        dropped in its runs (the standby's included). A plugin that gives
+        nothing (no hits, error, timeout) hands the query to its standby in
+        *standbys* (a mirror of its database).
         """
 
-        async def _run(name: str) -> list[SearchResult]:
+        async def _run(name: str) -> _PluginRun:
             if self._plugins.get_mode(name) == "playwright":
                 slot = budget.acquire_pw()
             else:
@@ -338,14 +417,16 @@ class PluginSearchRunner:
                     category,
                     season=season,
                     episode=episode,
-                    deadline=deadline,
+                    episode_ref=episode_ref,
+                    budget_ends=budget_ends,
                 )
 
         async def _search_one(name: str) -> list[SearchResult]:
-            results = await _run(name)
+            results, finished, dropped = await _run(name)
             standby = (standbys or {}).get(name)
             if standby is not None and not results:
-                results = await _run(standby)
+                results, _, standby_dropped = await _run(standby)
+                dropped += standby_dropped
                 log.info(
                     "stremio_mirror_standby",
                     plugin=name,
@@ -362,6 +443,8 @@ class PluginSearchRunner:
                 self._mirror_misses.discard(_breaker_key(name, category))
             if results and on_results is not None:
                 await on_results(results)
+            if on_plugin_done is not None:
+                await on_plugin_done(name, finished, dropped)
             return results
 
         tasks = [_search_one(name) for name in plugin_names]
@@ -380,16 +463,16 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
-        deadline: float | None = None,
-    ) -> list[SearchResult]:
-        """Run a single plugin search with timeout, catching errors."""
+        episode_ref: EpisodeRef | None = None,
+        budget_ends: float | None = None,
+    ) -> _PluginRun:
+        """Run a single plugin search with its full timeout, catching errors.
+
+        Returns the results, whether the search finished (a timeout or an
+        error leaves the plugin's results missing) and the results the
+        episode filter dropped.
+        """
         timeout = self._plugin_timeout
-        if deadline is not None:
-            timeout = min(timeout, deadline - time.monotonic())
-            if timeout <= 0:
-                log.info("stremio_plugin_skipped_deadline", plugin=name)
-                self._telemetry.count("plugin_search", "skipped", plugin=name)
-                return []
 
         # Circuit breaker: skip plugins that have been failing consistently
         breaker_key = _breaker_key(name, category)
@@ -398,31 +481,33 @@ class PluginSearchRunner:
         ):
             log.info("stremio_plugin_circuit_open", plugin=name, category=category)
             self._telemetry.count("plugin_search", "breaker_open", plugin=name)
-            return []
+            return [], True, 0
 
         # The stealth browser serves the plugin's pages by its end
         claim = page_claim.set(PageClaim("plugin", time.monotonic() + timeout))
         try:
             return await asyncio.wait_for(
                 self._search_single_plugin(
-                    name, query, category, season=season, episode=episode
+                    name,
+                    query,
+                    category,
+                    season=season,
+                    episode=episode,
+                    episode_ref=episode_ref,
+                    budget_ends=budget_ends,
                 ),
                 timeout=timeout,
             )
         except TimeoutError:
             log.warning(
-                "stremio_plugin_timeout",
-                plugin=name,
-                timeout=round(timeout, 2),
-                cut_by_deadline=timeout < self._plugin_timeout,
+                "stremio_plugin_timeout", plugin=name, timeout=round(timeout, 2)
             )
-            # A plugin that had at least half its timeout counts as failing
-            # (dead hosts always run into the deadline and must still trip
-            # the breaker); one that queued for most of the budget does not
-            counts = timeout >= self._plugin_timeout / 2
-            if counts and self._circuit_breaker is not None:
+            self._history.count(name, "timeouts")
+            # The plugin had its whole timeout: a dead host must trip the
+            # breaker
+            if self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
-            return []
+            return [], False, 0
         finally:
             page_claim.reset(claim)
 
@@ -434,17 +519,27 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
-        """Dispatch to isolated_search() when available, else search()."""
+        """Dispatch to isolated_search() when available, else search().
+
+        *episode_ref* goes to a plugin that locates episodes
+        (``locates_episodes``) and only when there is one; every other
+        plugin is called as before the reference existed.
+        """
+        extra: dict[str, EpisodeRef] = {}
+        if episode_ref is not None and locates_episodes(plugin):
+            extra["episode_ref"] = episode_ref
         isolated_search: Callable[..., Awaitable[list[SearchResult]]] | None = getattr(
             plugin, "isolated_search", None
         )
         if isolated_search is not None:
             return await isolated_search(
-                query, category, season=season, episode=episode
+                query, category, season=season, episode=episode, **extra
             )
-        return await plugin.search(
-            query, category=category, season=season, episode=episode
+        search: Callable[..., Awaitable[list[SearchResult]]] = plugin.search
+        return await search(
+            query, category=category, season=season, episode=episode, **extra
         )
 
     def _record_outcome(self, key: str, *, success: bool, found: bool) -> None:
@@ -469,37 +564,62 @@ class PluginSearchRunner:
         *,
         season: int | None = None,
         episode: int | None = None,
-    ) -> list[SearchResult]:
+        episode_ref: EpisodeRef | None = None,
+        budget_ends: float | None = None,
+    ) -> _PluginRun:
         """Search a single plugin, catching and logging errors.
 
         The plugin is called directly (with the max_results context so it
         limits pagination), then its results are episode-filtered and
-        validated via the SearchEngine.
+        validated via the SearchEngine. A plugin that returns after
+        *budget_ends* (the request's answer budget) is ``late``: its results
+        reach the cache and the next request. Returns the results,
+        whether the search finished (an error leaves them missing) and the
+        results the episode filter dropped.
         """
         try:
             plugin = self._plugins.get(name)
         except Exception:
             log.warning("stremio_plugin_not_found", plugin=name, exc_info=True)
-            return []
+            return [], True, 0
 
         success = False
         cancelled = False
+        late = False
+        dropped = 0
         results: list[SearchResult] = []
-        with self._telemetry.stage("plugin_search", plugin=name) as stage:
+        self._history.count(name, "searches")
+        with (
+            self._counting_challenges(name),
+            self._telemetry.stage("plugin_search", plugin=name) as stage,
+        ):
             try:
                 token = self._max_results_var.set(self._max_results_per_plugin)
                 try:
                     raw = await self._dispatch_search(
-                        plugin, query, category, season=season, episode=episode
+                        plugin,
+                        query,
+                        category,
+                        season=season,
+                        episode=episode,
+                        episode_ref=episode_ref,
                     )
                 finally:
                     self._max_results_var.reset(token)
-                raw = await asyncio.to_thread(
-                    self._episode_filter_fn, raw, season, episode
-                )
+                raw, dropped = await self._filter_episodes(name, raw, season, episode)
                 results = await self._search_engine.validate_results(raw)
                 success = True
-                stage.outcome = "hits" if results else "empty"
+                late = budget_ends is not None and time.monotonic() > budget_ends
+                stage.outcome = "late" if late else "hits" if results else "empty"
+            except PluginUnreachableError:
+                # No domain answered: skipped until the health recheck
+                # finds the site answering (the search's own record of it)
+                log.warning("stremio_plugin_unreachable", plugin=name)
+                if self._plugin_health is not None:
+                    self._plugin_health.mark_unreachable(name)
+                self._history.count(name, "unreachable_searches")
+                stage.outcome = "unreachable"
+                results = []
             except Exception:
                 log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)
                 stage.outcome = "error"
@@ -520,6 +640,7 @@ class PluginSearchRunner:
                     )
         if results:
             self._telemetry.record("plugin_results", len(results), plugin=name)
+            self._history.count(name, "results", len(results))
 
         # Tag results with source plugin for downstream use
         for r in results:
@@ -530,5 +651,39 @@ class PluginSearchRunner:
             "stremio_plugin_search_done",
             plugin=name,
             result_count=len(results),
+            dropped=dropped,
+            late=late,
         )
-        return results
+        return results, success, dropped
+
+    @contextmanager
+    def _counting_challenges(self, name: str) -> Generator[None]:
+        """A fresh challenge flag for *name*'s search: the plugin bases mark
+        it when a page shows a challenge, and ``challenges`` is counted once
+        when the search ends, with a timeout or a cancellation too;
+        ``challenges_unsolved`` once when one was not got past."""
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            yield
+        finally:
+            challenge_flag.reset(token)
+            if flag.seen:
+                self._history.count(name, "challenges")
+            if flag.unsolved_search:
+                self._history.count(name, "challenges_unsolved")
+
+    async def _filter_episodes(
+        self,
+        name: str,
+        raw: list[SearchResult],
+        season: int | None,
+        episode: int | None,
+    ) -> tuple[list[SearchResult], int]:
+        """The results of a series request that match its episode, and the
+        number the filter dropped (counted in the plugin's record)."""
+        kept = await asyncio.to_thread(self._episode_filter_fn, raw, season, episode)
+        dropped = len(raw) - len(kept)
+        if dropped:
+            self._history.count(name, "dropped", dropped)
+        return kept, dropped

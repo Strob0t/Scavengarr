@@ -2,7 +2,7 @@
 
 The metrics must cost far less than the work they measure (a first stream
 request: 9.2 s of CPU on the Raspberry Pi 4). Limits from
-``openspec/changes/add-observability``: under 50 µs per stage and under 20 ms
+``openspec/specs/observability``: under 50 µs per stage and under 20 ms
 per scrape of the expected series on the development machine; the Pi is
 about 3-4 times slower.
 

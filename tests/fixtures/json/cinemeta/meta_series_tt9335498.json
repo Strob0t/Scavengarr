@@ -1,0 +1,474 @@
+{
+ "meta": {
+  "id": "tt9335498",
+  "type": "series",
+  "imdb_id": "tt9335498",
+  "name": "Demon Slayer: Kimetsu no Yaiba",
+  "year": "2019–2024",
+  "releaseInfo": "2019–2024",
+  "genres": [
+   "Animation",
+   "Action",
+   "Adventure"
+  ],
+  "status": "Ended",
+  "videos": [
+   {
+    "id": "tt9335498:0:1",
+    "season": 0,
+    "number": 1,
+    "episode": 1,
+    "name": "Movie: Sibling's Bond",
+    "released": "2019-03-29T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:0:2",
+    "season": 0,
+    "number": 2,
+    "episode": 2,
+    "name": "Demon Slayer Movie: Mugen Train",
+    "released": "2020-10-16T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:1",
+    "season": 1,
+    "number": 1,
+    "episode": 1,
+    "name": "Cruelty",
+    "released": "2019-04-06T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:2",
+    "season": 1,
+    "number": 2,
+    "episode": 2,
+    "name": "Trainer Sakonji Urokodaki",
+    "released": "2019-04-13T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:3",
+    "season": 1,
+    "number": 3,
+    "episode": 3,
+    "name": "Sabito and Makomo",
+    "released": "2019-04-20T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:4",
+    "season": 1,
+    "number": 4,
+    "episode": 4,
+    "name": "Final Selection",
+    "released": "2019-04-27T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:5",
+    "season": 1,
+    "number": 5,
+    "episode": 5,
+    "name": "My Own Steel",
+    "released": "2019-05-04T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:6",
+    "season": 1,
+    "number": 6,
+    "episode": 6,
+    "name": "Swordsman Accompanying a Demon",
+    "released": "2019-05-11T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:7",
+    "season": 1,
+    "number": 7,
+    "episode": 7,
+    "name": "Muzan Kibutsuji",
+    "released": "2019-05-18T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:8",
+    "season": 1,
+    "number": 8,
+    "episode": 8,
+    "name": "The Smell of Enchanting Blood",
+    "released": "2019-05-25T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:9",
+    "season": 1,
+    "number": 9,
+    "episode": 9,
+    "name": "Temari Demon and Arrow Demon",
+    "released": "2019-06-01T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:10",
+    "season": 1,
+    "number": 10,
+    "episode": 10,
+    "name": "Together Forever",
+    "released": "2019-06-08T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:11",
+    "season": 1,
+    "number": 11,
+    "episode": 11,
+    "name": "Tsuzumi Mansion",
+    "released": "2019-06-15T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:12",
+    "season": 1,
+    "number": 12,
+    "episode": 12,
+    "name": "The Boar Bares Its Fangs, Zenitsu Sleeps",
+    "released": "2019-06-22T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:13",
+    "season": 1,
+    "number": 13,
+    "episode": 13,
+    "name": "Something More Important Than Life",
+    "released": "2019-06-29T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:14",
+    "season": 1,
+    "number": 14,
+    "episode": 14,
+    "name": "The House With the Wisteria Family Crest",
+    "released": "2019-07-06T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:15",
+    "season": 1,
+    "number": 15,
+    "episode": 15,
+    "name": "Mount Natagumo",
+    "released": "2019-07-13T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:16",
+    "season": 1,
+    "number": 16,
+    "episode": 16,
+    "name": "Letting Someone Else Go First",
+    "released": "2019-07-20T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:17",
+    "season": 1,
+    "number": 17,
+    "episode": 17,
+    "name": "You Must Master a Single Thing",
+    "released": "2019-07-27T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:18",
+    "season": 1,
+    "number": 18,
+    "episode": 18,
+    "name": "A Forged Bond",
+    "released": "2019-08-03T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:19",
+    "season": 1,
+    "number": 19,
+    "episode": 19,
+    "name": "Hinokami",
+    "released": "2019-08-10T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:20",
+    "season": 1,
+    "number": 20,
+    "episode": 20,
+    "name": "Pretend Family",
+    "released": "2019-08-17T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:21",
+    "season": 1,
+    "number": 21,
+    "episode": 21,
+    "name": "Against Corps Rules",
+    "released": "2019-08-24T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:22",
+    "season": 1,
+    "number": 22,
+    "episode": 22,
+    "name": "Master of the Mansion",
+    "released": "2019-08-31T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:23",
+    "season": 1,
+    "number": 23,
+    "episode": 23,
+    "name": "Hashira Meeting",
+    "released": "2019-09-07T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:24",
+    "season": 1,
+    "number": 24,
+    "episode": 24,
+    "name": "Rehabilitation Training",
+    "released": "2019-09-14T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:25",
+    "season": 1,
+    "number": 25,
+    "episode": 25,
+    "name": "Tsuguko, Kanao Tsuyuri",
+    "released": "2019-09-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:1:26",
+    "season": 1,
+    "number": 26,
+    "episode": 26,
+    "name": "New Mission",
+    "released": "2019-09-28T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:1",
+    "season": 2,
+    "number": 1,
+    "episode": 1,
+    "name": "Flame Hashira Kyojuro Rengoku",
+    "released": "2021-10-10T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:2",
+    "season": 2,
+    "number": 2,
+    "episode": 2,
+    "name": "Deep Sleep",
+    "released": "2021-10-17T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:3",
+    "season": 2,
+    "number": 3,
+    "episode": 3,
+    "name": "Should Have Been",
+    "released": "2021-10-24T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:4",
+    "season": 2,
+    "number": 4,
+    "episode": 4,
+    "name": "Insult",
+    "released": "2021-11-07T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:5",
+    "season": 2,
+    "number": 5,
+    "episode": 5,
+    "name": "Move Forward!",
+    "released": "2021-11-14T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:6",
+    "season": 2,
+    "number": 6,
+    "episode": 6,
+    "name": "Akaza",
+    "released": "2021-11-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:2:7",
+    "season": 2,
+    "number": 7,
+    "episode": 7,
+    "name": "Set Your Heart Ablaze",
+    "released": "2021-11-28T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:1",
+    "season": 3,
+    "number": 1,
+    "episode": 1,
+    "name": "Sound Hashira Tengen Uzui",
+    "released": "2021-12-05T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:2",
+    "season": 3,
+    "number": 2,
+    "episode": 2,
+    "name": "Infiltrating the Entertainment District",
+    "released": "2021-12-12T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:3",
+    "season": 3,
+    "number": 3,
+    "episode": 3,
+    "name": "What Are You?",
+    "released": "2021-12-19T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:4",
+    "season": 3,
+    "number": 4,
+    "episode": 4,
+    "name": "Tonight",
+    "released": "2021-12-26T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:5",
+    "season": 3,
+    "number": 5,
+    "episode": 5,
+    "name": "Things Are Gonna Get Real Flashy!!",
+    "released": "2022-01-02T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:6",
+    "season": 3,
+    "number": 6,
+    "episode": 6,
+    "name": "Layered Memories",
+    "released": "2022-01-09T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:7",
+    "season": 3,
+    "number": 7,
+    "episode": 7,
+    "name": "Transformation",
+    "released": "2022-01-16T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:8",
+    "season": 3,
+    "number": 8,
+    "episode": 8,
+    "name": "Gathering",
+    "released": "2022-01-23T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:9",
+    "season": 3,
+    "number": 9,
+    "episode": 9,
+    "name": "Defeating an Upper Rank Demon",
+    "released": "2022-01-30T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:10",
+    "season": 3,
+    "number": 10,
+    "episode": 10,
+    "name": "Never Give Up",
+    "released": "2022-02-06T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:3:11",
+    "season": 3,
+    "number": 11,
+    "episode": 11,
+    "name": "No Matter How Many Lives",
+    "released": "2022-02-13T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:1",
+    "season": 4,
+    "number": 1,
+    "episode": 1,
+    "name": "Someone's Dream",
+    "released": "2023-04-09T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:2",
+    "season": 4,
+    "number": 2,
+    "episode": 2,
+    "name": "Yoriichi Type Zero",
+    "released": "2023-04-16T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:3",
+    "season": 4,
+    "number": 3,
+    "episode": 3,
+    "name": "A Sword From Over 300 Years Ago",
+    "released": "2023-04-23T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:4",
+    "season": 4,
+    "number": 4,
+    "episode": 4,
+    "name": "Thank You, Tokito",
+    "released": "2023-04-30T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:5",
+    "season": 4,
+    "number": 5,
+    "episode": 5,
+    "name": "Bright Red Sword",
+    "released": "2023-05-07T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:6",
+    "season": 4,
+    "number": 6,
+    "episode": 6,
+    "name": "Aren't You Going to Become a Hashira?",
+    "released": "2023-05-14T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:7",
+    "season": 4,
+    "number": 7,
+    "episode": 7,
+    "name": "Awful Villain",
+    "released": "2023-05-21T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:8",
+    "season": 4,
+    "number": 8,
+    "episode": 8,
+    "name": "The Mu in Muichiro",
+    "released": "2023-05-28T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:9",
+    "season": 4,
+    "number": 9,
+    "episode": 9,
+    "name": "Mist Hashira Muichiro Tokito",
+    "released": "2023-06-04T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:10",
+    "season": 4,
+    "number": 10,
+    "episode": 10,
+    "name": "Love Hashira Mitsuri Kanroji",
+    "released": "2023-06-11T14:15:00.000Z"
+   },
+   {
+    "id": "tt9335498:4:11",
+    "season": 4,
+    "number": 11,
+    "episode": 11,
+    "name": "A Connected Bond: Daybreak and First Light",
+    "released": "2023-06-18T14:15:00.000Z"
+   }
+  ]
+ }
+}

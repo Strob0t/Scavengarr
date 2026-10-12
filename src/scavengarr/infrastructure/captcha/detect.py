@@ -64,3 +64,18 @@ def detect_challenge(
         if any(m in lowered for m in markers):
             return kind
     return None
+
+
+def detect_challenge_headers(
+    status_code: int, headers: Mapping[str, str]
+) -> ChallengeKind | None:
+    """The challenge kind of an answer without a body (a HEAD check):
+    Cloudflare's ``cf-mitigated: challenge``, or a 403/503 from behind
+    Cloudflare (``cf-ray``); else what the headers alone tell
+    ``detect_challenge`` (DDoS-Guard's ``Server``). The health prober's
+    and the httpx domain check's rule."""
+    if headers.get("cf-mitigated", "").lower() == "challenge" or (
+        status_code in _CF_PAGE_STATUSES and "cf-ray" in headers
+    ):
+        return "cloudflare_page"
+    return detect_challenge(status_code, "", headers)

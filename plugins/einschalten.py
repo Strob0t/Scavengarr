@@ -13,10 +13,12 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
 
 # ---------------------------------------------------------------------------
 # Configurable settings
@@ -163,6 +165,17 @@ class EinschaltenPlugin(HttpxPluginBase):
         if len(overview) > 300:
             overview = overview[:297] + "..."
 
+        metadata: dict[str, Any] = {
+            "genres": ", ".join(genres) if genres else "",
+            "rating": rating,
+            "imdb_id": imdb_id,
+            "tmdb_id": str(movie_id) if movie_id else "",
+            "runtime": runtime,
+            "poster": poster,
+        }
+        if year:
+            metadata["year"] = int(year)  # the film's release year
+
         return SearchResult(
             title=display_title,
             download_link=download_link,
@@ -172,14 +185,7 @@ class EinschaltenPlugin(HttpxPluginBase):
             published_date=year,
             category=2000,  # Movies only
             description=overview or None,
-            metadata={
-                "genres": ", ".join(genres) if genres else "",
-                "rating": rating,
-                "imdb_id": imdb_id,
-                "tmdb_id": str(movie_id) if movie_id else "",
-                "runtime": runtime,
-                "poster": poster,
-            },
+            metadata=metadata,
         )
 
     async def _process_entry(
@@ -221,7 +227,9 @@ class EinschaltenPlugin(HttpxPluginBase):
 
         await self._ensure_client()
 
-        search_results = await self._api_search(query)
+        # The search also lists loose matches ("Oppenheimer" finds "Jud Süß");
+        # each hit costs a movie and a watch request
+        search_results = relevant_hits(await self._api_search(query), query, hit_title)
         if not search_results:
             return []
 

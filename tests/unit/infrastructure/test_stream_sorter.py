@@ -183,10 +183,7 @@ class TestCustomConfig:
         assert sorter.rank(de_720) == 5000
 
     def test_custom_language_scores_english_preferred(self) -> None:
-        config = StremioConfig(
-            language_scores={"en": 1000, "de": 500},
-            preferred_language="en",
-        )
+        config = StremioConfig(language_scores={"en": 1000, "de": 500})
         sorter = StreamSorter(config)
         en = _stream(quality=StreamQuality.HD_1080P, language=ENGLISH_DUB)
         de = _stream(quality=StreamQuality.HD_1080P, language=GERMAN_DUB)

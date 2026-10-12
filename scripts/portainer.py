@@ -192,6 +192,12 @@ class Portainer:
         """Every container this Portainer user may see."""
         return self._request("GET", self._docker("/containers/json?all=1")).json()
 
+    def inspect(self) -> dict[str, Any]:
+        """``docker inspect`` of the container: its state and start time."""
+        return self._request(
+            "GET", self._docker(f"/containers/{self._name}/json")
+        ).json()
+
     def run(
         self,
         cmd: list[str],

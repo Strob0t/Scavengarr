@@ -16,6 +16,6 @@ Production (a Raspberry Pi 4 behind a VPN container) builds its image from GitHu
 
 - Affected specs: new capability `delivery`.
 - Affected code: `.github/workflows/image.yml` (new), `Dockerfile.prod`, `docker/entrypoint.sh`, `docker-compose.yml`, `README.md`, `docs/features/configuration.md`, `AGENTS.md` §1, `CHANGELOG.md`; `tests/unit/infrastructure/test_repository_files.py` if it checks the Dockerfile or the entrypoint.
-- Permissions: the workflow needs `packages: write` (and `contents: read`); GHCR packages of a public repository are public — the same exposure as the repository (`docs/plans/next-steps.md` §6).
+- Permissions: the workflow needs `packages: write` (and `contents: read`); a GHCR package starts private even for a public repository (GitHub docs, "Configuring a package's access control and visibility"); the maintainer makes it public once in the package settings (irreversible), and then it has the same exposure as the repository (`docs/plans/next-steps.md` §6). A private package would need a registry login on every host and counts against the account's package storage and transfer quota.
 - Risk: `ubuntu-24.04-arm` runner availability or a slow first arm64 build (Chromium download, wheel builds) → the first run measures it; the fallback is QEMU (`docker/setup-qemu-action`) for arm64 in the same job, slower but working.
 - Cost: none in the app; two CI jobs per push to `staging` (minutes, free for public repositories).

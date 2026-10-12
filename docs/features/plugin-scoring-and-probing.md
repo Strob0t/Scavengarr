@@ -157,11 +157,11 @@ Lightweight availability check for each plugin's `base_url`.
 | Target | The plugin's `base_url` as-is |
 | Timeout | `health_timeout_seconds` (default 5 s) |
 | Concurrency | Semaphore, `health_concurrency` (default 5) |
-| Challenge detection | HEAD: `cf-ray` header with `403`/`503` (Cloudflare), `Server: ddos-guard` with `403`/`503` (DDoS-Guard); GET fallback: `detect_challenge()` on the body |
+| Challenge detection | HEAD: `detect_challenge_headers()`: `cf-mitigated: challenge` or a `cf-ray` header with `403`/`503` (Cloudflare), `Server: ddos-guard` with `403`/`503` (DDoS-Guard), the rule the httpx domain check shares; GET fallback: `detect_challenge()` on the body |
 | Success | Status `< 400` and no page block (Cloudflare challenge or DDoS-Guard) |
 | Output | `ok`, `http_status`, `duration_ms`, `error_kind`, `captcha_detected` |
 
-`PluginHealthMonitor` reuses `HealthProber` (without scores) for the periodic reachability check of the Stremio plugins (`stremio.plugin_health_interval_seconds`).
+`PluginHealthMonitor` reuses `HealthProber` (without scores) for the periodic reachability check of the Stremio plugins (`stremio.plugin_health_interval_seconds`); every check's verdict also goes into the plugins' long-term record ([Observability](./observability.md#plugin-record)).
 
 When the prober encounters a page block (Cloudflare challenge or DDoS-Guard, classified by `infrastructure/captcha/detect.py`; a login captcha widget on a working homepage does not count), `captcha_detected` is `True`, `ok` is `False`, and `error_kind` is `"captcha"`; `compute_health_observation()` then returns `0.0`.
 
@@ -257,11 +257,8 @@ Scored selection is active when `stremio.scoring_enabled` is `true` **and** a sc
 | `scoring_enabled` | `false` | Use scores to limit plugin selection |
 | `max_plugins_scored` | `5` | Top-N plugins when scoring is active |
 | `exploration_probability` | `0.15` | Chance to add one random mid-score plugin |
-| `stremio_deadline_ms` | `2000` | Currently unused (no effect); see `stream_deadline_seconds` |
-| `max_items_total` | `50` | Currently unused (no effect) |
-| `max_items_per_plugin` | `20` | Currently unused (no effect) |
 
-Behavior (`_select_plugins()`):
+Behavior (`PluginSelector.select()`):
 
 1. Load the `"current"`-bucket snapshot of the request category for every `stream`/`both` plugin; a missing snapshot, or one the store fails to read (`plugin_scores_unreadable`), counts as score 0.5, confidence 0.0, so a failing store leads to the cold start below instead of a failed request.
 1. **Cold-start guard:** if fewer than 50% of plugins have `confidence > 0.1`, search all plugins.
@@ -360,9 +357,6 @@ Returns `503` with `{"error": "scoring_not_enabled"}` when scoring is not enable
 | Use scores | `scoring_enabled` | `false` | Enable scored plugin selection (requires `scoring.enabled`) |
 | Max plugins | `max_plugins_scored` | `5` | Top-N plugins per request |
 | Exploration | `exploration_probability` | `0.15` | Mid-score plugin inclusion chance |
-| Deadline | `stremio_deadline_ms` | `2000` | Currently unused (no effect); see `stream_deadline_seconds` |
-| Max items total | `max_items_total` | `50` | Currently unused (no effect) |
-| Max per plugin | `max_items_per_plugin` | `20` | Currently unused (no effect) |
 
 These keys have no dedicated environment variables.
 
@@ -401,7 +395,7 @@ plugins:
 | `tests/unit/infrastructure/test_search_prober.py` | Plugin search + hoster checks |
 | `tests/unit/infrastructure/test_scoring_scheduler.py` | Health/search cycles + tick |
 
-`tests/unit/application/test_stremio_stream.py` covers a failing score store (`TestScoredSelection`: every plugin is searched) and the score-based mirror pick (`TestMirrorScores`). Top-N selection and the exploration slot have no unit test yet.
+`tests/unit/application/test_plugin_selection.py` covers the scored selection (`TestScoredSelection`: top N, the cold-start guard, the exploration slot, a failing score store that leaves every plugin searched); `tests/unit/application/test_stremio_stream.py` covers the score-based mirror pick (`TestMirrorScores`).
 
 ```bash
 poetry run pytest tests/unit/infrastructure/test_ewma.py \
@@ -428,6 +422,6 @@ poetry run pytest tests/unit/infrastructure/test_ewma.py \
 | Cache store | `src/scavengarr/infrastructure/persistence/plugin_score_cache.py` |
 | Config | `src/scavengarr/infrastructure/config/schema.py` (`ScoringConfig`, `StremioConfig`, `PluginOverride`) |
 | Composition | `src/scavengarr/interfaces/composition.py` (`_wire_scoring`, `_apply_plugin_overrides`) |
-| Use case | `src/scavengarr/application/use_cases/stremio_stream.py` (`_select_plugins`) |
+| Plugin selection | `src/scavengarr/application/stremio/plugin_selection.py` (`PluginSelector`) |
 | Mirror pick | `src/scavengarr/application/stremio/plugin_search.py` (`current_snapshots`, `PluginSearchRunner._one_per_mirror_group`) |
 | Debug API | `src/scavengarr/interfaces/api/stats/router.py` |

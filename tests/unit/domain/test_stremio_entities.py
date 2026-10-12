@@ -11,6 +11,7 @@ from scavengarr.domain.entities.stremio import (
     StremioMetaPreview,
     StremioStream,
     StremioStreamRequest,
+    quality_from_resolution,
 )
 
 
@@ -35,6 +36,24 @@ class TestStreamQuality:
     def test_comparison_with_int(self) -> None:
         assert StreamQuality.HD_1080P > 40
         assert StreamQuality.HD_720P == 40
+
+
+class TestQualityFromResolution:
+    @pytest.mark.parametrize(
+        ("width", "height", "quality"),
+        [
+            (1920, 1080, StreamQuality.HD_1080P),
+            (1920, 800, StreamQuality.HD_1080P),  # letterboxed: by width
+            (1280, 720, StreamQuality.HD_720P),
+            (3840, 2160, StreamQuality.UHD_4K),
+            (854, 480, StreamQuality.SD),
+            (None, None, StreamQuality.UNKNOWN),
+        ],
+    )
+    def test_class_by_width_and_height(
+        self, width: int | None, height: int | None, quality: StreamQuality
+    ) -> None:
+        assert quality_from_resolution(width, height) is quality
 
 
 class TestStreamLanguage:

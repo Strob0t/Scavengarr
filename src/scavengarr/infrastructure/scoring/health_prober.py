@@ -10,9 +10,15 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.scoring import ProbeResult
-from scavengarr.infrastructure.captcha.detect import ChallengeKind, detect_challenge
+from scavengarr.infrastructure.captcha.detect import (
+    ChallengeKind,
+    detect_challenge,
+    detect_challenge_headers,
+)
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
+_HEADERS = {"User-Agent": DEFAULT_USER_AGENT}
 
 _BLOCKING_KINDS: frozenset[ChallengeKind | None] = frozenset(
     {"cloudflare_page", "ddos_guard"}
@@ -42,10 +48,13 @@ class HealthProber:
         t0 = time.monotonic()
 
         try:
+            # A browser's User-Agent: a site behind Cloudflare challenges or
+            # blocks the shared client's bot UA, which would count it as down
             resp = await self._http.head(
                 base_url,
                 timeout=self._timeout,
                 follow_redirects=True,
+                headers=_HEADERS,
             )
 
             kind: ChallengeKind | None
@@ -54,15 +63,13 @@ class HealthProber:
                     base_url,
                     timeout=self._timeout,
                     follow_redirects=True,
-                    headers={"Range": "bytes=0-0"},
+                    headers={**_HEADERS, "Range": "bytes=0-0"},
                 )
                 # GET has a body — use full body-based detection
                 kind = detect_challenge(resp.status_code, resp.text, resp.headers)
-            elif resp.status_code in (403, 503) and "cf-ray" in resp.headers:
-                # HEAD has no body — heuristic: cf-ray header + 403/503
-                kind = "cloudflare_page"
             else:
-                kind = detect_challenge(resp.status_code, "", resp.headers)
+                # HEAD has no body: the headers decide
+                kind = detect_challenge_headers(resp.status_code, resp.headers)
 
             # Only page blocks count; a login captcha on a homepage does not.
             captcha = kind in _BLOCKING_KINDS

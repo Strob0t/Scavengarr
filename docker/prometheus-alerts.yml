@@ -1,0 +1,80 @@
+# Prometheus alert rules for Scavengarr (docs/features/observability.md,
+# "Alerts"). Load them in prometheus.yml:
+#
+#   rule_files:
+#     - /etc/prometheus/scavengarr-alerts.yml
+#
+# and check them with: promtool check rules docker/prometheus-alerts.yml
+#
+# Only ScavengarrDown names the scrape job (`up` exists for every target):
+# rename "scavengarr" there when your job is called otherwise. Traffic is
+# low (a few requests per hour), so the windows are long and the rate
+# alerts need a few requests before they judge.
+groups:
+  - name: scavengarr
+    rules:
+      - alert: ScavengarrDown
+        expr: up{job="scavengarr"} == 0 or absent(up{job="scavengarr"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus cannot scrape Scavengarr (container down, restarting or unreachable).
+
+      # Searched in the last 24 h without a hit while at least five plugins
+      # had hits: a dead site, a changed layout or a block
+      - alert: ScavengarrPluginWithoutYield
+        expr: |
+          (
+            sum by (plugin) (increase(scavengarr_plugin_search_total[24h])) > 0
+            unless on (plugin)
+            sum by (plugin) (increase(scavengarr_plugin_search_total{outcome="hits"}[24h])) > 0
+          )
+          and on ()
+          count(sum by (plugin) (increase(scavengarr_plugin_search_total{outcome="hits"}[24h])) > 0) >= 5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plugin {{ $labels.plugin }} found nothing in 24 h while other plugins did."
+
+      # Answers that waited for a new search (not the cache)
+      - alert: ScavengarrSlowFirstAnswers
+        expr: |
+          histogram_quantile(0.5, sum by (le) (rate(scavengarr_stremio_request_seconds_bucket{source="search"}[1h]))) > 20
+          and on ()
+          sum(increase(scavengarr_stremio_request_seconds_count{source="search"}[1h])) >= 3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Half of the first answers of the last hour (new searches) took longer than 20 s.
+
+      # max by name: the state label changes between open and half_open
+      - alert: ScavengarrHosterBreakerOpen
+        expr: max by (name) (scavengarr_circuit_breaker_open{breaker="hoster"}) > 0
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "The breaker of hoster {{ $labels.name }} has been open for 6 h; its resolver probably needs work."
+
+      - alert: ScavengarrEventLoopLag
+        expr: histogram_quantile(0.99, sum by (le) (rate(scavengarr_event_loop_lag_seconds_bucket[5m]))) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The event loop runs late (p99 above 100 ms); CPU work blocks it and every timeout fires late.
+
+      - alert: ScavengarrNoStreams
+        expr: |
+          sum(increase(scavengarr_stremio_request_total{outcome="empty"}[1h]))
+            > 0.5 * sum(increase(scavengarr_stremio_request_total[1h]))
+          and on ()
+          sum(increase(scavengarr_stremio_request_total[1h])) >= 3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than half of the Stremio requests of the last hour got no streams.

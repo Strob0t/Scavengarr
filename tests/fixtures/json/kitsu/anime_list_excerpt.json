@@ -1,0 +1,117 @@
+[
+ {
+  "kitsu_id": 12,
+  "anidb_id": 69,
+  "imdb_id": [
+   "tt0388629"
+  ],
+  "type": "TV",
+  "tvdb_id": 81797
+ },
+ {
+  "kitsu_id": 210,
+  "anidb_id": 266,
+  "imdb_id": [
+   "tt0131179"
+  ],
+  "type": "TV",
+  "tvdb_id": 72454
+ },
+ {
+  "kitsu_id": 695,
+  "anidb_id": 3296,
+  "imdb_id": [
+   "tt0495212"
+  ],
+  "type": "OVA",
+  "season": {
+   "tvdb": 1,
+   "tmdb": 1
+  },
+  "tvdb_id": 263688
+ },
+ {
+  "kitsu_id": 11614,
+  "anidb_id": 11829,
+  "imdb_id": [
+   "tt5311514"
+  ],
+  "type": "MOVIE"
+ },
+ {
+  "kitsu_id": 41982,
+  "anidb_id": 14444,
+  "imdb_id": [
+   "tt2560140"
+  ],
+  "type": "TV",
+  "season": {
+   "tvdb": 3,
+   "tmdb": 3
+  },
+  "episode_offset": {
+   "tvdb": 12,
+   "tmdb": 12
+  },
+  "tvdb_id": 267440
+ },
+ {
+  "kitsu_id": 43247,
+  "anidb_id": 15593,
+  "imdb_id": [
+   "tt5607616"
+  ],
+  "type": "TV",
+  "season": {
+   "tvdb": 2,
+   "tmdb": 1
+  },
+  "episode_offset": {
+   "tvdb": 13,
+   "tmdb": 38
+  },
+  "tvdb_id": 305089
+ },
+ {
+  "kitsu_id": 44081,
+  "anidb_id": 16054,
+  "imdb_id": [
+   "tt9335498"
+  ],
+  "type": "TV",
+  "season": {
+   "tvdb": 3,
+   "tmdb": 3
+  },
+  "tvdb_id": 348545
+ },
+ {
+  "kitsu_id": 48671,
+  "anidb_id": 18576,
+  "imdb_id": [
+   "tt21209876"
+  ],
+  "type": "TV",
+  "season": {
+   "tvdb": 2,
+   "tmdb": 2
+  },
+  "tvdb_id": 389597
+ },
+ {
+  "kitsu_id": 49240,
+  "anidb_id": 18886,
+  "imdb_id": [
+   "tt22248376"
+  ],
+  "type": "TV",
+  "season": {
+   "tvdb": 2,
+   "tmdb": 1
+  },
+  "episode_offset": {
+   "tmdb": 28
+  },
+  "tvdb_id": 424536
+ }
+]

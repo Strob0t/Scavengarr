@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import gzip
 import time
 from collections.abc import AsyncIterator
@@ -9,17 +11,20 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 import respx
+import structlog
 
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
+    FileCut,
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
+    resolve_query_string,
     rewrite_manifest,
+    stream_file,
     stream_hls_segment,
 )
-from scavengarr.interfaces.api.stremio.router import _resolve_query_string
 
 
 @pytest.fixture(autouse=True)
@@ -142,6 +147,24 @@ class TestRewriteManifest:
         content = "#EXTM3U\n#EXT-X-ENDLIST\n"
         result = rewrite_manifest(content, "https://cdn.example.com/", "http://proxy/")
         assert result == content
+
+    def test_host_in_other_case_goes_through_the_proxy(self) -> None:
+        """VidHide's stream URL names its CDN host in mixed case and its
+        playlists list the segments under the lower-case host: compared
+        as written, every segment stayed unproxied and the player got 403
+        for a token bound to the Pi (step 27, 2026-10-07)."""
+        cdn_base = "https://2ZO6sb3MYz7fapc.acek-cdn.com/hls2/01/abc_h/"
+        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        content = (
+            "#EXTM3U\n#EXTINF:6.0,\n"
+            "https://2zo6sb3myz7fapc.acek-cdn.com/hls2/01/abc_h/seg-1-v1-a1.ts?t=x\n"
+        )
+
+        result = rewrite_manifest(content, cdn_base, proxy_base, "index/")
+
+        assert result.splitlines()[-1] == (
+            proxy_base + "/hls2/01/abc_h/seg-1-v1-a1.ts?t=x"
+        )
 
     def test_root_relative_uri_goes_through_the_proxy(self) -> None:
         """Vidsonic's master lists its variant from the CDN root
@@ -384,6 +407,11 @@ class TestBuildCdnUrl:
         result = build_cdn_url(base, "/other/seg-1.ts")
         assert result == "https://cdn.example.com/other/seg-1.ts"
 
+    def test_host_in_other_case_stays_on_the_cdn(self) -> None:
+        base = "https://CDN.Example.com/hls/video/"
+        result = build_cdn_url(base, "//cdn.example.com/other/seg-1.ts")
+        assert result == "https://cdn.example.com/other/seg-1.ts"
+
     def test_nested_relative_path(self) -> None:
         base = "https://cdn.example.com/hls/"
         result = build_cdn_url(base, "video/seg-1.ts", "t=abc")
@@ -475,6 +503,503 @@ class TestStreamHlsSegment:
 
         assert received == data
 
+    async def test_the_bytes_sent_are_reported_when_the_body_ends(self) -> None:
+        sent: list[int] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=_Chunks([b"\x47" * 70000]))
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, on_sent=sent.append
+            )
+            [chunk async for chunk in chunks]
+
+        assert sent == [70000]
+
+    async def test_a_body_closed_early_reports_the_bytes_so_far(self) -> None:
+        sent: list[int] = []
+        body = _Chunks([b"\x47" * 65536, b"\x47" * 1000])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=body)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            chunks, _ = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, on_sent=sent.append
+            )
+            first = await chunks.__anext__()
+            await chunks.aclose()
+
+        assert len(first) == 65536
+        assert sent == [65536]
+        assert body.closed
+
+    async def test_a_body_dropped_mid_transfer_is_closed_once_by_the_loop(
+        self,
+    ) -> None:
+        """A player's disconnect leaves the body suspended at its ``yield``;
+        the event loop's finalizer closes it once it is garbage-collected.
+        With a counting wrapper around it, the collection finalized both
+        and the two closes raced ("aclose(): asynchronous generator is
+        already running", 16 times in 48 h of production, 2026-10-07):
+        one generator, one close, the bytes reported once, no task left
+        with an exception."""
+        sent: list[int] = []
+        # Two pieces: the body is suspended with the CDN's answer still open
+        body = _Chunks([b"\x47" * 65536, b"\x47" * 65536])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=body)
+
+        loop = asyncio.get_running_loop()
+        complaints: list[str] = []
+        loop.set_exception_handler(
+            lambda _loop, context: complaints.append(context.get("message", ""))
+        )
+        try:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+
+                async def _play() -> None:
+                    chunks, _ = await stream_hls_segment(
+                        client, "https://cdn.test/1.ts", {}, on_sent=sent.append
+                    )
+                    await chunks.__anext__()
+                    try:
+                        raise RuntimeError("the player went away")
+                    except RuntimeError as exc:
+                        # The frame keeps its own traceback: the suspended
+                        # body goes down with the cycle, in a collection
+                        kept = exc  # noqa: F841
+
+                await _play()
+                gc.collect()
+                for _ in range(3):
+                    await asyncio.sleep(0)
+                others = [
+                    t for t in asyncio.all_tasks() if t is not asyncio.current_task()
+                ]
+                results = await asyncio.gather(*others, return_exceptions=True)
+                gc.collect()
+        finally:
+            loop.set_exception_handler(None)
+
+        assert body.closed
+        assert sent == [65536]
+        assert [r for r in results if isinstance(r, BaseException)] == []
+        assert complaints == []
+
+
+class TestStreamFile:
+    """A direct file passes through with the player's byte range."""
+
+    _URL = "https://s-delivery.mxdcontent.example/v/abc.mp4?s=tok"
+
+    async def test_a_whole_file_passes_with_its_headers(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Length": "70000",
+                    "Accept-Ranges": "bytes",
+                    "X-Cache": "HIT",
+                },
+                stream=_Chunks([b"\x00" * 70000]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(
+                client, self._URL, {"Referer": "https://mixdrop.ag/"}
+            )
+            received = [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 200
+        assert answer.headers == {
+            "content-type": "video/mp4",
+            "content-length": "70000",
+            "accept-ranges": "bytes",
+        }
+        assert [len(chunk) for chunk in received] == [65536, 4464]
+        request = seen[0]
+        assert request.headers["Accept-Encoding"] == "identity"
+        assert request.headers["Referer"] == "https://mixdrop.ag/"
+        assert request.headers["User-Agent"] == DEFAULT_USER_AGENT
+        assert "Range" not in request.headers
+
+    async def test_the_players_range_passes_through(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                206,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Range": "bytes 1000-1999/5000",
+                    "Content-Length": "1000",
+                },
+                stream=_Chunks([b"\x01" * 1000]),
+            )
+
+        player = {
+            "Range": "bytes=1000-1999",
+            "If-Range": '"etag"',
+            "Cookie": "session=1",
+        }
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(client, self._URL, {}, player=player)
+            body = b"".join([chunk async for chunk in answer.chunks])
+
+        assert answer.status == 206
+        assert answer.headers["content-range"] == "bytes 1000-1999/5000"
+        assert answer.headers["content-length"] == "1000"
+        assert len(body) == 1000
+        assert seen[0].headers["Range"] == "bytes=1000-1999"
+        assert seen[0].headers["If-Range"] == '"etag"'
+        assert "Cookie" not in seen[0].headers
+
+    async def test_a_head_request_reads_no_bytes(self) -> None:
+        body = _Chunks([b"\x00" * 1000])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp4", "Content-Length": "1000"},
+                stream=body,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(client, self._URL, {}, head=True)
+            received = [chunk async for chunk in answer.chunks]
+
+        assert received == []
+        assert answer.headers["content-length"] == "1000"
+        assert not body.read
+        assert body.closed
+
+    async def test_an_unsatisfiable_range_passes_through(self) -> None:
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                416, headers={"Content-Range": "bytes */5000"}, stream=_Chunks([])
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_file(
+                client, self._URL, {}, player={"Range": "bytes=9000-"}
+            )
+            received = [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 416
+        assert answer.headers["content-range"] == "bytes */5000"
+        assert received == []
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_a_refusal_raises_and_is_closed(self) -> None:
+        respx.get(self._URL).respond(403)
+        seen: list[httpx.Response] = []
+
+        async def _keep(resp: httpx.Response) -> None:
+            seen.append(resp)
+
+        async with httpx.AsyncClient(event_hooks={"response": [_keep]}) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await stream_file(client, self._URL, {})
+
+        assert seen and seen[0].is_closed
+
+    async def test_a_network_error_raises(self) -> None:
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("down", request=request)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            with pytest.raises(httpx.ConnectError):
+                await stream_file(client, self._URL, {})
+
+    async def test_the_read_timeout_waits_for_the_first_byte(self) -> None:
+        """Vinovo's first byte takes about 30 s; the connect timeout stays
+        the client's."""
+        seen: list[httpx.Request] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, stream=_Chunks([]))
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_cdn), timeout=httpx.Timeout(5.0)
+        ) as client:
+            answer = await stream_file(client, self._URL, {})
+            [chunk async for chunk in answer.chunks]
+
+        timeout = seen[0].extensions["timeout"]
+        assert timeout["read"] == 60.0
+        assert timeout["connect"] == 5.0
+
+
+class TestFileCut:
+    """A body the CDN ends before the promised length is resumed once from
+    the next byte; uvicorn refused the short answer before ("Response
+    content shorter than Content-Length", 9 times in 48 h of production,
+    2026-10-07) and the player saw the file end early."""
+
+    _URL = "https://s-delivery.mxdcontent.example/v/abc.mp4?s=tok"
+    _PIECE = 65536  # the first piece goes out before the cut
+
+    @staticmethod
+    def _cdn(
+        answers: list[httpx.Response], seen: list[httpx.Request]
+    ) -> httpx.MockTransport:
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return answers[len(seen) - 1]
+
+        return httpx.MockTransport(handle)
+
+    async def _play(
+        self,
+        answers: list[httpx.Response],
+        *,
+        player: dict[str, str] | None = None,
+    ) -> tuple[bytes, list[httpx.Request], list[int], list[dict[str, object]]]:
+        """The body of a file streamed through the given CDN answers, the
+        requests the CDN saw, the bytes reported and the log lines."""
+        seen: list[httpx.Request] = []
+        sent: list[int] = []
+        with structlog.testing.capture_logs() as logs:
+            async with httpx.AsyncClient(transport=self._cdn(answers, seen)) as client:
+                answer = await stream_file(
+                    client,
+                    self._URL,
+                    {"Referer": "https://mixdrop.ag/"},
+                    player=player,
+                    on_sent=sent.append,
+                )
+                body = b"".join([chunk async for chunk in answer.chunks])
+        return body, seen, sent, logs
+
+    async def test_a_cut_body_is_resumed_once(self) -> None:
+        """A transport error mid-body: the file is asked for again from the
+        next byte with the same headers, continuing the same answer."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp4", "Content-Length": "100000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 34464]),
+            ),
+        ]
+
+        body, seen, sent, logs = await self._play(answers)
+
+        assert body == b"a" * self._PIECE + b"b" * 34464
+        assert sent == [100000]
+        assert len(seen) == 2
+        assert seen[1].headers["Range"] == "bytes=65536-99999"
+        assert seen[1].headers["Referer"] == "https://mixdrop.ag/"
+        assert seen[1].headers["Accept-Encoding"] == "identity"
+        assert [log["event"] for log in logs] == ["hls_proxy_file_resumed"]
+        assert logs[0]["at"] == self._PIECE
+
+    async def test_a_clean_end_short_of_the_length_is_resumed(self) -> None:
+        """The body ends without an error before Content-Length (the
+        production case: no transport error in the logs)."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_Chunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 34464]),
+            ),
+        ]
+
+        body, seen, sent, _ = await self._play(answers)
+
+        assert len(body) == 100000
+        assert sent == [100000]
+        assert seen[1].headers["Range"] == "bytes=65536-99999"
+
+    async def test_a_cut_range_answer_resumes_within_the_range(self) -> None:
+        answers = [
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 10000-209999/300000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 75536-209999/300000"},
+                stream=_Chunks([b"b" * 134464]),
+            ),
+        ]
+
+        body, seen, sent, _ = await self._play(
+            answers, player={"Range": "bytes=10000-209999"}
+        )
+
+        assert len(body) == 200000
+        assert sent == [200000]
+        assert seen[0].headers["Range"] == "bytes=10000-209999"
+        assert seen[1].headers["Range"] == "bytes=75536-209999"
+
+    async def test_a_resume_is_cut_to_the_promised_length(self) -> None:
+        """A CDN sending more than asked: the answer ends at the length the
+        player was promised."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 40000]),
+            ),
+        ]
+
+        body, _, sent, _ = await self._play(answers)
+
+        assert len(body) == 100000
+        assert sent == [100000]
+
+    @pytest.mark.parametrize(
+        ("status", "headers"),
+        [
+            (403, {}),
+            (200, {"Content-Length": "100000"}),
+            (206, {"Content-Range": "bytes 0-99999/100000"}),
+        ],
+        ids=["refused", "whole-file", "wrong-start"],
+    )
+    async def test_a_resume_the_cdn_does_not_honour_cuts_the_transfer(
+        self, status: int, headers: dict[str, str]
+    ) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(status, headers=headers, stream=_Chunks([b"b" * 100000])),
+        ]
+
+        with pytest.raises(FileCut):
+            await self._play(answers)
+
+    async def test_a_resume_that_ends_short_cuts_the_transfer(self) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 1000]),
+            ),
+        ]
+        seen: list[httpx.Request] = []
+        sent: list[int] = []
+        received = 0
+
+        with structlog.testing.capture_logs() as logs:
+            async with httpx.AsyncClient(transport=self._cdn(answers, seen)) as client:
+                answer = await stream_file(client, self._URL, {}, on_sent=sent.append)
+                with pytest.raises(FileCut):
+                    async for chunk in answer.chunks:
+                        received += len(chunk)
+
+        assert received == self._PIECE + 1000
+        assert sent == [self._PIECE + 1000]
+        assert len(seen) == 2
+        cut = [log for log in logs if log["event"] == "hls_proxy_file_cut"]
+        assert len(cut) == 1
+        assert cut[0]["cdn"] == "mxdcontent"
+        assert cut[0]["sent"] == self._PIECE + 1000
+        assert cut[0]["expected"] == 100000
+        assert cut[0]["resumed"] is True
+
+    async def test_a_chunked_answer_passes_no_content_length(self) -> None:
+        """With Transfer-Encoding the CDN's Content-Length is not the body's
+        length (RFC 9112 section 6.3): it stays out, and the body ends where
+        the CDN ends it."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Transfer-Encoding": "chunked",
+                    "Content-Length": "100000",
+                },
+                stream=_Chunks([b"a" * 500]),
+            ),
+        ]
+        seen: list[httpx.Request] = []
+
+        async with httpx.AsyncClient(transport=self._cdn(answers, seen)) as client:
+            answer = await stream_file(client, self._URL, {})
+            body = b"".join([chunk async for chunk in answer.chunks])
+
+        assert answer.headers == {"content-type": "video/mp4"}
+        assert len(body) == 500
+        assert len(seen) == 1
+
+    async def test_a_cut_without_a_promised_length_is_not_resumed(self) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+        ]
+
+        with pytest.raises(FileCut):
+            await self._play(answers)
+
+    async def test_an_empty_answer_is_not_resumed(self) -> None:
+        answers = [
+            httpx.Response(200, headers={"Content-Length": "0"}, stream=_Chunks([])),
+        ]
+
+        body, seen, sent, _ = await self._play(answers)
+
+        assert body == b""
+        assert sent == [0]
+        assert len(seen) == 1
+
+    async def test_an_encoded_answer_passes_undecoded(self) -> None:
+        """The byte offsets must hold: the body goes out as the CDN sent it,
+        with its Content-Encoding."""
+        packed = gzip.compress(b"\x00video" * 1000)
+        answers = [
+            httpx.Response(
+                200,
+                headers={
+                    "Content-Encoding": "gzip",
+                    "Content-Length": str(len(packed)),
+                },
+                stream=_Chunks([packed]),
+            ),
+        ]
+
+        body, _, sent, _ = await self._play(answers)
+
+        assert body == packed
+        assert sent == [len(packed)]
+
 
 class _Chunks(httpx.AsyncByteStream):
     """A response body arriving in the given chunks."""
@@ -490,38 +1015,51 @@ class _Chunks(httpx.AsyncByteStream):
             yield chunk
 
     async def aclose(self) -> None:
+        # Closing a CDN answer yields to the loop (httpcore returns the
+        # connection): the window in which a second close can arrive
+        await asyncio.sleep(0)
         self.closed = True
 
 
+class _CutChunks(_Chunks):
+    """A body the CDN cuts: the given chunks, then the connection dies."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.read = True
+        for chunk in self._chunks:
+            yield chunk
+        raise httpx.ReadError("the CDN went away")
+
+
 # ---------------------------------------------------------------------------
-# _resolve_query_string (router helper)
+# resolve_query_string
 # ---------------------------------------------------------------------------
 
 
 class TestResolveQueryString:
     def test_uses_request_query_when_present(self) -> None:
-        result = _resolve_query_string(
+        result = resolve_query_string(
             "t=abc&expires=123", "https://cdn.example.com/m.m3u8?t=old"
         )
         assert result == "t=abc&expires=123"
 
     def test_falls_back_to_video_url_query(self) -> None:
-        result = _resolve_query_string(
+        result = resolve_query_string(
             "", "https://cdn.example.com/m.m3u8?t=abc&expires=123"
         )
         assert result == "t=abc&expires=123"
 
     def test_returns_empty_when_both_empty(self) -> None:
-        result = _resolve_query_string("", "https://cdn.example.com/m.m3u8")
+        result = resolve_query_string("", "https://cdn.example.com/m.m3u8")
         assert result == ""
 
     def test_handles_none_like_empty(self) -> None:
         # request.url.query could be an empty string
-        result = _resolve_query_string(
+        result = resolve_query_string(
             "", "https://cdn.example.com/hls/master.m3u8?token=xyz"
         )
         assert result == "token=xyz"
 
     def test_request_query_takes_priority(self) -> None:
-        result = _resolve_query_string("new=1", "https://cdn.example.com/m.m3u8?old=2")
+        result = resolve_query_string("new=1", "https://cdn.example.com/m.m3u8?old=2")
         assert result == "new=1"

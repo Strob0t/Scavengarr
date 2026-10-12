@@ -54,7 +54,7 @@ Scavengarr hosts nothing itself. It is a search-and-verify layer between the sit
 
 ```mermaid
 flowchart LR
-    stremio([Stremio]) -- "stream request<br/>IMDb / TMDB id" --> api
+    stremio([Stremio]) -- "stream request<br/>IMDb / TMDB / Kitsu id" --> api
     arr([Prowlarr / Sonarr / Radarr]) -- "Torznab search" --> api
 
     subgraph scavengarr [Scavengarr]
@@ -71,10 +71,10 @@ flowchart LR
     torznab -- "releases" --> arr
 ```
 
-1. **Title lookup.** A Stremio request carries an IMDb or TMDB id. Scavengarr looks up the title and year in every language its plugins search in (TMDB, or IMDb/Wikidata without a TMDB key).
-2. **Plugin search.** All matching plugins search in parallel within a shared time budget. Each plugin runs its own multi-stage scrape (search page → detail pages → links); slow or broken sites are cut off at the deadline and skipped for a while by a circuit breaker.
+1. **Title lookup.** A Stremio request carries an IMDb, TMDB or Kitsu id (an anime catalog's Kitsu id is translated to its IMDb id first). Scavengarr looks up the title and year in every language its plugins search in (TMDB, or IMDb/Wikidata without a TMDB key), and for an episode its title, air date and number, so the plugins that read a site's season pages find the episode the way the site numbers it.
+2. **Plugin search.** All matching plugins search in parallel. Each plugin runs its own multi-stage scrape (search page → detail pages → links); the answer goes out at its budget with what is known, a plugin still searching then finishes in the background for the next request, and sites that keep failing are skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
-4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 60 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
+4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 62 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
 5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
 
 ---
@@ -83,13 +83,15 @@ flowchart LR
 
 ### Stremio addon
 
-- Streams for movies and series episodes, looked up by IMDb (`tt…`) or TMDB (`tmdb:…`) id
+- Streams for movies and series episodes, looked up by IMDb (`tt…`), TMDB (`tmdb:…`) or Kitsu (`kitsu:…`, Stremio's anime catalogs) id
+- Anime episodes numbered the way the sites count them: an IMDb episode of a long-running anime carries its Kitsu number, and the anime plugins place it on the site's own season pages
 - Hoster links resolved to direct video URLs (MP4 and HLS), with the playback headers Stremio needs
+- HLS streams play through Scavengarr's HLS proxy (the CDN's headers on every request, three segments fetched ahead for CDNs that throttle a connection), and files that a hoster binds to the resolving address through its file proxy
 - Playback check: resolved URLs that return an error page or no video are dropped before you see them
-- Ranking by language (German audio first by default), quality and hoster reliability
+- Ranking by language (German audio first by default), quality and hoster reliability; quality and size are read from the stream itself (an HLS playlist's resolution, a file's length) where the site names none
 - One working stream per hoster and language (dub and sub both stay): if a hoster's best link is dead, its next link is tried
 - Autoplay of the next episode (Stremio's binge watching keeps the language of the current stream)
-- Answer deadline: plugins search for up to 30 s from the request start; the answer goes out at 5 resolved streams, when everything is done, or at the latest after 60 s (defaults), so Stremio always gets an answer in time
+- Answer budget: a request answers 30 s after its start with what is known, earlier at 5 resolved streams or when everything is done, at the latest after 60 s (defaults), so Stremio always gets an answer in time; plugins still searching then finish in the background, and the next request for the title gets their streams
 - Catalogs: trending titles (needs a TMDB API key) and search (TMDB, or IMDb without a key)
 
 ### Arr indexer (Torznab)
@@ -102,10 +104,10 @@ flowchart LR
 
 ### Sources and hosters
 
-- 41 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
-- 60 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- 42 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
+- 62 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
-- Mirror fallback: plugins try alternative domains when the primary one is down
+- Mirror fallback: plugins try alternative domains when the primary one is down, and follow a site's own published list of its addresses
 - Multi-language search: titles are looked up in each plugin's language
 
 ### Anti-bot and captchas
@@ -117,6 +119,7 @@ flowchart LR
 ### Reliability and performance
 
 - Parallel, time-boxed plugin search with a per-plugin circuit breaker (cooldown grows while a site stays down)
+- Hoster resolutions (an hour for a stream, 15 minutes for a dead link) and open circuit breakers survive a restart
 - Global concurrency pool with fair-share slots across simultaneous requests, auto-tuned from container CPU and memory limits
 - One shared browser process for all browser-based plugins
 - Adaptive per-domain rate limiting for outgoing requests, per-IP limit for the API
@@ -125,9 +128,10 @@ flowchart LR
 
 ### Operations
 
-- Single container with Docker Compose; optional Byparr, Redis and Tempo profiles
-- Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics` with a Grafana dashboard in `docker/`, `/api/v1/stats/metrics`)
+- Single container with Docker Compose from a published `linux/amd64` and `linux/arm64` image; optional Byparr, Redis and Tempo profiles
+- Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics` with a Grafana dashboard and alert rules in `docker/`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
+- A record per plugin and day, kept 180 days: searches, results, timeouts, challenges and site checks (`/api/v1/stats/plugins`), the evidence for keeping or dropping a plugin whose site died
 - Graceful shutdown that drains in-flight requests
 - Configuration via YAML, environment variables or CLI flags
 
@@ -142,16 +146,20 @@ Requirements: Docker with the Compose plugin, about 2 GB of free RAM (the browse
 ```bash
 git clone https://github.com/Strob0t/Scavengarr.git
 cd Scavengarr
-docker compose up -d --build
+docker compose up -d
 ```
 
-The first build takes a few minutes (it installs the browser). Then check that it is running:
+Compose pulls the published image `ghcr.io/strob0t/scavengarr:latest` (`linux/amd64` and `linux/arm64`, e.g. a Raspberry Pi 4; the plugins are part of it). Then check that it is running:
 
 ```bash
 curl http://localhost:7979/api/v1/healthz
 ```
 
-Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins from `plugins/`. Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
+The answer names the version, the commit and the build time.
+
+Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Configuration → Docker](docs/features/configuration.md#docker-configuration) has the details.
+
+Scavengarr reads `data/config.yaml` (mounted into the container; when the file is missing, the container writes the default there on its first start, if the directory is writable for its user, uid 1000). Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 
 **Optional services** (see [`docker-compose.yml`](docker-compose.yml)):
 
@@ -162,14 +170,23 @@ Scavengarr reads `data/config.yaml` (mounted into the container) and the plugins
 | `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/features/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
 
 ```bash
-docker compose --profile solver --profile redis up -d --build
+docker compose --profile solver --profile redis up -d
 ```
 
 **Updating:**
 
 ```bash
-git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
+```
+
+An updater such as watchtower can do this on its own, since nothing is built locally. `git pull` brings changes to `docker-compose.yml` and the default `data/config.yaml`, which the image does not apply to an existing config.
+
+**Building from source:** in `docker-compose.yml`, replace the `image:` line with the commented `build:` block and run `docker compose up -d --build` (the first build takes a few minutes: it installs the browser). The build records the checkout's commit and the build time for the health answer and the startup log; a rebuild of the same commit keeps the first build's time unless the build arguments set them:
+
+```bash
+SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
+SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
 ```
 
 ### Without Docker (Poetry)
@@ -223,27 +240,28 @@ The settings you are most likely to change:
 
 | Setting (YAML) | Environment variable | Built-in default | What it does |
 |---|---|---|---|
-| `stremio.plugin_timeout_seconds` | — | `30` | Search budget per Stremio request, counted from the request start |
-| `stremio.stream_deadline_seconds` | — | `60` | Latest answer of a Stremio request; it goes out earlier at `stremio.resolve_target_count` (5) streams or when everything is done |
-| `stremio.verify_streams` | — | `true` | Drop resolved streams that do not return video |
-| `stremio.language_scores` | — | `de` > `de-sub` > `en-sub` > `en` | Language ranking of streams |
-| `stremio.max_results_per_plugin` | — | `100` (`data/config.yaml`: `50`) | Results per plugin and Stremio request |
+| `stremio.plugin_timeout_seconds` | `SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS` | `30` | Each plugin's search time, from the moment it holds a slot; also the answer budget unless `stremio.answer_budget_seconds` is set |
+| `stremio.answer_budget_seconds` | `SCAVENGARR_STREMIO_ANSWER_BUDGET_SECONDS` | unset (the plugin timeout) | When a Stremio request stops waiting for the search, counted from the request start; the plugins still searching finish in the background |
+| `stremio.stream_deadline_seconds` | `SCAVENGARR_STREMIO_STREAM_DEADLINE_SECONDS` | `60` | Latest answer of a Stremio request; it goes out earlier at `stremio.resolve_target_count` (5) streams or when everything is done |
+| `stremio.verify_streams` | `SCAVENGARR_STREMIO_VERIFY_STREAMS` | `true` | Drop resolved streams that do not return video |
+| `stremio.language_scores` | `SCAVENGARR_STREMIO_LANGUAGE_SCORES` (JSON) | `de` > `de-sub` > `en-sub` > `en` | Language ranking of streams |
+| `stremio.max_results_per_plugin` | `SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN` | `100` (`data/config.yaml`: `50`) | Results per plugin and Stremio request |
 | `tmdb_api_key` | `SCAVENGARR_TMDB_API_KEY` | unset | TMDB key for catalogs and title lookup (IMDb/Wikidata fallback without it) |
 | `playwright.solver_url` | `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` | unset | Byparr/FlareSolverr sidecar, e.g. `http://byparr:8191` |
 | `playwright.headless` | `SCAVENGARR_PLAYWRIGHT_HEADLESS` | `false` | Headful browser passes Cloudflare Turnstile; needs a display (Xvfb in the image) |
 | `cache.backend` | `SCAVENGARR_CACHE_BACKEND` | `diskcache` | `diskcache` or `redis` |
-| `cache.search_ttl_seconds` | — | `900` (`data/config.yaml`: `1800`) | How long search results are cached (`0` = off) |
+| `cache.search_ttl_seconds` | `SCAVENGARR_CACHE_SEARCH_TTL_SECONDS` | `900` (`data/config.yaml`: `1800`) | How long search results are cached (`0` = off) |
 | `http.rate_limit_rps` | `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND` | `5.0` (`data/config.yaml`: `10.0`) | Starting request rate per site (adaptive) |
 | `http.api_rate_limit_rpm` | `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` | Requests per minute per client IP on the API |
 | `logging.level` | `SCAVENGARR_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
-The answer does not wait for the whole search: it goes out once 5 streams resolve. The full reference is in [docs/features/configuration.md](docs/features/configuration.md).
+Every setting can also come from the environment: a section's key as `SCAVENGARR_<SECTION>_<KEY>`, a dict-typed one as JSON (the older names in the table win over the sectioned ones). The answer does not wait for the whole search: it goes out once 5 streams resolve, or at its budget with what is known by then. The full reference is in [docs/features/configuration.md](docs/features/configuration.md).
 
 ---
 
 ## Supported sources
 
-Scavengarr ships 41 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
+Scavengarr ships 42 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
 
 The complete, generated list with domains, content type, engine and languages is in **[docs/plugins.md](docs/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
 
@@ -273,7 +291,7 @@ An answer goes out once `stremio.resolve_target_count` streams (5) resolve, or w
 <details>
 <summary><b>A stream is listed but does not play</b></summary>
 
-Every stream passed a playback check when it was listed, and Scavengarr resolves the hoster link again when an old stream is played, but the hoster may have removed the file meanwhile, and stream links are kept 7 days. Pick another stream or request the title again. Some hosters bind their video URLs to the IP address that resolved them: the device playing the stream should use the same internet connection as the Scavengarr host.
+Every stream passed a playback check when it was listed, and Scavengarr resolves the hoster link again when an old stream is played, but the hoster may have removed the file meanwhile, and stream links are kept 7 days. Pick another stream or request the title again. Some hosters bind their files to the address that resolved them: Scavengarr passes those through its own file proxy, so the device playing them needs no route of its own to the hoster.
 
 </details>
 
@@ -310,7 +328,7 @@ Some home routers treat many new connections to different hosts in a short time 
 <details>
 <summary><b>Where is my data stored?</b></summary>
 
-In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies, plugin scores) and in `data/config.yaml`. Scavengarr stores no media.
+In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies, plugin scores and their 180-day record, hoster resolutions and circuit breakers) and in `data/config.yaml`. Scavengarr stores no media.
 
 </details>
 
@@ -325,6 +343,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Torznab API | [docs/features/torznab-api.md](docs/features/torznab-api.md) |
 | Prowlarr integration | [docs/features/prowlarr-integration.md](docs/features/prowlarr-integration.md) |
 | Configuration reference | [docs/features/configuration.md](docs/features/configuration.md) |
+| Observability | [docs/features/observability.md](docs/features/observability.md) |
 | Plugin list | [docs/plugins.md](docs/plugins.md) |
 | Plugin system | [docs/features/plugin-system.md](docs/features/plugin-system.md) |
 | Hoster resolvers | [docs/features/hoster-resolvers.md](docs/features/hoster-resolvers.md) |
@@ -339,7 +358,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 Most of Scavengarr's code was written with AI coding assistants — it is, openly, a largely vibe-coded project. It is not an unreviewed one: every change was directed, reviewed and accepted by an experienced software developer, and the project follows rules that keep the generated code honest:
 
-- **Test-driven development.** Tests come first; the suite has about 5,300 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
+- **Test-driven development.** Tests come first; the suite has about 6,500 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
 - **Clean Architecture.** Strict layers (domain, application, infrastructure, interfaces) with a dependency rule, ports as protocols and a single composition root.
 - **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code, pre-commit hooks and the full test suite before anything is committed.
 - **Written plans and measurements.** Larger changes start with a plan in [`docs/plans/`](docs/plans), and performance changes are measured against real requests before and after.

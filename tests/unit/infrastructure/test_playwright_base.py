@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.plugins.base import (
+    PluginUnreachableError,
+    SearchResult,
+)
+from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
 from scavengarr.infrastructure.browser.hardening import (
     CHROMIUM_ARGS,
     block_heavy_resources,
@@ -69,6 +74,34 @@ class _SerializedPlugin(PlaywrightPluginBase):
         episode: int | None = None,
     ) -> list[SearchResult]:
         return [SearchResult(title="serial-result", download_link="https://x")]
+
+
+class _LocatingPlugin(PlaywrightPluginBase):
+    """Serialized plugin that locates episodes: search() takes the reference."""
+
+    name = "locating-pw"
+    provides = "stream"
+    _domains = ["example.com"]
+    _serialize_search = True
+    locates_episodes = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, Any]] = []
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {"query": query, "season": season, "episode": episode, "ref": episode_ref}
+        )
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +167,14 @@ class TestInit:
 # ---------------------------------------------------------------------------
 # Browser lifecycle
 # ---------------------------------------------------------------------------
+
+
+def _make_mock_context() -> AsyncMock:
+    """A BrowserContext mock; its default-timeout setters are synchronous."""
+    ctx = AsyncMock()
+    ctx.set_default_timeout = MagicMock()
+    ctx.set_default_navigation_timeout = MagicMock()
+    return ctx
 
 
 def _make_mock_browser(*, connected: bool = True) -> AsyncMock:
@@ -270,7 +311,7 @@ class TestEnsureBrowser:
         dead_browser = _make_mock_browser(connected=False)
         plugin._browser = dead_browser
         plugin._pw = AsyncMock()
-        plugin._context = AsyncMock()
+        plugin._context = _make_mock_context()
         plugin._page = AsyncMock()
 
         new_browser = _make_mock_browser()
@@ -381,7 +422,7 @@ class TestEnsureContext:
     @pytest.mark.asyncio
     async def test_creates_context(self) -> None:
         plugin = _TestPlugin()
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         plugin._browser = mock_browser
@@ -397,14 +438,14 @@ class TestEnsureContext:
         before is dead, and boerse, mygully and animeloads failed every
         search until the app restarted (code review, 2026-10-06)."""
         plugin = _TestPlugin()
-        new_context = AsyncMock()
+        new_context = _make_mock_context()
         new_browser = _make_mock_browser()
         new_browser.new_context = AsyncMock(return_value=new_context)
         pool = MagicMock()
         pool.warmup = AsyncMock(return_value=(new_browser, MagicMock()))
         plugin.set_shared_pool(pool)
         plugin._browser = _make_mock_browser(connected=False)
-        plugin._context = AsyncMock()
+        plugin._context = _make_mock_context()
 
         assert await plugin._ensure_context() is new_context
         assert plugin._browser is new_browser
@@ -412,7 +453,7 @@ class TestEnsureContext:
     @pytest.mark.asyncio
     async def test_reuses_existing_context(self) -> None:
         plugin = _TestPlugin()
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         plugin._context = mock_context
 
         ctx = await plugin._ensure_context()
@@ -421,7 +462,7 @@ class TestEnsureContext:
     @pytest.mark.asyncio
     async def test_blocks_heavy_resources_by_default(self) -> None:
         plugin = _TestPlugin()
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         plugin._browser = mock_browser
@@ -435,7 +476,7 @@ class TestEnsureContext:
         """Patchright's real UA must match the browser's client hints."""
         plugin = _TestPlugin()
         mock_browser = _make_mock_browser()
-        mock_browser.new_context = AsyncMock(return_value=AsyncMock())
+        mock_browser.new_context = AsyncMock(return_value=_make_mock_context())
         plugin._browser = mock_browser
 
         await plugin._ensure_context()
@@ -450,7 +491,7 @@ class TestEnsureContext:
         plugin = _TestPlugin()
         plugin._browser_user_agent = "Custom/1.0"
         mock_browser = _make_mock_browser()
-        mock_browser.new_context = AsyncMock(return_value=AsyncMock())
+        mock_browser.new_context = AsyncMock(return_value=_make_mock_context())
         plugin._browser = mock_browser
 
         await plugin._ensure_context()
@@ -461,7 +502,7 @@ class TestEnsureContext:
     async def test_resource_blocking_can_be_disabled(self) -> None:
         plugin = _TestPlugin()
         plugin._block_resources = False
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         plugin._browser = mock_browser
@@ -482,7 +523,7 @@ class TestEnsurePage:
         plugin = _TestPlugin()
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
 
@@ -497,7 +538,7 @@ class TestEnsurePage:
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
         plugin._page = mock_page
-        plugin._context = AsyncMock()
+        plugin._context = _make_mock_context()
 
         page = await plugin._ensure_page()
         assert page is mock_page
@@ -510,7 +551,7 @@ class TestEnsurePage:
 
         new_page = AsyncMock()
         new_page.is_closed = MagicMock(return_value=False)
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=new_page)
 
         plugin._page = closed_page
@@ -536,7 +577,7 @@ class TestVerifyDomain:
         mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(return_value=mock_resp)
         plugin._page = mock_page
-        plugin._context = AsyncMock()
+        plugin._context = _make_mock_context()
 
         await plugin._verify_domain()
 
@@ -556,7 +597,7 @@ class TestVerifyDomain:
         mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(side_effect=[fail_resp, ok_resp])
         plugin._page = mock_page
-        plugin._context = AsyncMock()
+        plugin._context = _make_mock_context()
 
         await plugin._verify_domain()
 
@@ -570,12 +611,57 @@ class TestVerifyDomain:
         mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(side_effect=Exception("timeout"))
         plugin._page = mock_page
-        plugin._context = AsyncMock()
+        plugin._context = _make_mock_context()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
+
+        assert plugin._domain_verified is False
+
+    @pytest.mark.asyncio
+    async def test_a_domain_that_only_answers_an_error_page_serves_unpinned(
+        self,
+    ) -> None:
+        """No domain answers below 400: the first that answers at all (404,
+        an error page is still the site) serves, unpinned, and is checked
+        again after the recheck time, as in the httpx base."""
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.title = AsyncMock(return_value="Not Found")
+        mock_page.goto = AsyncMock(return_value=MagicMock(status=404))
+        plugin._page = mock_page
+        plugin._context = _make_mock_context()
 
         await plugin._verify_domain()
 
+        assert plugin.base_url == "https://example.com"
+        assert plugin._domain_verified is False
+        assert mock_page.goto.await_count == 2  # both domains were tried
+        # within the recheck time the next search does not check again
+        await plugin._verify_domain()
+        assert mock_page.goto.await_count == 2
+        plugin._domain_recheck_at = 0.0
+        await plugin._verify_domain()
+        assert mock_page.goto.await_count == 4
+
+    @pytest.mark.asyncio
+    async def test_an_error_page_yields_to_a_working_domain(self) -> None:
+        plugin = _TestPlugin()
+        mock_page = AsyncMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.title = AsyncMock(return_value="Not Found")
+        mock_page.goto = AsyncMock(
+            side_effect=[MagicMock(status=404), MagicMock(status=200)]
+        )
+        plugin._page = mock_page
+        plugin._context = _make_mock_context()
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://fallback.com"
         assert plugin._domain_verified is True
-        assert "example.com" in plugin.base_url  # falls back to primary
+        assert plugin._domain_recheck_at == 0.0
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:
@@ -614,7 +700,7 @@ class TestFetchPageHtml:
         mock_page.content = AsyncMock(return_value="<html>ok</html>")
         mock_page.close = AsyncMock()
 
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
 
@@ -634,7 +720,7 @@ class TestFetchPageHtml:
         mock_page.goto = AsyncMock(return_value=mock_resp)
         mock_page.close = AsyncMock()
 
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
 
@@ -651,7 +737,7 @@ class TestFetchPageHtml:
         mock_page.goto = AsyncMock(side_effect=Exception("network error"))
         mock_page.close = AsyncMock()
 
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
 
@@ -672,7 +758,7 @@ class TestFetchPageHtml:
         mock_page.goto = AsyncMock(return_value=mock_resp)
         mock_page.content = AsyncMock(return_value="<html>cf-ok</html>")
 
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
         plugin._wait_for_cloudflare = AsyncMock(return_value=True)
@@ -695,7 +781,7 @@ class TestFetchPageHtml:
         mock_page.is_closed = MagicMock(return_value=False)
         mock_page.goto = AsyncMock(return_value=mock_resp)
 
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_context.new_page = AsyncMock(return_value=mock_page)
         plugin._context = mock_context
 
@@ -721,7 +807,7 @@ class TestFetchPageHtmlRetry:
         page.goto = AsyncMock(side_effect=[MagicMock(status=s) for s in statuses])
         page.title = AsyncMock(return_value="503 Service Temporarily Unavailable")
         page.content = AsyncMock(return_value="<html>ok</html>")
-        context = AsyncMock()
+        context = _make_mock_context()
         context.new_page = AsyncMock(return_value=page)
         plugin._context = context
         plugin._wait_for_cloudflare = AsyncMock(return_value=True)
@@ -811,6 +897,51 @@ class TestWaitForCloudflare:
     def test_default_timeout_covers_a_turnstile_click(self) -> None:
         assert _TestPlugin()._cf_timeout_ms == 30_000
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("title", "seen"), [("Just a moment...", True), ("Movies", False)]
+    )
+    async def test_a_challenge_page_marks_the_searchs_flag(
+        self, title: str, seen: bool
+    ) -> None:
+        """The search runner counts a search whose page showed a challenge
+        once (step 50); a plain page leaves the flag."""
+        plugin = _TestPlugin()
+        page = AsyncMock()
+        page.title = AsyncMock(return_value=title)
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            with patch(
+                "scavengarr.infrastructure.plugins.playwright_base.solve_cloudflare",
+                AsyncMock(return_value=True),
+            ):
+                await plugin._wait_for_cloudflare(page)
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is seen
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("solved", [True, False])
+    async def test_the_challenge_is_settled_with_the_solve(self, solved: bool) -> None:
+        """Row 70: the flag learns whether the browser got past it."""
+        plugin = _TestPlugin()
+        page = AsyncMock()
+        page.title = AsyncMock(return_value="Just a moment...")
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            with patch(
+                "scavengarr.infrastructure.plugins.playwright_base.solve_cloudflare",
+                AsyncMock(return_value=solved),
+            ):
+                await plugin._wait_for_cloudflare(page)
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.unsolved_search is not solved
+
 
 class TestClearanceStore:
     @pytest.fixture(autouse=True)
@@ -823,7 +954,7 @@ class TestClearanceStore:
         store = AsyncMock()
         PlaywrightPluginBase.set_clearance_store(store)
         plugin = _TestPlugin()
-        ctx = AsyncMock()
+        ctx = _make_mock_context()
 
         await plugin._configure_context(ctx)
 
@@ -850,8 +981,53 @@ class TestClearanceStore:
     @pytest.mark.asyncio
     async def test_without_store_nothing_happens(self) -> None:
         plugin = _TestPlugin()
-        await plugin._configure_context(AsyncMock())
+        await plugin._configure_context(_make_mock_context())
         await plugin._remember_clearance(AsyncMock())
+
+
+class TestPageTimeout:
+    """``playwright.timeout_ms`` is the pages' default timeout (step 51):
+    navigation and actions without an explicit one, set per context, and
+    the navigation of ``_fetch_page_html`` without a *timeout*."""
+
+    def test_the_default_is_thirty_seconds(self) -> None:
+        assert _TestPlugin()._page_timeout_ms == 30_000
+
+    @pytest.mark.asyncio
+    async def test_set_page_timeout_applies_to_every_new_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(PlaywrightPluginBase, "_page_timeout_ms", 30_000)
+        PlaywrightPluginBase.set_page_timeout(12_345)
+        ctx = _make_mock_context()
+        ctx.set_default_timeout = MagicMock()
+        ctx.set_default_navigation_timeout = MagicMock()
+
+        await _TestPlugin()._configure_context(ctx)
+
+        ctx.set_default_timeout.assert_called_once_with(12_345)
+        ctx.set_default_navigation_timeout.assert_called_once_with(12_345)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("given", "used"), [(None, 12_345), (5_000, 5_000)])
+    async def test_fetch_page_html_navigates_with_it(
+        self, given: int | None, used: int
+    ) -> None:
+        plugin = _TestPlugin()
+        plugin._page_timeout_ms = 12_345
+        page = AsyncMock()
+        page.is_closed = MagicMock(return_value=False)
+        page.goto = AsyncMock(return_value=MagicMock(status=200))
+        page.content = AsyncMock(return_value="<html></html>")
+        plugin._new_page = AsyncMock(return_value=page)
+        plugin._passes_cloudflare = AsyncMock(return_value=True)
+
+        kwargs = {} if given is None else {"timeout": given}
+        await plugin._fetch_page_html(
+            "https://example.com", wait_for_idle=False, **kwargs
+        )
+
+        assert page.goto.await_args.kwargs["timeout"] == used
 
 
 class TestPassesCloudflare:
@@ -1045,7 +1221,7 @@ class TestCleanup:
         plugin = _TestPlugin()
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_browser = AsyncMock()
         mock_pw = AsyncMock()
 
@@ -1074,7 +1250,7 @@ class TestCleanup:
         plugin = _TestPlugin()
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_browser = AsyncMock()
         mock_pw = AsyncMock()
 
@@ -1330,7 +1506,7 @@ class TestEnsureContextWithContextVar:
         )
 
         plugin = _TestPlugin()
-        mock_req_ctx = AsyncMock()
+        mock_req_ctx = _make_mock_context()
         token = request_browser_context.set(mock_req_ctx)
         try:
             ctx = await plugin._ensure_context()
@@ -1347,9 +1523,9 @@ class TestEnsureContextWithContextVar:
 
         plugin = _TestPlugin()
         plugin._serialize_search = True
-        mock_req_ctx = AsyncMock()
+        mock_req_ctx = _make_mock_context()
         mock_browser = _make_mock_browser()
-        mock_singleton_ctx = AsyncMock()
+        mock_singleton_ctx = _make_mock_context()
         mock_browser.new_context = AsyncMock(return_value=mock_singleton_ctx)
         plugin._browser = mock_browser
 
@@ -1366,7 +1542,7 @@ class TestEnsureContextWithContextVar:
     async def test_falls_back_to_singleton_when_no_contextvar(self) -> None:
         """Without ContextVar, _ensure_context returns the singleton."""
         plugin = _TestPlugin()
-        mock_context = AsyncMock()
+        mock_context = _make_mock_context()
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_context)
         plugin._browser = mock_browser
@@ -1390,7 +1566,7 @@ class TestIsolatedSearch:
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
 
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.new_page = AsyncMock(return_value=mock_page)
         mock_ctx.pages = [mock_page]
 
@@ -1413,7 +1589,7 @@ class TestIsolatedSearch:
         2026-10-06)."""
         events: list[str] = []
         plugin = _ConcretePlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         browser = _make_mock_browser()
         browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -1443,7 +1619,7 @@ class TestIsolatedSearch:
     @pytest.mark.asyncio
     async def test_isolated_context_forces_no_user_agent(self) -> None:
         plugin = _ConcretePlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -1457,7 +1633,7 @@ class TestIsolatedSearch:
     async def test_isolated_context_blocks_heavy_resources(self) -> None:
         """Per-request contexts get the same resource blocking as the singleton."""
         plugin = _ConcretePlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -1484,7 +1660,7 @@ class TestIsolatedSearch:
         mock_page = AsyncMock()
         mock_page.is_closed = MagicMock(return_value=False)
 
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = [mock_page]
 
         mock_browser = _make_mock_browser()
@@ -1506,6 +1682,20 @@ class TestIsolatedSearch:
         assert len(results) == 1
         assert results[0].title == "serial-result"
 
+    async def test_the_reference_reaches_a_locating_search(self) -> None:
+        """The episode reference goes to search() as a keyword, and only
+        when there is one."""
+        plugin = _LocatingPlugin()
+        ref = EpisodeRef(season=5, episode=2, title="Laboon", absolute=62)
+
+        await plugin.isolated_search("q", 5070, season=5, episode=2, episode_ref=ref)
+        await plugin.isolated_search("q", 5070, season=5, episode=2)
+
+        assert plugin.calls == [
+            {"query": "q", "season": 5, "episode": 2, "ref": ref},
+            {"query": "q", "season": 5, "episode": 2, "ref": None},
+        ]
+
     @pytest.mark.asyncio
     async def test_prepare_context_called(self) -> None:
         """isolated_search calls _prepare_context on the new context."""
@@ -1524,7 +1714,7 @@ class TestIsolatedSearch:
                 return []
 
         plugin = _PrepPlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -1554,7 +1744,7 @@ class TestIsolatedSearch:
                 return []
 
         plugin = _CapPlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -1581,7 +1771,7 @@ class TestIsolatedSearch:
                 return []
 
         plugin = _SimplePlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -1607,7 +1797,7 @@ class TestIsolatedSearch:
                 return []
 
         plugin = _BadPrepPlugin()
-        mock_ctx = AsyncMock()
+        mock_ctx = _make_mock_context()
         mock_ctx.pages = []
         mock_browser = _make_mock_browser()
         mock_browser.new_context = AsyncMock(return_value=mock_ctx)

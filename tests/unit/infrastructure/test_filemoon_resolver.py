@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
+from scavengarr.domain.entities.stremio import ResolvedStream
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
 from scavengarr.infrastructure.hoster_resolvers.filemoon import (
     FilemoonResolver,
     _extract_hls_from_unpacked,
     _unpack_p_a_c_k,
 )
+
+if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 
 def _make_html_response(html: str, status: int = 200) -> MagicMock:
@@ -390,6 +396,10 @@ class TestBrowserCapture:
         assert pool.capture_media.await_args.args[0] == (
             "https://filemoon.to/e/fwzwu9ny19jk"
         )
+        # The pool's own timeout (stremio.probe_stealth_timeout_seconds) applies
+        assert "timeout" not in pool.capture_media.await_args.kwargs
+        # The player frame's ad tag stays out (row 78)
+        assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
 
     @pytest.mark.asyncio
     async def test_mp4_stream_without_referer(self) -> None:
@@ -451,62 +461,151 @@ class TestBrowserCapture:
         assert await resolver.resolve("https://filemoon.sx/e/abc123def456") is None
 
 
-class TestByseDetailsGate:
-    """The Byse details API says up front when the browser cannot help."""
+_BYSE = "https://bysezejataos.com"
+_BYSE_ID = "pz97syzbv14q"
+_DETAILS = f"{_BYSE}/api/videos/{_BYSE_ID}/embed/details"
+_OWNER_ONLY = '{"error":"embedding from this domain is not allowed for this video"}'
 
-    _SPA = TestBrowserCapture._SPA
+
+class _FakePool:
+    """A stealth pool that records the pages it is asked to capture and
+    the player element it is told to click there."""
+
+    def __init__(self, media: CapturedMedia | None) -> None:
+        self.media = media
+        self.urls: list[str] = []
+        self.players: list[str | None] = []
+        self.own_scripts: list[bool] = []
+
+    async def capture_media(
+        self,
+        url: str,
+        *,
+        timeout: float | None = None,
+        player: str | None = None,
+        own_scripts_only: bool = False,
+    ) -> CapturedMedia | None:
+        self.urls.append(url)
+        self.players.append(player)
+        self.own_scripts.append(own_scripts_only)
+        return self.media
+
+
+class TestByseDetailsGate:
+    """The Byse details API decides which page the browser opens: the embed
+    page where embedding is allowed, the hoster's own watch page ``/d/<id>``
+    where the owner allows embedding only on its own sites, none for a video
+    that is gone."""
+
+    _MEDIA = CapturedMedia(
+        url="https://cdn.example/hls/master.m3u8",
+        referer="https://player.example/",
+    )
 
     @staticmethod
-    def _client(details: MagicMock) -> AsyncMock:
-        async def _get(url: str, **_: object) -> MagicMock:
-            if "/api/videos/" in url:
-                return details
-            return _make_html_response(TestByseDetailsGate._SPA)
+    async def _resolve(
+        pool: _FakePool, url: str = f"{_BYSE}/d/{_BYSE_ID}"
+    ) -> ResolvedStream | None:
+        respx.get(f"{_BYSE}/e/{_BYSE_ID}").respond(200, text=TestBrowserCapture._SPA)
+        async with httpx.AsyncClient() as client:
+            resolver = FilemoonResolver(
+                http_client=client, stealth_pool=cast("StealthPool", pool)
+            )
+            return await resolver.resolve(url)
 
-        client = AsyncMock(spec=httpx.AsyncClient)
-        client.get = AsyncMock(side_effect=_get)
-        return client
-
-    @pytest.mark.parametrize(
-        ("status", "body"),
-        [
-            (404, '{"error":"video record missing: video not found"}'),
-            (
-                403,
-                '{"error":"embedding from this domain is not allowed for this video"}',
-            ),
-        ],
-    )
+    @respx.mock
     @pytest.mark.asyncio
-    async def test_dead_or_embed_restricted_skips_browser(
-        self, status: int, body: str
+    async def test_an_embeddable_video_is_captured_from_the_embed_page(
+        self,
     ) -> None:
-        pool = AsyncMock()
-        details = _make_html_response(body, status=status)
-        resolver = FilemoonResolver(
-            http_client=self._client(details), stealth_pool=pool
-        )
+        respx.get(_DETAILS).respond(200, text=f'{{"code":"{_BYSE_ID}"}}')
+        pool = _FakePool(self._MEDIA)
 
-        result = await resolver.resolve("https://bysezejataos.com/d/pz97syzbv14q")
+        result = await self._resolve(pool)
 
-        assert result is None
-        pool.capture_media.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_available_video_goes_to_browser(self) -> None:
-        pool = AsyncMock()
-        pool.capture_media = AsyncMock(
-            return_value=CapturedMedia(url="https://cdn.example/x.m3u8", referer=None)
-        )
-        details = _make_html_response('{"code":"fwzwu9ny19jk"}')
-        resolver = FilemoonResolver(
-            http_client=self._client(details), stealth_pool=pool
-        )
-
-        result = await resolver.resolve("https://filemoon.to/e/fwzwu9ny19jk")
-
+        assert pool.urls == [f"{_BYSE}/e/{_BYSE_ID}"]
+        # The embed page is the player: the page centre is clicked
+        assert pool.players == [None]
+        assert pool.own_scripts == [True]
         assert result is not None
-        client_calls = [c.args[0] for c in resolver._http.get.await_args_list]
-        assert "https://filemoon.to/api/videos/fwzwu9ny19jk/embed/details" in (
-            client_calls
+        assert result.video_url == self._MEDIA.url
+        assert result.is_hls
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_an_owner_only_video_is_captured_from_the_watch_page(
+        self,
+    ) -> None:
+        respx.get(_DETAILS).respond(403, text=_OWNER_ONLY)
+        pool = _FakePool(self._MEDIA)
+
+        result = await self._resolve(pool)
+
+        assert pool.urls == [f"{_BYSE}/d/{_BYSE_ID}"]
+        # The watch page shows its player in a frame below its header
+        assert pool.players == [".video-page__player iframe"]
+        assert pool.own_scripts == [True]
+        assert result is not None
+        assert result.video_url == self._MEDIA.url
+        # The player frame's request carries the Referer the CDN checks
+        assert result.headers == {"Referer": "https://player.example/"}
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_gone_video_opens_no_browser(self) -> None:
+        respx.get(_DETAILS).respond(
+            404, text='{"error":"video record missing: video not found"}'
         )
+        pool = _FakePool(self._MEDIA)
+
+        assert await self._resolve(pool) is None
+        assert pool.urls == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_cloudflare_403_is_no_verdict(self) -> None:
+        respx.get(_DETAILS).respond(403, text="<html>Just a moment...</html>")
+        pool = _FakePool(self._MEDIA)
+
+        assert await self._resolve(pool) is not None
+        assert pool.urls == [f"{_BYSE}/e/{_BYSE_ID}"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_no_answer_from_the_api_leaves_it_to_the_embed_page(
+        self,
+    ) -> None:
+        respx.get(_DETAILS).mock(side_effect=httpx.ConnectError("refused"))
+        pool = _FakePool(self._MEDIA)
+
+        assert await self._resolve(pool) is not None
+        assert pool.urls == [f"{_BYSE}/e/{_BYSE_ID}"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_nothing_captured_from_the_watch_page_is_none(self) -> None:
+        respx.get(_DETAILS).respond(403, text=_OWNER_ONLY)
+        pool = _FakePool(None)
+
+        assert await self._resolve(pool) is None
+        assert pool.urls == [f"{_BYSE}/d/{_BYSE_ID}"]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_the_api_is_asked_on_the_links_host(self) -> None:
+        respx.get("https://filemoon.to/e/fwzwu9ny19jk").respond(
+            200, text=TestBrowserCapture._SPA
+        )
+        details = respx.get(
+            "https://filemoon.to/api/videos/fwzwu9ny19jk/embed/details"
+        ).respond(200, text='{"code":"fwzwu9ny19jk"}')
+        pool = _FakePool(self._MEDIA)
+
+        async with httpx.AsyncClient() as client:
+            resolver = FilemoonResolver(
+                http_client=client, stealth_pool=cast("StealthPool", pool)
+            )
+            assert await resolver.resolve("https://filemoon.to/e/fwzwu9ny19jk")
+
+        assert details.called
+        assert pool.urls == ["https://filemoon.to/e/fwzwu9ny19jk"]

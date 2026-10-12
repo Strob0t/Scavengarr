@@ -16,6 +16,7 @@ from scavengarr.infrastructure.plugins.categories import (
     category_matches,
     filter_by_category,
     is_series_title,
+    names_anime,
     served_category,
     stream_category,
 )
@@ -80,8 +81,28 @@ class TestStreamCategory:
         assert stream_category(["Anime", "Action"], is_series=True) == 5070
         assert stream_category(["animation"], is_series=True) == 5070
 
+    def test_zeichentrick_series(self) -> None:
+        # The German word: sto's genre map, filmpalast's and kinoger's pages
+        assert stream_category(["Zeichentrick"], is_series=True) == 5070
+
     def test_stream_categories_are_the_possible_labels(self) -> None:
         assert set(STREAM_CATEGORIES) == {2000, 5000, 5070}
+
+
+class TestNamesAnime:
+    """The genre words the plugins label 5070 by, shared with the title
+    matcher."""
+
+    def test_anime_and_animation(self) -> None:
+        assert names_anime(["Action", "Anime"])
+        assert names_anime([" animation "])
+
+    def test_zeichentrick(self) -> None:
+        assert names_anime(["Zeichentrick", "Abenteuer"])
+
+    def test_other_genres(self) -> None:
+        assert not names_anime(["Action", "Abenteuer"])
+        assert not names_anime([])
 
 
 class TestIsSeriesTitle:

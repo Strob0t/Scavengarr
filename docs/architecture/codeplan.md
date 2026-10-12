@@ -32,7 +32,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `domain/entities/scoring.py` | Plugin-scoring types | `ProbeResult`, `EwmaState`, `PluginScoreSnapshot` |
 | `domain/plugins/base.py` | Plugin contract | `SearchResult`, `PluginProtocol`, `PluginProvides`, `GrabResolvingPlugin` (optional grab-time link resolution) |
 | `domain/plugins/exceptions.py` | Plugin errors | `PluginError`, `PluginLoadError`, `PluginNotFoundError` |
-| `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `ConcurrencyPoolPort`, `ConcurrencyBudgetPort`, `ClientBoundResolverPort`, `BrowserFetcherPort`, `TelemetryPort` (sync; `NO_TELEMETRY` records nothing) |
+| `domain/ports/` | `Protocol` ports | `CachePort`, `SearchEnginePort`, `PluginRegistryPort` (sync), `CrawlJobRepository`, `StreamLinkRepository`, `HosterResolverPort`, `PluginScoreStorePort`, `TmdbClientPort`, `AnimeIdResolverPort`, `PluginHistoryPort` (sync; `NO_PLUGIN_HISTORY` counts nothing), `ConcurrencyPoolPort`, `ConcurrencyBudgetPort`, `ClientBoundResolverPort`, `BrowserFetcherPort`, `TelemetryPort` (sync; `NO_TELEMETRY` records nothing) |
 
 ### Application
 
@@ -42,30 +42,35 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `application/use_cases/torznab_caps.py` | Capabilities for one plugin | `TorznabCapsUseCase` |
 | `application/use_cases/torznab_indexers.py` | Indexer listing | `TorznabIndexersUseCase` |
 | `application/use_cases/crawljob_resolve.py` | Grab time: resolve a CrawlJob's page URLs through its `GrabResolvingPlugin` | `CrawlJobResolveUseCase` |
-| `application/use_cases/stremio_stream.py` | IMDb ID → title(s) → cached or shared plugin search → filter/rank → resolve per hoster → play/proxy links | `StremioStreamUseCase` |
+| `application/use_cases/stremio_stream.py` | A `kitsu:` id translated → IMDb ID → title(s) → cached or shared plugin search → filter/rank → resolve per hoster → play/proxy links | `StremioStreamUseCase` |
 | `application/use_cases/stremio_links.py` | Stored stream links behind `/play` and the HLS proxy, resolved again when stale (1 h) or refused by the CDN | `StremioLinks` |
 | `application/use_cases/stremio_catalog.py` | TMDB trending and search catalogs | `StremioCatalogUseCase` |
+| `application/stremio/title_resolution.py` | A request's title per language, the plugins' languages (groups, default language), the title match of results | `TitleResolver` |
+| `application/stremio/plugin_selection.py` | The stream plugins and the scored selection of them (top N, cold start, exploration slot) | `PluginSelector` |
+| `application/stremio/title_search.py` | One plugin search per title: single-flight, cached, stale entries refreshed one title at a time | `TitleSearch` |
 | `application/stremio/plugin_search.py` | Plugin fan-out with fair-share budget, shared search deadline, circuit breaker, fallback queries | `PluginSearchRunner` |
+| `application/stremio/answer.py` | The answer's streams: ranked, merged with the measured quality and size, served through `/play/` or the HLS proxy | `rank_streams`, `with_measurements`, `cache_and_proxy`, `save_links` |
 | `application/stremio/queries.py` | Search query normalization and multi-language references | `build_search_query`, `build_search_queries`, `build_multi_lang_reference`, `build_lang_group_queries` |
 | `application/stremio/stream_builder.py` | Stream formatting, hoster dedup, behavior hints, cache/proxy links | `format_stream`, `deduplicate_by_hoster`, `is_direct_video_url`, `build_stream_from_resolved` |
 | `application/stremio/search_cache.py` | Title-filtered plugin results per title, stale-while-revalidate | `SearchCache`, `CachedSearch` |
 | `application/stremio/search_progress.py` | Results of a running search, shared by the requests waiting on it | `SearchProgress` |
-| `application/stremio/resolution.py` | One request's resolutions: each hoster's best link in rank order | `HosterResolution` |
+| `application/stremio/resolution.py` | One request's resolutions: each hoster's best link in rank order; when the answer is due, cached answers, background resolutions | `HosterResolution`, `ResolveFlow` |
 | `application/factories/crawljob_factory.py` | `SearchResult` → `CrawlJob` | `CrawlJobFactory` |
 
 ### Infrastructure
 
 | Path | Responsibility | Key classes/functions |
 |---|---|---|
+| `infrastructure/anime/` | The anime catalogs' `kitsu:` ids translated into IMDb requests (the Anime Kitsu addon's meta, Fribb's anime-lists as the fallback) | `KitsuAddonClient`, `AnimeIdLists`, `KitsuAnimeIdResolver` |
 | `infrastructure/cache/` | `CachePort` backends | `create_cache()`, `DiskcacheAdapter`, `RedisAdapter` |
-| `infrastructure/common/` | Converters, parsers, outbound rate limiting, retry and the SSRF guard | `to_int`, `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
+| `infrastructure/common/` | Parsers, outbound rate limiting, retry and the SSRF guard | `parse_size_to_bytes`, `TokenBucket`, `DomainRateLimiter`, `RetryTransport`, `PrivateAddressGuard` |
 | `infrastructure/config/` | Layered configuration | `DEFAULT_CONFIG`, `AppConfig`, `CacheConfig`, `StremioConfig`, `ScoringConfig`, `PluginsConfig`, `PluginOverride`, `EnvOverrides`, `load_config()` |
-| `infrastructure/hoster_resolvers/` | Hoster URL resolution | `HosterResolverRegistry`, `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `verify_video_url`, `check_playable` |
+| `infrastructure/hoster_resolvers/` | Hoster URL resolution | `HosterResolverRegistry`, `HosterStateStore` (its state across restarts), `extract_domain`, `XFSResolver`/`XFSConfig`, `GenericDDLResolver`/`GenericDDLConfig`, dedicated `*Resolver` classes, `verify_video_url`, `check_playable` |
 | `infrastructure/browser/` | Browser process and Cloudflare handling | `SharedBrowserPool` (one Chromium), `StealthPool` (CF-bypass context on it), `PageGate` (its pages, by claim), `PageBudget` (their count), `ClearanceStore` (challenge cookies across restarts), `SolverFetcher`/`ChainedBrowserFetcher` (optional Byparr/FlareSolverr sidecar), `resolve_headless`, `is_cloudflare_challenge` |
 | `infrastructure/captcha/` | In-process captcha handling | `detect_challenge` (challenge/captcha classification), `solve_altcha` (ALTCHA proof of work) |
 | `infrastructure/logging/` | structlog + stdlib setup with async emission | `configure_logging()` |
 | `infrastructure/persistence/` | `CachePort`-backed repositories (JSON) | `CacheCrawlJobRepository`, `CacheStreamLinkRepository`, `CachePluginScoreStore` |
-| `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `DataApiPluginBase` (shared "/data" API backend of megakino_to and movie4k), `XenForoPluginBase` (XenForo forums dataload and myboerse), category helpers (`categories.py`: `category_matches`, `served_category`, `filter_by_category`, `stream_category`), `parse_page` (`dom.py`: parses pages from 32 KiB in a worker thread), `relevant_hits` (`relevance.py`: the search hits worth scraping), `PluginHealthMonitor` (periodic checks of the Stremio plugins' sites; searches skip the unreachable ones), `decrypt_cnl` (Click'n'Load), devideosrc player helpers, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |
+| `infrastructure/plugins/` | Plugin discovery, loading and base classes | `PluginRegistry`, `load_python_plugin()`, `HttpxPluginBase`, `PlaywrightPluginBase`, `DataApiPluginBase` (shared "/data" API backend of megakino_to and movie4k), `XenForoPluginBase` (XenForo forums dataload and myboerse), category helpers (`categories.py`: `category_matches`, `served_category`, `filter_by_category`, `stream_category`), `parse_page` (`dom.py`: parses pages from 32 KiB in a worker thread), `relevant_hits` (`relevance.py`: the search hits worth scraping), `PluginHealthMonitor` (periodic checks of the Stremio plugins' sites; searches skip the unreachable ones), `PluginHistory` (the plugins' long-term record per day in the cache backend, 180 days), `decrypt_cnl` (Click'n'Load), devideosrc player helpers, `request_browser_context`, `search_max_results`, `DEFAULT_*` constants |
 | `infrastructure/scoring/` | Background plugin scoring | EWMA functions (`ewma.py`), `HealthProber`, `MiniSearchProber`, `QueryPoolBuilder`, `ScoringScheduler` |
 | `infrastructure/stremio/` | Stremio result processing | `convert_search_results`, `StreamSorter`, `score_title_match`, `filter_by_title_match`, `parse_quality`, `parse_language`, `filter_by_episode`, HLS proxy (`rewrite_manifest`, `fetch_hls_resource`, `stream_hls_segment`) |
 | `infrastructure/tmdb/` | Title/metadata lookup | `HttpxTmdbClient`, `ImdbFallbackClient` (IMDb Suggest API + Wikidata) |
@@ -88,7 +93,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 | `interfaces/api/torznab/router.py` | Torznab endpoints | `/torznab/indexers`, `/torznab/{plugin_name}`, `/torznab/{plugin_name}/health` |
 | `interfaces/api/download/router.py` | CrawlJob download (resolves grab-time links first, `502` on failure) | `/download/{job_id}`, `/download/{job_id}/info` |
 | `interfaces/api/stremio/router.py` | Stremio addon | `/stremio/manifest.json`, catalog, catalog search, stream, `/stremio/play/{stream_id}`, `/stremio/proxy/{stream_id}/{path}`, `/stremio/health` |
-| `interfaces/api/stats/router.py` | Stats endpoints | `/stats/plugin-scores`, `/stats/metrics` |
+| `interfaces/api/stats/router.py` | Stats endpoints | `/stats/plugin-scores`, `/stats/metrics`, `/stats/plugins` |
 | `interfaces/api/middleware.py` | Inbound API rate limiting | `RateLimitMiddleware` |
 | `interfaces/cli/__main__.py` | Process entry point | `start()` |
 
@@ -120,7 +125,7 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 - `PluginRegistry.discover()` only indexes `.py` file paths (no Python execution) and runs once.
 - The first call of `list_names()`, `get()`, `get_by_provides()`, `get_languages()`, `get_mode()` or `remove()` imports every discovered file once and caches instances and metadata; files that fail to import are logged and skipped. Unknown names raise `PluginNotFoundError` (mapped to `TorznabPluginNotFound` by the use cases).
 - `load_python_plugin(path)` imports the module dynamically and requires a module-level `plugin` with a `search` attribute and a non-empty string `name`; otherwise it raises `PluginLoadError`.
-- `HttpxPluginBase.set_shared_http_client()` injects the app-wide `httpx.AsyncClient` into httpx plugins and `set_browser_fetcher()` their browser fallback for challenged pages; Playwright plugins get the shared `SharedBrowserPool`.
+- `HttpxPluginBase.set_shared_http_client()` injects the app-wide `httpx.AsyncClient` into httpx plugins, `set_cache()` the app's cache (what a plugin keeps across requests, e.g. aniworld's episode index) and `set_browser_fetcher()` their browser fallback for challenged pages; Playwright plugins get the shared `SharedBrowserPool`.
 
 ### Link Validation Pipeline
 
@@ -179,13 +184,13 @@ All paths are relative to `src/scavengarr/` unless stated otherwise.
 |---|---|---|
 | `--host` | `$HOST` or `0.0.0.0` | Bind host |
 | `--port` | `$PORT` or `7979` | Bind port |
-| `--config` | none | Path to YAML config file |
+| `--config` | `$SCAVENGARR_CONFIG` if that file exists, else none | Path to YAML config file |
 | `--dotenv` | none | Path to `.env` file |
 | `--plugin-dir` | none | Override plugins directory |
 | `--log-level` | none | Log level override |
 | `--log-format` | none | `json` or `console` |
 
-Startup: parse arguments → resolve host/port → build CLI overrides → `load_config()` → `configure_logging()` → `uvicorn.run(create_app(config), ...)`. Resources are created in `lifespan()`, never in `create_app()`.
+Startup: parse arguments → pick the config path → build CLI overrides → `load_config()` → `configure_logging()` → resolve host/port (after the config, so `HOST`/`PORT` from `--dotenv` take effect) → `uvicorn.run(create_app(config), ...)`. Resources are created in `lifespan()`, never in `create_app()`.
 
 ### Cross-Cutting
 
@@ -193,7 +198,7 @@ Startup: parse arguments → resolve host/port → build CLI overrides → `load
 - All I/O is async; parallel work uses `asyncio.gather()` bounded by semaphores; sync disk I/O uses `asyncio.to_thread()`.
 - Plugins implement multi-stage scraping internally; `HttpxPluginBase._new_semaphore()` bounds their parallelism (`_max_concurrent`, default `DEFAULT_MAX_CONCURRENT = 5`).
 - Outbound HTTP goes through `RetryTransport` + `DomainRateLimiter` on the shared client (`build_http_client()`); inbound API calls are limited by `RateLimitMiddleware` when `api_rate_limit_rpm > 0`.
-- The shared client refuses every request and redirect hop to a non-public address (`PrivateAddressGuard`, a `request` event hook): scraped pages decide most outbound URLs (download links, embeds, CDNs, their redirects), and a hostile page must not reach the LAN, cloud metadata or Scavengarr itself (blind SSRF). IP literals are checked directly, hostnames after a cached DNS lookup (60 s); only the solver sidecar (`playwright.solver_url`) is allowed. Connections go to the addresses of that lookup (`GuardedNetworkBackend` in the client's `GuardedTransport`, IPv4 first, the next address when one refuses): a second lookup at connect time could answer with a LAN address (DNS rebinding). TLS still verifies the hostname, which httpcore sends as SNI. The connections themselves are asyncio streams (`AsyncioNetworkBackend`), whose TLS runs in the event loop (uvloop) instead of in Python (anyio, httpx's default): the HLS proxy needs about a quarter less CPU on the Pi. Browser (Playwright) navigation does not go through this client.
+- The shared client refuses every request and redirect hop to a non-public address (`PrivateAddressGuard`, a `request` event hook): scraped pages decide most outbound URLs (download links, embeds, CDNs, their redirects), and a hostile page must not reach the LAN, cloud metadata or Scavengarr itself (blind SSRF). IP literals are checked directly, hostnames after a cached DNS lookup (60 s); only the solver sidecar (`playwright.solver_url`) is allowed. Connections go to the addresses of that lookup (`GuardedNetworkBackend` in the client's `GuardedTransport`, IPv4 first; the next address starts after 250 ms or as soon as one fails, a staggered race): a second lookup at connect time could answer with a LAN address (DNS rebinding). TLS still verifies the hostname, which httpcore sends as SNI. The connections themselves are asyncio streams (`AsyncioNetworkBackend`), whose TLS runs in the event loop (uvloop) instead of in Python (anyio, httpx's default): the HLS proxy needs about a quarter less CPU on the Pi. Browser (Playwright) navigation does not go through this client.
 
 ---
 

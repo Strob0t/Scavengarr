@@ -259,11 +259,9 @@ class JjsPlugin(HttpxPluginBase):
         else:
             url = f"{self.base_url}/?s={encoded}"
 
-        resp = await self._safe_fetch(url, context=f"search_page_{page}")
-        if resp is None:
+        html = await self._fetch_text(url, context=f"search_page_{page}")
+        if html is None:
             return [], 1
-
-        html = resp.text
 
         parser = await parse_page(_SearchResultParser(), html)
 
@@ -301,11 +299,11 @@ class JjsPlugin(HttpxPluginBase):
 
     async def _scrape_detail(self, url: str) -> dict[str, object]:
         """Scrape a detail page for download links and size."""
-        resp = await self._safe_fetch(url, context="detail_page")
-        if resp is None:
+        html = await self._fetch_text(url, context="detail_page")
+        if html is None:
             return {"download_links": [], "size": ""}
 
-        parser = await parse_page(_DetailPageParser(), resp.text)
+        parser = await parse_page(_DetailPageParser(), html)
 
         return {
             "download_links": parser.download_links,

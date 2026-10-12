@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+import structlog
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.plugins.base import (
+    PluginUnreachableError,
+    SearchResult,
+)
+from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 # ---------------------------------------------------------------------------
@@ -26,6 +34,57 @@ class _SingleDomainPlugin(HttpxPluginBase):
     name = "single"
     provides = "download"
     _domains = ["only.com"]
+
+
+class _RecordingPlugin(HttpxPluginBase):
+    """A plugin whose search takes the four arguments only."""
+
+    name = "recording"
+    provides = "stream"
+    _domains = ["example.com"]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, object]] = []
+
+    async def search(
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {"query": query, "category": category, "season": season, "episode": episode}
+        )
+        return []
+
+
+class _LocatingPlugin(_RecordingPlugin):
+    """A plugin that locates episodes: its search takes the reference."""
+
+    name = "locating"
+    locates_episodes = True
+
+    async def search(  # type: ignore[override]
+        self,
+        query: str,
+        category: int | None = None,
+        season: int | None = None,
+        episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
+    ) -> list[SearchResult]:
+        self.calls.append(
+            {
+                "query": query,
+                "category": category,
+                "season": season,
+                "episode": episode,
+                "episode_ref": episode_ref,
+            }
+        )
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -74,15 +133,33 @@ class TestEnsureClient:
 # ---------------------------------------------------------------------------
 
 
-def _head_response(domain: str, status: int = 200) -> MagicMock:
+def _head_response(
+    domain: str, status: int = 200, headers: dict[str, str] | None = None
+) -> MagicMock:
     """Build a mock HEAD response with a realistic ``.url`` attribute."""
     resp = MagicMock()
     resp.status_code = status
     resp.url = httpx.URL(f"https://{domain}/")
+    resp.headers = httpx.Headers(headers or {})
     return resp
 
 
 class TestVerifyDomain:
+    @pytest.mark.asyncio
+    async def test_the_check_sends_the_browser_user_agent(self) -> None:
+        """A site behind Cloudflare answers the bot User-Agent of the shared
+        client with a challenge or a block; the check sends what a browser
+        sends, like the plugin's own requests."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=_head_response("example.com"))
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        headers = mock_client.head.await_args.kwargs["headers"]
+        assert headers["User-Agent"] == DEFAULT_USER_AGENT
+
     @pytest.mark.asyncio
     async def test_first_domain_reachable(self) -> None:
         plugin = _TestPlugin()
@@ -113,16 +190,132 @@ class TestVerifyDomain:
         assert "fallback.com" in plugin.base_url
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "headers"),
+        [
+            (403, {"cf-mitigated": "challenge"}),
+            (503, {"cf-mitigated": "challenge"}),
+            (503, {"cf-ray": "abc123"}),
+        ],
+        ids=["403-mitigated", "503-mitigated", "503-cf-ray"],
+    )
+    async def test_a_challenge_answer_counts_as_reachable(
+        self, status: int, headers: dict[str, str]
+    ) -> None:
+        """kinoger answers 403 with a Cloudflare challenge: the site is up
+        behind it, the plugin's browser fallback solves it. A 503 challenge
+        counts too (the check read the body-less answer without its
+        Cloudflare headers before, review of step 21). The domain is not
+        pinned: the next window checks again."""
+        plugin = _TestPlugin()
+        challenge = _head_response("example.com", status=status, headers=headers)
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=challenge)
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is False
+        assert plugin.base_url == "https://example.com"
+
+    @pytest.mark.asyncio
+    async def test_a_working_domain_outranks_an_answering_one(self) -> None:
+        plugin = _TestPlugin()
+        blocked = _head_response("example.com", status=403)
+        ok_resp = _head_response("fallback.com")
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(side_effect=[blocked, ok_resp])
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://fallback.com"
+
+    @pytest.mark.asyncio
+    async def test_an_error_page_is_still_the_site(self) -> None:
+        """No domain answers below 400: the first answering one is used,
+        without pinning it."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=[
+                _head_response("example.com", status=404),
+                _head_response("fallback.com", status=502),
+            ]
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is False
+        assert plugin.base_url == "https://example.com"
+
+    @pytest.mark.asyncio
+    async def test_a_transient_error_does_not_pin_the_domain(self) -> None:
+        """A 429 at check time serves this search; the next window checks
+        again and a 200 then pins the domain (before, a 4xx pinned it for
+        the process lifetime; review of step 21)."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=[
+                _head_response("example.com", status=429),
+                _head_response("fallback.com", status=429),
+                _head_response("example.com"),
+            ]
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+        assert plugin._domain_verified is False
+        assert plugin.base_url == "https://example.com"
+
+        plugin._domain_recheck_at = 0.0  # the window is over
+        await plugin._verify_domain()
+
+        assert mock_client.head.await_count == 3
+        assert plugin._domain_verified is True
+
+    @pytest.mark.asyncio
+    async def test_an_answering_domain_serves_its_window(self) -> None:
+        """Within the window, no new HEAD checks."""
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            return_value=_head_response("example.com", status=404)
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+        await plugin._verify_domain()
+
+        assert mock_client.head.await_count == 2  # both domains, once
+        assert plugin._domain_verified is False
+
+    @pytest.mark.asyncio
+    async def test_a_working_domain_is_pinned(self) -> None:
+        plugin = _TestPlugin()
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(return_value=_head_response("example.com"))
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+        await plugin._verify_domain()
+
+        assert mock_client.head.await_count == 1
+        assert plugin._domain_verified is True
+
+    @pytest.mark.asyncio
     async def test_all_domains_fail(self) -> None:
         plugin = _TestPlugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert "example.com" in plugin.base_url  # falls back to primary
+        assert plugin._domain_verified is False
 
     @pytest.mark.asyncio
     async def test_skips_if_already_verified(self) -> None:
@@ -229,6 +422,8 @@ class TestSafeFetch:
         plugin = _TestPlugin()
         resp = MagicMock(spec=httpx.Response, history=[])
         resp.status_code = 403
+        resp.text = "<html>Forbidden</html>"
+        resp.headers = httpx.Headers()
         resp.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError(
                 "forbidden", request=MagicMock(), response=resp
@@ -253,6 +448,187 @@ class TestSafeFetch:
         result = await plugin._safe_fetch("https://example.com/api")
 
         assert result is None
+
+
+class TestSafeFetchChallenge:
+    """A challenge answer to ``_safe_fetch`` is told apart from an error
+    page: logged as ``<plugin>_challenge`` with the class and the host, the
+    host goes into the browser memo (so ``_fetch_text`` of the same plugin
+    goes straight to the browser), and the caller gets ``None``. The
+    browser fallback itself stays with ``_fetch_text``."""
+
+    _CHALLENGE = "<html><title>Just a moment...</title>challenge-platform</html>"
+
+    @respx.mock
+    async def test_a_challenge_is_logged_and_remembered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(
+            403, headers={"cf-mitigated": "challenge"}, html=self._CHALLENGE
+        )
+        plugin = _TestPlugin()
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            with structlog.testing.capture_logs() as logs:
+                result = await plugin._safe_fetch("https://example.com/api")
+
+        assert result is None
+        events = {log["event"]: log for log in logs}
+        assert "test-plugin_challenge" in events
+        assert events["test-plugin_challenge"]["challenge"] == "cloudflare_page"
+        assert events["test-plugin_challenge"]["host"] == "example.com"
+        assert "test-plugin_http_error" not in events
+        assert "example.com" in HttpxPluginBase._cf_blocked_until
+
+    @respx.mock
+    async def test_the_memo_sends_fetch_text_to_the_browser(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>solved</html>")
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/api").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            assert await plugin._safe_fetch("https://example.com/api") is None
+            html = await plugin._fetch_text("https://example.com/page")
+
+        assert html == "<html>solved</html>"
+        fetcher.fetch_text.assert_awaited_once()
+
+    @respx.mock
+    async def test_an_error_page_is_an_http_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(403, html="<html>Forbidden</html>")
+        plugin = _TestPlugin()
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            with structlog.testing.capture_logs() as logs:
+                result = await plugin._safe_fetch("https://example.com/api")
+
+        assert result is None
+        events = [log["event"] for log in logs]
+        assert events == ["test-plugin_http_error"]
+        assert HttpxPluginBase._cf_blocked_until == {}
+
+
+class TestChallengeFlag:
+    """A challenge seen by ``_safe_fetch`` or ``_fetch_text`` marks the
+    running search's flag, which the search runner counts once (step 50);
+    an error page does not."""
+
+    _CHALLENGE = "<html><title>Just a moment...</title>challenge-platform</html>"
+
+    @respx.mock
+    async def test_safe_fetch_marks_the_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(403, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                await plugin._safe_fetch("https://example.com/api")
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is True
+        # Nothing tried to get past it (row 70)
+        assert flag.unsolved_search is True
+
+    @respx.mock
+    async def test_fetch_text_marks_the_flag_without_a_fetcher(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", None)
+        respx.get("https://example.com/page").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                assert await plugin._fetch_text("https://example.com/page") is None
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is True
+        assert flag.unsolved_search is True
+
+    @respx.mock
+    async def test_fetch_text_marks_the_flag_on_the_browser_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="<html>solved</html>")
+        fetcher.session = AsyncMock(return_value=None)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/page").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                html = await plugin._fetch_text("https://example.com/page")
+        finally:
+            challenge_flag.reset(token)
+
+        assert html == "<html>solved</html>"
+        assert flag.seen is True
+        # The browser got past it (row 70)
+        assert flag.unsolved_search is False
+
+    @respx.mock
+    async def test_a_browser_fallback_without_the_page_is_unsolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value=None)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/page").respond(503, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                assert await plugin._fetch_text("https://example.com/page") is None
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is True
+        assert flag.unsolved_search is True
+
+    @respx.mock
+    async def test_an_error_page_leaves_the_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.get("https://example.com/api").respond(500, html="<html>Oops</html>")
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                await plugin._safe_fetch("https://example.com/api")
+                await plugin._fetch_text("https://example.com/api")
+        finally:
+            challenge_flag.reset(token)
+
+        assert flag.seen is False
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +661,55 @@ class TestSafeParseJson:
 # ---------------------------------------------------------------------------
 # _new_semaphore
 # ---------------------------------------------------------------------------
+
+
+class TestCache:
+    @pytest.fixture(autouse=True)
+    def _reset_cache(self) -> None:
+        HttpxPluginBase.set_cache(None)
+        yield
+        HttpxPluginBase.set_cache(None)
+
+    def test_the_injected_cache_reaches_every_plugin(self) -> None:
+        cache = AsyncMock()
+        HttpxPluginBase.set_cache(cache)
+
+        assert _TestPlugin()._cache is cache
+
+    def test_without_a_cache(self) -> None:
+        assert _TestPlugin()._cache is None
+
+
+class TestIsolatedSearch:
+    """The runner's entry: ``isolated_search`` hands the reference on."""
+
+    async def test_the_reference_reaches_search(self) -> None:
+        plugin = _LocatingPlugin()
+        ref = EpisodeRef(5, 2, "Laboon", "2001-03-21", absolute=62)
+
+        await plugin.isolated_search(
+            "one piece", 5000, season=5, episode=2, episode_ref=ref
+        )
+
+        assert plugin.calls == [
+            {
+                "query": "one piece",
+                "category": 5000,
+                "season": 5,
+                "episode": 2,
+                "episode_ref": ref,
+            }
+        ]
+
+    async def test_without_a_reference_search_is_called_as_before(self) -> None:
+        # a plugin without the keyword: the call carries no episode_ref
+        plugin = _RecordingPlugin()
+
+        await plugin.isolated_search("dark", 5000, season=1, episode=1)
+
+        assert plugin.calls == [
+            {"query": "dark", "category": 5000, "season": 1, "episode": 1}
+        ]
 
 
 class TestNewSemaphore:
@@ -476,3 +901,170 @@ class TestOwnLinkResolutionBound:
         assert len(resolved) == 10
         assert resolved[3].download_link == "https://hoster.example/3"
         assert peak == 2
+
+
+# ---------------------------------------------------------------------------
+# The site's official domain list (row 69)
+# ---------------------------------------------------------------------------
+
+
+class _ListedPlugin(HttpxPluginBase):
+    name = "listed"
+    provides = "stream"
+    _domains = ["site.example"]
+    domain_list_url = "https://list.example/"
+    domain_marker = 'a[href*="list.example"]'
+
+
+# The site's own page shows the link to its list; a parked domain does not
+_SITE_PAGE = '<footer><a href="https://list.example/">Domains</a></footer>'
+_PARKED_PAGE = "<h1>This domain is for sale</h1>"
+_LIST_PAGE = (
+    '<a href="https://site.example/">a</a>'
+    '<a href="https://parked.example/">b</a>'
+    '<a href="https://mirror.example/">c</a>'
+)
+_KEY = "listed:domain_list:v1"
+
+
+@pytest.fixture
+def list_cache(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    cache = AsyncMock()
+    cache.get = AsyncMock(return_value=None)
+    monkeypatch.setattr(HttpxPluginBase, "_cache", cache)
+    return cache
+
+
+class TestDomainList:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_listed_host_that_serves_the_site_is_used(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        respx.get("https://list.example/").respond(200, text=_LIST_PAGE)
+        respx.get("https://parked.example/").respond(200, text=_PARKED_PAGE)
+        respx.get("https://mirror.example/").respond(200, text=_SITE_PAGE)
+        site_get = respx.get("https://site.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs:
+            await plugin._verify_domain()
+
+        assert plugin.base_url == "https://mirror.example"
+        assert plugin._domain_verified is True
+        # A host of _domains is not tried twice
+        assert not site_get.called
+        list_cache.set.assert_awaited_once_with(
+            _KEY, ["site.example", "parked.example", "mirror.example"], ttl=86400
+        )
+        found = [e for e in logs if e["event"] == "plugin_domain_list_host"]
+        assert found == [
+            {
+                "event": "plugin_domain_list_host",
+                "plugin": "listed",
+                "host": "mirror.example",
+                "log_level": "info",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_the_list_is_read_once_a_day(self, list_cache: AsyncMock) -> None:
+        list_cache.get = AsyncMock(return_value=["mirror.example"])
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        list_route = respx.get("https://list.example/")
+        respx.get("https://mirror.example/").respond(200, text=_SITE_PAGE)
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        await plugin._verify_domain()
+
+        list_cache.get.assert_awaited_once_with(_KEY)
+        assert not list_route.called
+        assert plugin.base_url == "https://mirror.example"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_host_without_the_marker_is_refused(
+        self, list_cache: AsyncMock
+    ) -> None:
+        list_cache.get = AsyncMock(return_value=["parked.example"])
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        respx.get("https://parked.example/").respond(200, text=_PARKED_PAGE)
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
+
+        assert plugin.base_url == "https://site.example"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_list_that_fails_leaves_the_domains_for_an_hour(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        respx.get("https://list.example/").respond(503)
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs:
+            with pytest.raises(PluginUnreachableError):
+                await plugin._verify_domain()
+
+        list_cache.set.assert_awaited_once_with(_KEY, [], ttl=3600)
+        warnings = [e for e in logs if e["event"] == "plugin_domain_list_failed"]
+        assert len(warnings) == 1
+        assert warnings[0]["plugin"] == "listed"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_working_domain_never_reads_the_list(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").respond(200)
+        list_route = respx.get("https://list.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        await plugin._verify_domain()
+
+        assert plugin._domain_verified is True
+        assert not list_route.called
+        list_cache.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_an_answering_domain_never_reads_the_list(
+        self, list_cache: AsyncMock
+    ) -> None:
+        respx.head("https://site.example/").respond(
+            403, headers={"cf-mitigated": "challenge"}
+        )
+        list_route = respx.get("https://list.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://site.example"
+        assert not list_route.called
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_without_a_cache_the_list_is_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cache", None)
+        respx.head("https://site.example/").mock(side_effect=httpx.ConnectError("x"))
+        list_route = respx.get("https://list.example/")
+        plugin = _ListedPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
+
+        assert not list_route.called

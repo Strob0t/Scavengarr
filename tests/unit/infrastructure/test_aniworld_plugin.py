@@ -12,6 +12,9 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
+from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.plugins.base import PluginUnreachableError
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "aniworld.py"
 
 
@@ -322,6 +325,9 @@ class TestSearch:
         assert results[0].download_links[0]["hoster"] == "voe"
         expected_desc = "Naruto is a young ninja who seeks recognition."
         assert results[0].description == expected_desc
+        # the detail page's first episode: no episode claimed
+        assert "season" not in results[0].metadata
+        assert "episode" not in results[0].metadata
 
     @pytest.mark.parametrize(
         ("season", "episode", "expected"),
@@ -350,10 +356,13 @@ class TestSearch:
         mock_client.get = AsyncMock(side_effect=_route_get)
         plugin._client = mock_client
 
-        await plugin.search("naruto", season=season, episode=episode)
+        results = await plugin.search("naruto", season=season, episode=episode)
 
         requested = [str(c.args[0]) for c in mock_client.get.call_args_list]
         assert expected in requested
+        # the episode fetched, for the Stremio episode filter
+        assert results[0].metadata["season"] == season
+        assert results[0].metadata["episode"] == (episode or 1)
 
     async def test_search_empty_query_returns_empty(self) -> None:
         plugin = _make_plugin()
@@ -545,7 +554,28 @@ class TestDomainVerification:
         # SerienStreamTo, 2026-09-09)
         assert "aniworld.info" not in _AniworldPlugin._domains
 
-    async def test_all_domains_fail(self) -> None:
+    def test_domains_list(self) -> None:
+        # aniworld.cc is on the site's own list, aniworld.domains (row 74)
+        assert _AniworldPlugin._domains == ["aniworld.to", "aniworld.cc"]
+        assert _AniworldPlugin.domain_list_url == "https://aniworld.domains/"
+
+    async def test_fallback_to_the_second_domain(self) -> None:
+        plugin = _make_plugin()
+        ok = MagicMock(spec=httpx.Response, history=[])
+        ok.status_code = 200
+        ok.url = httpx.URL("https://aniworld.cc/")
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.head = AsyncMock(
+            side_effect=[httpx.ConnectError("Connection failed"), ok]
+        )
+        plugin._client = mock_client
+
+        await plugin._verify_domain()
+
+        assert plugin.base_url == "https://aniworld.cc"
+
+    async def test_both_domains_dead_and_no_list_is_unreachable(self) -> None:
+        """Without a cache (here) the list is skipped: the search fails."""
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.head = AsyncMock(
@@ -553,10 +583,10 @@ class TestDomainVerification:
         )
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert _AniworldPlugin._domains[0] in plugin.base_url
+        assert mock_client.head.await_count == 2
 
     async def test_skips_if_already_verified(self) -> None:
         plugin = _make_plugin()
@@ -591,3 +621,235 @@ class TestCleanup:
         plugin = _make_plugin()
         await plugin.cleanup()
         assert plugin._client is None
+
+
+# ---------------------------------------------------------------------------
+# Episode location (a Stremio request's reference)
+# ---------------------------------------------------------------------------
+
+
+def _season_table(season: int, rows: list[tuple[str, str]]) -> str:
+    """A season page's episode table as the site renders it."""
+    body = "".join(
+        f'<tr data-episode-id="{season}{n}" itemprop="episode">'
+        f'<td class="season{season}EpisodeID">'
+        f'<meta itemprop="episodeNumber" content="{n}" />'
+        f'<a href="/anime/stream/one-piece/staffel-{season}/episode-{n}">'
+        f"Folge {n}</a></td>"
+        '<td class="seasonEpisodeTitle">'
+        f'<a href="/anime/stream/one-piece/staffel-{season}/episode-{n}">'
+        f"<strong>{german}</strong> - <span>{english}</span></a></td></tr>"
+        for n, (german, english) in enumerate(rows, start=1)
+    )
+    return f'<table class="seasonEpisodesList"><tbody>{body}</tbody></table>'
+
+
+def _series_page(seasons: int) -> str:
+    """A series page: the navigation's season links and staffel-1's table."""
+    nav = "".join(
+        f'<a href="/anime/stream/one-piece/staffel-{n}">Staffel {n}</a>'
+        for n in range(1, seasons + 1)
+    )
+    return (
+        "<html><body>"
+        '<div class="genres"><ul><li><a href="/genre/action">Action</a></li></ul></div>'
+        f'<div class="hosterSiteDirectNav">{nav}'
+        '<a href="/anime/stream/one-piece/filme">Filme</a>'
+        '<a href="/anime/stream/one-piece/staffel-1/episode-1">1</a></div>'
+        + _season_table(1, [("Hier kommt Ruffy", f"{_LUFFY} [Episode 001]")])
+        + "</body></html>"
+    )
+
+
+_LUFFY = "I'm Luffy! The Man Who Will Become the Pirate King!"
+_LABOON = "The First Line of Defense? The Giant Whale Laboon Appears!"
+_STAFFEL_2 = "<html><body>" + _season_table(
+    2,
+    [
+        ("Ein Bad in Magensäure", f"{_LABOON} [Episode 062]"),
+        ("Das Versprechen", "A Promise Between Men! [Episode 063]"),
+    ],
+)
+_ONE_PIECE_HIT = [
+    {"title": "One Piece", "description": "Piraten", "link": "/anime/stream/one-piece"}
+]
+
+
+def _locating_plugin(
+    cache: AsyncMock | None = None, *, series_page: str | None = None
+) -> tuple[Any, list[str]]:
+    """A plugin whose site lists One Piece with two seasons, and the paths it
+    fetches; a page the site lacks answers 404."""
+    plugin: Any = _make_plugin()
+    plugin._domain_verified = True
+    plugin._cache = cache
+    paths: list[str] = []
+    pages = {
+        "/anime/stream/one-piece": series_page or _series_page(2),
+        "/anime/stream/one-piece/staffel-1": _series_page(2),
+        "/anime/stream/one-piece/staffel-2": _STAFFEL_2,
+    }
+
+    async def _get(url: str, **_kw: Any) -> httpx.Response:
+        path = str(url).removeprefix("https://aniworld.to")
+        paths.append(path)
+        if "/episode-" in path:
+            return _make_mock_response(text=_EPISODE_HTML)
+        page = pages.get(path)
+        return (
+            _make_mock_response(text=page)
+            if page
+            else _make_mock_response(status_code=404)
+        )
+
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.post = AsyncMock(return_value=_make_mock_response(json_data=_ONE_PIECE_HIT))
+    client.get = AsyncMock(side_effect=_get)
+    plugin._client = client
+    return plugin, paths
+
+
+class TestLocatesEpisodes:
+    _LABOON_REF = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62)
+
+    def test_declares_the_capability(self) -> None:
+        assert _make_plugin().locates_episodes is True  # type: ignore[attr-defined]
+
+    def test_the_series_page_names_its_seasons(self) -> None:
+        parser = _load_module()._DetailPageParser("https://aniworld.to")
+        parser.feed(_series_page(3))
+
+        # the "Filme" link and the episode links are no seasons
+        assert parser.seasons == [1, 2, 3]
+
+    async def test_a_located_episode_comes_from_the_sites_page(self) -> None:
+        plugin, paths = _locating_plugin()
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=5, episode=2, episode_ref=self._LABOON_REF
+            )
+
+        assert len(results) == 1
+        assert results[0].metadata == {
+            "genres": "Action",
+            "cover_url": "",
+            "season": 5,
+            "episode": 2,
+            "site_season": 2,
+            "site_episode": 1,
+            "episode_located_by": "number",
+        }
+        assert "/anime/stream/one-piece/staffel-2/episode-1" in paths
+        assert not any("/staffel-5/" in path for path in paths)
+        located = next(e for e in logs if e["event"] == "aniworld_episode_located")
+        assert (
+            located.items()
+            >= {
+                "slug": "one-piece",
+                "season": 5,
+                "episode": 2,
+                "absolute": 62,
+                "site_season": 2,
+                "site_episode": 1,
+                "located_by": "number",
+            }.items()
+        )
+
+    async def test_the_runners_entry_reaches_the_reference(self) -> None:
+        """The runner calls ``isolated_search``: the reference arrives there too
+        (the probe of 2026-10-09 found it did not)."""
+        plugin, paths = _locating_plugin()
+
+        results = await plugin.isolated_search(
+            "one piece", 5000, season=5, episode=2, episode_ref=self._LABOON_REF
+        )
+
+        assert len(results) == 1
+        assert results[0].metadata["site_episode"] == 1
+        assert "/anime/stream/one-piece/staffel-2/episode-1" in paths
+
+    async def test_an_episode_not_located_gives_no_result(self) -> None:
+        plugin, paths = _locating_plugin()
+        ref = EpisodeRef(9, 9, "Nothing Like It", absolute=999)
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=9, episode=9, episode_ref=ref
+            )
+
+        # never the request's numbers on the site's seasons
+        assert results == []
+        assert not any("/episode-" in path for path in paths)
+        missed = next(e for e in logs if e["event"] == "aniworld_episode_not_located")
+        assert (
+            missed.items()
+            >= {
+                "slug": "one-piece",
+                "season": 9,
+                "episode": 9,
+                "absolute": 999,
+                "rows": 3,
+            }.items()
+        )
+
+    async def test_without_a_reference_the_page_comes_from_the_numbers(self) -> None:
+        plugin, paths = _locating_plugin()
+
+        results = await plugin.search("one piece", season=5, episode=2)
+
+        assert len(results) == 1
+        assert results[0].metadata == {
+            "genres": "Action",
+            "cover_url": "",
+            "season": 5,
+            "episode": 2,
+        }
+        assert "/anime/stream/one-piece/staffel-5/episode-2" in paths
+        assert not any(path.endswith(("/staffel-1", "/staffel-2")) for path in paths)
+
+    async def test_the_index_is_kept_for_a_week(self) -> None:
+        cache = AsyncMock()
+        cache.get.return_value = None
+        plugin, paths = _locating_plugin(cache)
+
+        await plugin.search(
+            "one piece", season=5, episode=2, episode_ref=self._LABOON_REF
+        )
+
+        cache.set.assert_awaited_once()
+        key, rows = cache.set.await_args.args
+        assert key == "aniworld:episodes:v1:one-piece"
+        assert cache.set.await_args.kwargs == {"ttl": 7 * 24 * 3600}
+        assert rows == [
+            [1, 1, "Hier kommt Ruffy", _LUFFY, 1],
+            [2, 1, "Ein Bad in Magensäure", _LABOON, 62],
+            [2, 2, "Das Versprechen", "A Promise Between Men!", 63],
+        ]
+        assert paths.count("/anime/stream/one-piece/staffel-2") == 1
+
+        # the next request reads no season page
+        cache.get.return_value = rows
+        again, paths = _locating_plugin(cache)
+
+        results = await again.search(
+            "one piece", season=5, episode=2, episode_ref=self._LABOON_REF
+        )
+
+        assert len(results) == 1
+        assert paths == [
+            "/anime/stream/one-piece",
+            "/anime/stream/one-piece/staffel-2/episode-1",
+        ]
+
+    async def test_a_series_page_without_season_links_is_one_season(self) -> None:
+        plugin, paths = _locating_plugin(series_page=_series_page(0))
+        ref = EpisodeRef(
+            1, 1, "I'm Luffy! The Man Who's Gonna Be King of the Pirates!", absolute=1
+        )
+
+        results = await plugin.search("one piece", season=1, episode=1, episode_ref=ref)
+
+        assert len(results) == 1
+        assert results[0].metadata["site_episode"] == 1
+        assert "/anime/stream/one-piece/staffel-1" in paths

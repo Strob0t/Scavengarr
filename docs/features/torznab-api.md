@@ -8,7 +8,7 @@
 
 ## Endpoints Overview
 
-All API routes are mounted under the `/api/v1` prefix; only the Prometheus endpoint `/metrics` is at the root. The default base URL is `http://localhost:7979` (`PORT` env var or `--port`).
+All API routes are mounted under the `/api/v1` prefix; only the Prometheus endpoint `/metrics` and FastAPI's `/docs`, `/redoc` and `/openapi.json` are at the root. The default base URL is `http://localhost:7979` (`PORT` env var or `--port`).
 
 | Method | Path | Response | Description |
 |---|---|---|---|
@@ -104,7 +104,7 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
 | `plugin_name` | path | yes | Plugin identifier |
 | `t` | query | yes | Must be `search` (any other value except `caps` → 422) |
 | `q` | query | no | Search query; if missing, see [Prowlarr Test Mode](#prowlarr-test-mode) |
-| `cat` | query | no | Comma-separated category IDs; only the first ID is passed to the plugin. A non-numeric value returns an empty feed with HTTP 400 |
+| `cat` | query | no | Comma-separated category IDs; only the first ID is parsed and passed to the plugin, later IDs are neither checked nor used (`cat=2000,abc` searches 2000), and `cat` is read only with a `q`. A non-numeric first ID returns an empty feed with HTTP 400 |
 | `extended` | query | no | Only evaluated when `q` is missing (`1` = reachability probe) |
 | `offset` | query | no | Result offset (default `0`) |
 | `limit` | query | no | Maximum results returned (default `100`; not capped at the caps' `max`) |
@@ -302,7 +302,7 @@ GET /api/v1/healthz
 Returns 200 as long as the process runs. It does not check plugin or site reachability — use the [plugin health endpoint](#plugin-health-check) for that.
 
 ```text
-{"status": "ok", "plugins": <count>, "hosters": ["voe", "streamtape", "..."]}
+{"status": "ok", "version": "<version>", "commit": "<sha or unknown>", "built": "<time or unknown>", "plugins": <count>, "hosters": ["voe", "streamtape", "..."]}
 ```
 
 `plugins` is the number of loaded plugins (disabled ones and files that failed to load are not counted), `hosters` the list of supported hoster resolvers.
@@ -339,7 +339,7 @@ Scavengarr maps domain exceptions on the Torznab endpoint (`/api/v1/torznab/{plu
 
 | Exception | Status (dev/test) | Status (prod) | Trigger |
 |---|---|---|---|
-| `TorznabBadRequest` | 400 | 400 | Invalid query, e.g. non-numeric `cat` |
+| `TorznabBadRequest` | 400 | 400 | Invalid query, e.g. a non-numeric first `cat` id |
 | `TorznabPluginNotFound` / `PluginNotFoundError` | 404 | 404 | Unknown plugin (caps, search, test probe) |
 | `TorznabUnsupportedAction` | 422 | 422 | `t` is neither `caps` nor `search` |
 | `TorznabExternalError` | 502 | **200** | Plugin search or link validation failed |

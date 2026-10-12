@@ -6,9 +6,12 @@ Scrapes s.to (German TV series streaming site) with:
 - Series detail pages at /serie/{slug} for seasons/episodes
 - Episode pages at /serie/{slug}/staffel-{n}/episode-{n} for hoster buttons
 - Hoster redirect resolution via /r?t={token} → 302 to actual hoster URL
+- A Stremio request's episode of an anime (5070) located on the site's own
+  season pages (``locates_episodes``: the index of ``episode_index.py``)
 - Bounded concurrency for series and episode detail scraping
 
-Multi-domain support with automatic fallback (s.to, serienstream.to, 186.2.175.5).
+Multi-domain support with automatic fallback (serienstream.to, serienstream.cx,
+186.2.175.5; s.to is gone).
 TV-only site: all results use Torznab category 5000+.
 No authentication required.
 """
@@ -18,10 +21,12 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from dataclasses import replace
 from urllib.parse import urljoin, urlparse
 
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.infrastructure.plugins.categories import (
@@ -29,6 +34,12 @@ from scavengarr.infrastructure.plugins.categories import (
     served_category,
 )
 from scavengarr.infrastructure.plugins.dom import parse_page
+from scavengarr.infrastructure.plugins.episode_index import (
+    Located,
+    RowSelectors,
+    episode_index,
+    locate,
+)
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import (
     SINGLE_TITLE_HITS,
@@ -40,7 +51,7 @@ from scavengarr.infrastructure.plugins.relevance import (
 # Configurable settings
 # ---------------------------------------------------------------------------
 # s.to is gone (NXDOMAIN; dead in JDownloader's SerienStreamTo too)
-_DOMAINS = ["serienstream.to", "186.2.175.5"]
+_DOMAINS = ["serienstream.to", "serienstream.cx", "186.2.175.5"]
 _MAX_PAGES = 42  # 24 results/page → 42 pages for ~1000
 _RESULTS_PER_PAGE = 24
 # Hoster buttons of an episode page; each opens a /r?t= link-out
@@ -76,6 +87,17 @@ _SEASON_RE = re.compile(r"/staffel-(\d+)")
 _EPISODE_NUMBER_RE = re.compile(r"^\d+$")
 # Images of an episode row that are no hoster icon
 _NOT_HOSTER_ICONS = frozenset({"flag", "poster", "cover"})
+# A season page's episode rows: the number in the first cell, the German
+# title in <strong>, the English one in <span>; an anime's span holds the
+# absolute number in place of a title ("Episode 062")
+_ROW_SELECTORS = RowSelectors(
+    row="tr.episode-row",
+    number="th.episode-number-cell",
+    german="strong.episode-title-ger",
+    english="span.episode-title-eng",
+)
+# The anime label; only such results are located on the site's seasons
+_ANIME = 5070
 
 
 def _genre_to_torznab(genre: str) -> int:
@@ -91,6 +113,14 @@ def _determine_category(genres: list[str]) -> int:
         if mapped != 5000:
             return mapped
     return 5000
+
+
+def _episode_title(series: str, season: int, episode: int, episode_title: str) -> str:
+    """The result title: ``Series - S01E02 - Episode title``."""
+    title = f"{series} - S{season:02d}E{episode:02d}"
+    if episode_title:
+        title += f" - {episode_title}"
+    return title
 
 
 def _relevant_series(
@@ -268,12 +298,19 @@ class StoPlugin(HttpxPluginBase):
     """Python plugin for s.to (SerienStream) using httpx.
 
     Supports multiple domains with automatic fallback:
-    s.to, serienstream.to, 186.2.175.5.
+    serienstream.to, serienstream.cx, 186.2.175.5.
     """
 
     name = "sto"
     provides = "stream"
     _domains = _DOMAINS
+    # The official list of the site's addresses; the site links it
+    domain_list_url = "https://serien.domains/"
+    domain_marker = 'a[href*="serien.domains"]'
+
+    # A Stremio request's episode of an anime is located on the site's
+    # season pages (the Staffeln are the site's own, not IMDb's seasons)
+    locates_episodes = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -539,14 +576,22 @@ class StoPlugin(HttpxPluginBase):
 
         ep_num_match = re.search(r"/episode-(\d+)", ep_url)
         ep_num = ep_num_match.group(1) if ep_num_match else "0"
-        full_title = f"{detail.title} - S{season:02d}E{int(ep_num):02d}"
-        if ep_title:
-            full_title += f" - {ep_title}"
+        full_title = _episode_title(detail.title, season, int(ep_num), ep_title)
 
         first_link = ep_links[0]
         download_link = (
             first_link["link"] if isinstance(first_link, dict) else str(first_link)
         )
+
+        # ints, as the Stremio episode filter reads them; an episode the URL
+        # does not name stays out
+        metadata: dict[str, str | int] = {
+            "series": detail.title,
+            "season": season,
+            "genres": ", ".join(detail.genres),
+        }
+        if ep_num_match:
+            metadata["episode"] = int(ep_num)
 
         return SearchResult(
             title=full_title,
@@ -554,12 +599,7 @@ class StoPlugin(HttpxPluginBase):
             download_links=ep_links,
             source_url=ep_url,
             category=torznab_cat,
-            metadata={
-                "series": detail.title,
-                "season": str(season),
-                "episode": ep_num,
-                "genres": ", ".join(detail.genres),
-            },
+            metadata=metadata,
         )
 
     async def _resolve_season_detail(
@@ -590,27 +630,43 @@ class StoPlugin(HttpxPluginBase):
         season_num: int,
         episode_num: int,
         detail: _SeriesDetailParser,
+        *,
+        title: str | None = None,
     ) -> list[dict[str, str | list[dict[str, str]]]]:
         """Scrape a single episode directly by number instead of all episodes.
 
         Much faster than ``_scrape_season_episodes`` when the target episode
-        is already known (e.g. Stremio stream requests).
+        is already known (e.g. Stremio stream requests). The episode's
+        *title* when known (a located row), else the detail parser's list
+        names it.
         """
         ep_url = (
             f"{self.base_url}/serie/{slug}/staffel-{season_num}/episode-{episode_num}"
         )
-        # Try to find the episode title from the detail parser's episode list
-        ep_title = ""
-        for ep in detail.episodes:
-            if ep["number"] == str(episode_num):
-                ep_title = ep["de_title"] or ep["en_title"]
-                break
+        ep_title = title or ""
+        if title is None:
+            for ep in detail.episodes:
+                if ep["number"] == str(episode_num):
+                    ep_title = ep["de_title"] or ep["en_title"]
+                    break
 
         links = await self._episode_links(ep_url)
-        if not links:
+        # Only stream requests ask for one episode (Torznab passes no season
+        # or episode): a link-out the gate kept on the site fails in the
+        # serienstream resolver from this address, so only hoster links go.
+        site = urlparse(self.base_url).hostname
+        resolved = [link for link in links if urlparse(link["link"]).hostname != site]
+        if len(resolved) < len(links):
+            self._log.info(
+                "sto_gated_links_dropped",
+                plugin=self.name,
+                count=len(links) - len(resolved),
+                kept=len(resolved),
+            )
+        if not resolved:
             return []
 
-        return [{"title": ep_title, "url": ep_url, "links": links}]
+        return [{"title": ep_title, "url": ep_url, "links": resolved}]
 
     async def _process_series(
         self,
@@ -619,8 +675,13 @@ class StoPlugin(HttpxPluginBase):
         category: int | None,
         season: int | None,
         episode: int | None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
-        """Process a single series into SearchResults."""
+        """Process a single series into SearchResults.
+
+        An anime's episode is located by *episode_ref* on the site's own
+        season pages; every other series answers the request's numbers.
+        """
         if not detail.seasons:
             return []
 
@@ -629,6 +690,8 @@ class StoPlugin(HttpxPluginBase):
             return []
 
         torznab_cat = _determine_category(detail.genres)
+        if episode_ref is not None and torznab_cat == _ANIME:
+            return await self._process_located(slug, detail, episode_ref)
         # A full-series search (no season, no episode) covers every season
         seasons: list[int | None] = (
             list(detail.seasons) if season is None and episode is None else [season]
@@ -660,12 +723,87 @@ class StoPlugin(HttpxPluginBase):
                 break
         return results
 
+    async def _process_located(
+        self, slug: str, detail: _SeriesDetailParser, ref: EpisodeRef
+    ) -> list[SearchResult]:
+        """The located episode of an anime as a result: the row's page, the
+        request's season and episode, and the site's as ``site_season`` and
+        ``site_episode`` with the evidence as ``episode_located_by``; no row
+        means no result."""
+        located = await self._locate_episode(slug, detail.seasons, ref)
+        if located is None:
+            return []
+        row = located.row
+        episodes = await self._scrape_single_episode(
+            slug, row.season, row.episode, detail, title=row.german
+        )
+        results: list[SearchResult] = []
+        for ep in episodes:
+            result = self._build_episode_result(ep, detail, row.season, _ANIME)
+            if result is None:
+                continue
+            results.append(
+                replace(
+                    result,
+                    title=_episode_title(
+                        detail.title, ref.season, ref.episode, row.german
+                    ),
+                    metadata={
+                        **result.metadata,
+                        "season": ref.season,
+                        "episode": ref.episode,
+                        "site_season": row.season,
+                        "site_episode": row.episode,
+                        "episode_located_by": located.by,
+                    },
+                )
+            )
+        return results
+
+    async def _locate_episode(
+        self, slug: str, seasons: list[int], ref: EpisodeRef
+    ) -> Located | None:
+        """The row of the series' season pages *ref* means (the index is
+        cached per series); ``None``, logged, when no row matches."""
+        index = await episode_index(
+            cache=self._cache,
+            key=f"sto:episodes:v1:{slug}",
+            seasons=seasons,
+            season_url=lambda number: f"{self.base_url}/serie/{slug}/staffel-{number}",
+            fetch_html=self._season_html,
+            selectors=_ROW_SELECTORS,
+            semaphore=self._new_semaphore(),
+        )
+        located = locate(index, ref)
+        reference = {
+            "slug": slug,
+            "season": ref.season,
+            "episode": ref.episode,
+            "absolute": ref.absolute,
+        }
+        if located is None:
+            self._log.info("sto_episode_not_located", rows=len(index), **reference)
+            return None
+        self._log.info(
+            "sto_episode_located",
+            site_season=located.row.season,
+            site_episode=located.row.episode,
+            located_by=located.by,
+            **reference,
+        )
+        return located
+
+    async def _season_html(self, url: str) -> str | None:
+        return await self._fetch_text(url, context="season")
+
     async def search(
         self,
         query: str,
         category: int | None = None,
         season: int | None = None,
         episode: int | None = None,
+        *,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
         """Search s.to and return results with hoster links.
 
@@ -674,7 +812,9 @@ class StoPlugin(HttpxPluginBase):
 
         When *season* and *episode* are specified (typical for Stremio stream
         requests), only that specific episode is fetched per series — avoiding
-        the expensive scrape of every episode in the season.
+        the expensive scrape of every episode in the season. With
+        *episode_ref* an anime's episode is located on the site's own season
+        pages instead of the request's numbers.
         """
         # s.to is TV-only — reject non-TV category requests early.
         if category is not None:
@@ -703,7 +843,7 @@ class StoPlugin(HttpxPluginBase):
         ) -> list[SearchResult]:
             async with sem:
                 return await self._process_series(
-                    series_info, detail, category, season, episode
+                    series_info, detail, category, season, episode, episode_ref
                 )
 
         gathered = await asyncio.gather(

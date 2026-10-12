@@ -21,16 +21,19 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import respx
 import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from scavengarr.application.stremio.stream_builder import HLS_MASTER
+from scavengarr.application.stremio.answer import StreamAnswer
+from scavengarr.application.stremio.stream_builder import FILE_NAME, HLS_MASTER
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -41,7 +44,11 @@ from scavengarr.domain.entities.stremio import (
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.ports.anime_ids import NO_ANIME_IDS
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY
+from scavengarr.infrastructure.anime.id_lists import LIST_URL, AnimeIdLists
+from scavengarr.infrastructure.anime.kitsu_addon import ADDON_URL, KitsuAddonClient
+from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
 from scavengarr.infrastructure.config.schema import StremioConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
@@ -50,6 +57,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
+from scavengarr.infrastructure.stremio.hls_proxy import FileAnswer, SegmentReadAhead
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -63,6 +71,19 @@ _PREFIX = "/api/v1"
 # ---------------------------------------------------------------------------
 # Fake plugins
 # ---------------------------------------------------------------------------
+
+
+_KITSU_FIXTURES = Path(__file__).parents[1] / "fixtures" / "json" / "kitsu"
+
+
+def _answer(streams: list[StremioStream]) -> StreamAnswer:
+    """The use case's answer: a fresh, complete search."""
+    return StreamAnswer(streams, "search", True, ())
+
+
+def _kitsu_meta(name: str) -> dict[str, Any]:
+    """One of the Anime Kitsu addon's meta answers, trimmed."""
+    return json.loads((_KITSU_FIXTURES / name).read_text())
 
 
 class _FakePythonPlugin:
@@ -79,6 +100,7 @@ class _FakePythonPlugin:
         self.provides = "stream"
         self.default_language = default_language
         self._results: list[SearchResult] = []
+        self.calls: list[dict[str, Any]] = []
 
     async def search(
         self,
@@ -87,6 +109,9 @@ class _FakePythonPlugin:
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]:
+        self.calls.append(
+            {"query": query, "category": category, "season": season, "episode": episode}
+        )
         return self._results
 
 
@@ -126,6 +151,7 @@ def _make_app(
             resolver.bound_headers = MagicMock(return_value=())
         app.state.stremio_links = StremioLinks(repo=stream_link_repo, resolver=resolver)
     app.state.http_client = http_client or MagicMock()
+    app.state.hls_read_ahead = SegmentReadAhead()
 
     return app
 
@@ -247,6 +273,7 @@ class TestManifestEndpoint:
 
         assert "tt" in data["idPrefixes"]
         assert "tmdb:" in data["idPrefixes"]
+        assert "kitsu:" in data["idPrefixes"]
 
     def test_manifest_cors_headers(self) -> None:
         plugins = MagicMock()
@@ -503,7 +530,7 @@ class TestStreamEndpoint:
             url="https://voe.sx/e/abc123",
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -523,7 +550,7 @@ class TestStreamEndpoint:
             url="https://voe.sx/e/episode5",
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -535,7 +562,7 @@ class TestStreamEndpoint:
         assert len(data["streams"]) == 1
 
         # Verify the use case received correct parsed request
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tt0903747"
         assert request.content_type == "series"
@@ -547,7 +574,7 @@ class TestStreamEndpoint:
             name="Test Movie", description="plugin", url="https://example.com/v"
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -555,14 +582,14 @@ class TestStreamEndpoint:
         resp = client.get(f"{_PREFIX}/stremio/stream/movie/tmdb:12345.json")
 
         assert resp.status_code == 200
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tmdb:12345"
         assert request.content_type == "movie"
 
     def test_tmdb_id_series_with_season_episode(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -570,7 +597,7 @@ class TestStreamEndpoint:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tmdb:67890:2:10.json")
 
         assert resp.status_code == 200
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tmdb:67890"
         assert request.season == 2
@@ -587,7 +614,7 @@ class TestStreamEndpoint:
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
         # Use case should NOT have been called
-        stream_uc.execute.assert_not_awaited()
+        stream_uc.answer.assert_not_awaited()
 
     def test_invalid_id_format_returns_empty(self) -> None:
         stream_uc = AsyncMock()
@@ -599,7 +626,7 @@ class TestStreamEndpoint:
 
         assert resp.status_code == 200
         assert resp.json()["streams"] == []
-        stream_uc.execute.assert_not_awaited()
+        stream_uc.answer.assert_not_awaited()
 
     def test_no_stream_uc_returns_empty(self) -> None:
         """When stremio_stream_uc is None, return empty streams."""
@@ -613,7 +640,7 @@ class TestStreamEndpoint:
 
     def test_empty_streams(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -633,7 +660,7 @@ class TestStreamEndpoint:
             for i in range(4)
         ]
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=streams)
+        stream_uc.answer = AsyncMock(return_value=_answer(streams))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -650,7 +677,7 @@ class TestStreamEndpoint:
             url="https://voe.sx/e/xyz",
         )
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[stream])
+        stream_uc.answer = AsyncMock(return_value=_answer([stream]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -664,7 +691,7 @@ class TestStreamEndpoint:
 
     def test_stream_cors_headers(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -676,7 +703,7 @@ class TestStreamEndpoint:
     def test_series_without_season_episode_parsed_as_movie_style(self) -> None:
         """Series ID without :S:E still creates a request (no season/episode)."""
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -684,7 +711,7 @@ class TestStreamEndpoint:
         resp = client.get(f"{_PREFIX}/stremio/stream/series/tt0903747.json")
 
         assert resp.status_code == 200
-        call_args = stream_uc.execute.call_args
+        call_args = stream_uc.answer.call_args
         request: StremioStreamRequest = call_args[0][0]
         assert request.imdb_id == "tt0903747"
         assert request.content_type == "series"
@@ -702,7 +729,7 @@ class TestStreamIdParsing:
 
     def _get_streams(self, content_type: str, stream_id: str) -> dict:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -993,7 +1020,7 @@ class TestErrorHandling:
 
     def test_stream_error_returns_empty_streams(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(side_effect=RuntimeError("plugin timeout"))
+        stream_uc.answer = AsyncMock(side_effect=RuntimeError("plugin timeout"))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -1005,7 +1032,7 @@ class TestErrorHandling:
 
     def test_stream_error_has_cors_headers(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(side_effect=RuntimeError("boom"))
+        stream_uc.answer = AsyncMock(side_effect=RuntimeError("boom"))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -1038,6 +1065,7 @@ class TestHealthEndpoint:
             hoster_resolver_registry=resolver,
         )
         app.state.tmdb_client = MagicMock()
+        app.state.anime_ids = MagicMock()
 
         client = TestClient(app)
         resp = client.get(f"{_PREFIX}/stremio/health")
@@ -1046,6 +1074,7 @@ class TestHealthEndpoint:
         data = resp.json()
         assert data["healthy"] is True
         assert data["tmdb_configured"] is True
+        assert data["anime_ids_configured"] is True
         assert data["stream_plugin_count"] == 2
         assert data["stream_plugins"] == ["hdfilme", "aniworld"]
         assert data["stream_uc_initialized"] is True
@@ -1053,6 +1082,26 @@ class TestHealthEndpoint:
         assert data["hoster_resolver_configured"] is True
         assert data["supported_hosters"] == ["voe", "streamtape"]
         assert data["stream_link_repo_configured"] is True
+
+    def test_reports_version_commit_and_build_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_COMMIT", "7eeb50b63a57")
+        monkeypatch.setenv("SCAVENGARR_BUILT", "2026-10-06T18:00:00Z")
+        plugins = MagicMock()
+        plugins.get_by_provides.return_value = []
+
+        data = (
+            TestClient(_make_app(plugins=plugins))
+            .get(f"{_PREFIX}/stremio/health")
+            .json()
+        )
+
+        assert (data["version"], data["commit"], data["built"]) == (
+            APP_VERSION,
+            "7eeb50b63a57",
+            "2026-10-06T18:00:00Z",
+        )
 
     def test_metrics_are_the_telemetry_statistics(self) -> None:
         plugins = MagicMock()
@@ -1159,6 +1208,7 @@ class TestStreamFullFlow:
         plugin: _FakePythonPlugin | None = None,
         search_results: list[SearchResult] | None = None,
         telemetry: Telemetry | None = None,
+        anime_ids: Any = None,
     ) -> FastAPI:
         """Build app with a real StremioStreamUseCase."""
         from scavengarr.application.use_cases.stremio_stream import (
@@ -1201,6 +1251,7 @@ class TestStreamFullFlow:
             stream_link_repo=stream_link_repo,
             pool=ConcurrencyPool(),
             telemetry=telemetry or NO_TELEMETRY,
+            anime_ids=anime_ids or NO_ANIME_IDS,
         )
 
         app = FastAPI()
@@ -1309,6 +1360,99 @@ class TestStreamFullFlow:
             for s in streams:
                 assert "/api/v1/stremio/play/" in s["url"]
 
+    # kitsu: ids (the Anime Kitsu addon's catalogs) are translated with the
+    # addon's meta before the search; the public id list is the fallback
+
+    @staticmethod
+    def _anime_ids() -> KitsuAnimeIdResolver:
+        cache = AsyncMock()
+        cache.get.return_value = None
+        http = httpx.AsyncClient()
+        return KitsuAnimeIdResolver(
+            addon=KitsuAddonClient(http_client=http, cache=cache),
+            lists=AnimeIdLists(http_client=http, cache=cache),
+        )
+
+    @respx.mock
+    def test_a_kitsu_episode_is_searched_as_imdb_counts_it(self) -> None:
+        respx.get(f"{ADDON_URL}/meta/series/kitsu:41982.json").respond(
+            json=_kitsu_meta("meta_series_41982.json")
+        )
+        plugin = _FakePythonPlugin(name="aniworld")
+        result = _make_search_result(
+            title="Haikyu S03E15",
+            download_link="https://voe.sx/e/haikyu",
+            category=5000,
+            download_links=[
+                {
+                    "hoster": "voe",
+                    "link": "https://voe.sx/e/haikyu",
+                    "language": "German Dub",
+                },
+            ],
+        )
+        plugin._results = [result]
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Haikyu", year=2014),
+            plugin=plugin,
+            search_results=[result],
+            anime_ids=self._anime_ids(),
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            resp = TestClient(app).get(
+                f"{_PREFIX}/stremio/stream/series/kitsu:41982:3.json"
+            )
+
+        assert resp.status_code == 200
+        assert len(resp.json()["streams"]) >= 1
+        assert plugin.calls == [
+            {"query": "Haikyu", "category": 5000, "season": 3, "episode": 15}
+        ]
+        translated = [e for e in logs if e["event"] == "anime_id_translated"]
+        assert translated[0]["source"] == "addon"
+
+    @respx.mock
+    def test_a_kitsu_movie_is_searched_as_a_movie(self) -> None:
+        respx.get(f"{ADDON_URL}/meta/movie/kitsu:11614.json").respond(
+            json=_kitsu_meta("meta_movie_11614.json")
+        )
+        plugin = _FakePythonPlugin(name="aniworld")
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Your Name", year=2016),
+            plugin=plugin,
+            anime_ids=self._anime_ids(),
+        )
+
+        resp = TestClient(app).get(f"{_PREFIX}/stremio/stream/movie/kitsu:11614.json")
+
+        assert resp.json() == {"streams": []}
+        assert plugin.calls == [
+            {"query": "Your Name", "category": 2000, "season": None, "episode": None}
+        ]
+
+    @respx.mock
+    def test_an_unknown_kitsu_id_answers_nothing(self) -> None:
+        respx.get(f"{ADDON_URL}/meta/series/kitsu:99999999.json").respond(404)
+        respx.get(LIST_URL).respond(500)
+        plugin = _FakePythonPlugin(name="aniworld")
+        app = self._make_full_flow_app(
+            title_info=TitleMatchInfo(title="Haikyu", year=2014),
+            plugin=plugin,
+            anime_ids=self._anime_ids(),
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            resp = TestClient(app).get(
+                f"{_PREFIX}/stremio/stream/series/kitsu:99999999:1.json"
+            )
+
+        assert resp.json() == {"streams": []}
+        assert plugin.calls == []
+        events = [e["event"] for e in logs]
+        assert "anime_id_lists_failed" in events
+        assert "anime_id_lookup_failed" in events
+
     def test_the_request_is_in_the_metrics(self) -> None:
         plugin = _FakePythonPlugin(name="hdfilme")
         result = _make_search_result(
@@ -1360,6 +1504,57 @@ def _make_hls_link(
 
 class TestProxyHlsEndpoint:
     """GET /api/v1/stremio/proxy/{stream_id}/{path}"""
+
+    def test_the_segments_after_the_requested_one_are_fetched_ahead(self) -> None:
+        """The player asks for seg-1: the proxy fetches seg-2 and seg-3
+        meanwhile and answers seg-2 from memory."""
+        link = _make_hls_link(video_url="https://cdn.test/v/index.m3u8?t=abc")
+        playlist = (
+            b"#EXTM3U\n#EXTINF:4,\nseg-1.ts\n#EXTINF:4,\nseg-2.ts\n"
+            b"#EXTINF:4,\nseg-3.ts\n#EXT-X-ENDLIST\n"
+        )
+        requests: list[str] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            requests.append(f"{request.url.path}?{request.url.query.decode()}")
+            if request.url.path.endswith(".m3u8"):
+                return httpx.Response(
+                    200,
+                    content=playlist,
+                    headers={"content-type": "application/vnd.apple.mpegurl"},
+                )
+            return httpx.Response(
+                200,
+                content=request.url.path.encode() * 100,
+                headers={"content-type": "video/mp2t"},
+            )
+
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        app = _make_app(
+            stream_link_repo=repo,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_cdn)),
+        )
+        # one event loop for the client's requests: the fetches ahead run on it
+        with TestClient(app) as client:
+            answer = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/index.m3u8")
+            assert answer.status_code == 200
+            line = next(x for x in answer.text.splitlines() if x.endswith("seg-1.ts"))
+            base = line[: -len("seg-1.ts")]
+            first = client.get(f"{base}seg-1.ts")
+            second = client.get(f"{base}seg-2.ts")
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        assert first.content == b"/v/seg-1.ts" * 100
+        assert second.content == b"/v/seg-2.ts" * 100
+        assert second.headers["content-type"] == "video/mp2t"
+        # the stream URL's query goes with every fetch; seg-2 and seg-3 once
+        assert requests == [
+            "/v/index.m3u8?t=abc",
+            "/v/seg-1.ts?t=abc",
+            "/v/seg-2.ts?t=abc",
+            "/v/seg-3.ts?t=abc",
+        ]
 
     @patch(f"{_PROXY_MODULE}.fetch_hls_resource", new_callable=AsyncMock)
     def test_manifest_fetch_and_rewrite(self, mock_fetch: AsyncMock) -> None:
@@ -1873,6 +2068,223 @@ class TestProxyResolvesAgain:
         mock_fetch.assert_awaited_once()
 
 
+def _make_file_link(
+    *,
+    stream_id: str = "file-abc",
+    video_url: str = "https://s-delivery.mxdcontent.example/v/abc.mp4?s=tok&e=1",
+    address_bound: bool = True,
+    resolved_at: float | None = None,
+) -> CachedStreamLink:
+    """A stored MixDrop file, fresh unless *resolved_at* says otherwise."""
+    return CachedStreamLink(
+        stream_id=stream_id,
+        hoster_url="https://mixdrop.ag/e/xyz",
+        title="Test File",
+        hoster="mixdrop",
+        video_url=video_url,
+        video_headers=json.dumps({"Referer": "https://mixdrop.ag/"}),
+        resolved_at=time.time() if resolved_at is None else resolved_at,
+        address_bound=address_bound,
+    )
+
+
+def _file_answer(
+    status: int = 200,
+    headers: dict[str, str] | None = None,
+    chunks: tuple[bytes, ...] = (b"\x00" * 1000, b"\x01" * 500),
+) -> FileAnswer:
+    """What ``stream_file`` returns: the CDN's answer with the body in pieces."""
+
+    async def _iter() -> Any:
+        for chunk in chunks:
+            yield chunk
+
+    passed = headers or {
+        "content-type": "video/mp4",
+        "content-length": str(sum(len(chunk) for chunk in chunks)),
+        "accept-ranges": "bytes",
+    }
+    return FileAnswer(status, passed, _iter())
+
+
+class TestProxyFileEndpoint:
+    """GET and HEAD /api/v1/stremio/proxy/{stream_id}/file: an address-bound
+    direct file streamed with the player's byte range."""
+
+    _FILE = f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}"
+
+    def _app(
+        self, link: CachedStreamLink | None, resolved: ResolvedStream | None = None
+    ) -> FastAPI:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        registry.resolve = AsyncMock(return_value=resolved)
+        return _make_app(stream_link_repo=repo, hoster_resolver_registry=registry)
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_whole_file(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(
+            headers={
+                "content-type": "video/mp4",
+                "content-length": "1500000000",
+                "accept-ranges": "bytes",
+            }
+        )
+        link = _make_file_link()
+
+        resp = TestClient(self._app(link)).get(self._FILE)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp4"
+        assert resp.headers["content-length"] == "1500000000"
+        assert resp.headers["accept-ranges"] == "bytes"
+        assert resp.headers.get("access-control-allow-origin") == "*"
+        assert resp.content == b"\x00" * 1000 + b"\x01" * 500
+        args, kwargs = mock_stream.await_args.args, mock_stream.await_args.kwargs
+        assert args[1] == link.video_url
+        assert args[2] == {"Referer": "https://mixdrop.ag/"}
+        assert kwargs["player"].get("range") is None
+        assert kwargs["head"] is False
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_range(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(
+            206,
+            headers={
+                "content-type": "video/mp4",
+                "content-range": "bytes 1000000-1499999999/1500000000",
+                "content-length": "1499000000",
+            },
+        )
+
+        resp = TestClient(self._app(_make_file_link())).get(
+            self._FILE, headers={"Range": "bytes=1000000-"}
+        )
+
+        assert resp.status_code == 206
+        assert resp.headers["content-range"] == "bytes 1000000-1499999999/1500000000"
+        assert resp.headers["content-length"] == "1499000000"
+        assert mock_stream.await_args.kwargs["player"]["range"] == "bytes=1000000-"
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_head(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(chunks=())
+
+        resp = TestClient(self._app(_make_file_link())).head(self._FILE)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "video/mp4"
+        assert resp.content == b""
+        assert mock_stream.await_args.kwargs["head"] is True
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_stale_link_resolves_again_first(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer()
+        link = _make_file_link(resolved_at=time.time() - 2 * 3600)
+        new = ResolvedStream(
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4?s=new",
+            address_bound=True,
+        )
+        app = self._app(link, new)
+
+        resp = TestClient(app).get(self._FILE)
+
+        assert resp.status_code == 200
+        assert mock_stream.await_args.args[1] == new.video_url
+        saved = app.state.stream_link_repo.save.await_args.args[0]
+        assert saved.video_url == new.video_url
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_an_expired_url_is_resolved_again_once(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """FSST answers 410 for an expired URL: one resolution past the
+        resolver's cache, then the file from the new URL."""
+        link = _make_file_link()
+        new = ResolvedStream(
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4?s=new",
+            address_bound=True,
+        )
+        mock_stream.side_effect = [
+            _refused(link.video_url, 410),
+            _file_answer(
+                206,
+                headers={
+                    "content-type": "video/mp4",
+                    "content-range": "bytes 0-1499/1500",
+                    "content-length": "1500",
+                },
+            ),
+        ]
+        app = self._app(link, new)
+
+        resp = TestClient(app).get(self._FILE, headers={"Range": "bytes=0-"})
+
+        assert resp.status_code == 206
+        assert mock_stream.await_args.args[1] == new.video_url
+        app.state.hoster_resolver_registry.resolve.assert_awaited_once_with(
+            link.hoster_url, link.hoster, refresh=True
+        )
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_refusal_that_persists_is_502(self, mock_stream: AsyncMock) -> None:
+        link = _make_file_link()
+        new = ResolvedStream(video_url=link.video_url, address_bound=True)
+        mock_stream.side_effect = [_refused(link.video_url), _refused(link.video_url)]
+
+        resp = TestClient(self._app(link, new)).get(self._FILE)
+
+        assert resp.status_code == 502
+        assert mock_stream.await_count == 2
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_refusal_without_a_new_resolution_is_502(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        link = _make_file_link()
+        mock_stream.side_effect = _refused(link.video_url, 404)
+
+        resp = TestClient(self._app(link, None)).get(self._FILE)
+
+        assert resp.status_code == 502
+        mock_stream.assert_awaited_once()
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_cdn_that_cannot_be_reached_is_502(self, mock_stream: AsyncMock) -> None:
+        mock_stream.side_effect = httpx.ConnectError("down")
+
+        resp = TestClient(self._app(_make_file_link())).get(self._FILE)
+
+        assert resp.status_code == 502
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_an_hls_link_is_refused(self, mock_stream: AsyncMock) -> None:
+        resp = TestClient(self._app(_make_hls_link(stream_id="file-abc"))).get(
+            self._FILE
+        )
+
+        assert resp.status_code == 400
+        mock_stream.assert_not_awaited()
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_record_from_before_the_flag_is_refused(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """Such a link plays through /play, as before."""
+        resp = TestClient(self._app(_make_file_link(address_bound=False))).get(
+            self._FILE
+        )
+
+        assert resp.status_code == 400
+        mock_stream.assert_not_awaited()
+
+    def test_not_found(self) -> None:
+        resp = TestClient(self._app(None)).get(self._FILE)
+
+        assert resp.status_code == 404
+
+
 class TestProxyLeavesHlsToThePlayer:
     """Stremio Web lets its streaming server probe every stream. An HLS
     source then goes through the server's converter, which re-encodes the
@@ -1947,10 +2359,12 @@ class TestProxyTelemetry:
 
     _PLAYLIST = b"#EXTM3U\n#EXTINF:10.0,\nseg-1.ts\n#EXT-X-ENDLIST\n"
 
-    def _client(self, link: Any) -> tuple[TestClient, Telemetry]:
+    def _client(
+        self, link: Any, http_client: httpx.AsyncClient | None = None
+    ) -> tuple[TestClient, Telemetry]:
         repo = AsyncMock()
         repo.get = AsyncMock(return_value=link)
-        app = _make_app(stream_link_repo=repo)
+        app = _make_app(stream_link_repo=repo, http_client=http_client)
         app.state.config.stremio = StremioConfig()
         app.state.telemetry = Telemetry()
         return TestClient(app), app.state.telemetry
@@ -1983,14 +2397,20 @@ class TestProxyTelemetry:
         )
         assert seconds == 1
 
-    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
-    def test_segment_bytes(self, mock_stream: AsyncMock) -> None:
-        async def _chunks() -> Any:
-            yield b"\x00" * 1000
-            yield b"\x01" * 500
+    def test_segment_bytes(self) -> None:
+        """The bytes come from the CDN through the real segment body."""
 
-        mock_stream.return_value = (_chunks(), "video/mp2t")
-        client, t = self._client(_make_hls_link())
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            assert request.url.path.endswith("/seg-1.ts")
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp2t"},
+                content=b"\x00" * 1000 + b"\x01" * 500,
+            )
+
+        client, t = self._client(
+            _make_hls_link(), httpx.AsyncClient(transport=httpx.MockTransport(_cdn))
+        )
 
         resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")
 
@@ -2014,6 +2434,49 @@ class TestProxyTelemetry:
         assert resp.headers["content-type"] == "video/mp2t"
         assert mock_stream.await_args.kwargs["head"] is True
         assert self._bytes(t, "segment") is None
+
+    def test_file_bytes(self) -> None:
+        """A proxied file is recorded on the HLS proxy's metrics as ``file``,
+        its bytes from the CDN through the real file body."""
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            assert request.headers["Range"] == "bytes=0-"
+            return httpx.Response(
+                206,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Range": "bytes 0-3145727/3145728",
+                    "Content-Length": "3145728",
+                },
+                # A stream: httpx marks an answer built from inline content
+                # as consumed, and the file body reads it undecoded (aiter_raw)
+                stream=httpx.ByteStream(b"\x00" * 3145728),
+            )
+
+        client, t = self._client(
+            _make_file_link(), httpx.AsyncClient(transport=httpx.MockTransport(_cdn))
+        )
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}",
+            headers={"Range": "bytes=0-"},
+        )
+
+        assert resp.status_code == 206
+        assert len(resp.content) == 3 * 1048576
+        assert self._total(t, "file", "206") == 1
+        assert self._bytes(t, "file") == 3 * 1048576
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_head_request_counts_no_file_bytes(self, mock_stream: AsyncMock) -> None:
+        mock_stream.return_value = _file_answer(chunks=())
+        client, t = self._client(_make_file_link())
+
+        resp = client.head(f"{_PREFIX}/stremio/proxy/file-abc/{FILE_NAME}")
+
+        assert resp.status_code == 200
+        assert self._total(t, "file", "200") == 1
+        assert self._bytes(t, "file") is None
 
     def test_converter_refused(self) -> None:
         client, t = self._client(_make_hls_link())

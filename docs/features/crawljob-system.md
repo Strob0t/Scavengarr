@@ -204,7 +204,7 @@ https://hoster3.example/file/ghi
 | `auto_start` | `True` | Sets `auto_start` to `TRUE` (or `FALSE`) |
 | `default_priority` | `Priority.DEFAULT` | Download priority |
 
-The composition root (`build_crawljob_store()`) creates factory and repository with `ttl_seconds = cache.crawljob_ttl_seconds`, so the cache entry and `expires_at` expire together; `auto_start` and `default_priority` are not exposed in the configuration.
+The composition root (`build_crawljob_store()`) creates factory and repository with `ttl_seconds = cache.crawljob_ttl_seconds`, so the cache entry and `expires_at` expire together — except that a job resolved at grab time (`GrabResolvingPlugin`: nox, animeloads) is stored again with a fresh TTL, so its entry outlives `expires_at` while the download still answers 404 after it; `auto_start` and `default_priority` are not exposed in the configuration.
 
 ### Field Mapping
 

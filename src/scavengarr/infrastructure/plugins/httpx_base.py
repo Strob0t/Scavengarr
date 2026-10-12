@@ -15,25 +15,39 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
 import structlog
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort, BrowserSession
+from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.plugin_history import mark_challenge, settle_challenge
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
-from scavengarr.infrastructure.captcha.detect import detect_challenge
+from scavengarr.infrastructure.captcha.detect import (
+    detect_challenge,
+    detect_challenge_headers,
+)
 
 from .categories import category_matches
 from .constants import (
+    ANSWERING_DOMAIN_RECHECK_S,
     DEFAULT_CLIENT_TIMEOUT,
     DEFAULT_DOMAIN_CHECK_TIMEOUT,
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_MAX_RESULTS,
     DEFAULT_USER_AGENT,
     search_max_results,
+)
+from .domain_list import (
+    DOMAIN_LIST_FAILED_TTL_S,
+    DOMAIN_LIST_TTL_S,
+    read_domain_list,
+    serves_site,
 )
 
 # Browser fallback budget per page: covers a Turnstile click + redirect
@@ -45,6 +59,9 @@ _CF_BLOCK_MEMO_S = 30 * 60
 # A challenge this soon after httpx took over the browser's session means the
 # site does not accept that session from httpx: its pages go to the browser
 _SESSION_TRUST_S = 5 * 60
+# A domain that only answered an error page or a challenge at the domain
+# check serves this long, then the check runs again; a transient 429, 403
+# or 404 at check time must not pin a domain for the process lifetime
 
 
 def _forget_solve(solve: asyncio.Task[str | None]) -> None:
@@ -52,6 +69,17 @@ def _forget_solve(solve: asyncio.Task[str | None]) -> None:
     HttpxPluginBase._background_solves.discard(solve)
     if not solve.cancelled():
         solve.exception()  # retrieved: a cut request never awaits it
+
+
+def _site_answers(resp: httpx.Response) -> bool:
+    """The domain's site is up: an answer below 500 (an error page is still
+    the site), or a challenge (up behind Cloudflare: kinoger answers 403
+    with ``cf-mitigated: challenge``), read from the HEAD answer's headers
+    by the health prober's rule (``detect_challenge_headers``)."""
+    return (
+        resp.status_code < 500
+        or detect_challenge_headers(resp.status_code, resp.headers) is not None
+    )
 
 
 class HttpxPluginBase:
@@ -75,6 +103,9 @@ class HttpxPluginBase:
     _shared_http_client: httpx.AsyncClient | None = None
     # --- Browser fallback for Cloudflare challenges (set once, optional) ---
     _browser_fetcher: BrowserFetcherPort | None = None
+    # --- The app's cache (set once, optional): what a plugin keeps across
+    # requests, e.g. the episode index of a series (episode_index.py) ---
+    _cache: CachePort | None = None
     # host -> monotonic deadline: hosts that answered with a challenge go
     # straight to the browser (a doomed httpx request still counts against
     # the site's rate limit)
@@ -104,6 +135,12 @@ class HttpxPluginBase:
         return self.languages[0]
 
     _domains: list[str] = []  # noqa: RUF012  # subclass overrides
+    # The site's official list of its addresses (``https://filmo.domains/``)
+    # and the CSS selector of an element only the site's own landing page
+    # shows (its link to that list): a listed host serves the site only
+    # with it, since parked and for-sale domains answer below 400 too
+    domain_list_url: str | None = None
+    domain_marker: str | None = None
     _max_concurrent: int = DEFAULT_MAX_CONCURRENT
     _max_results: int = DEFAULT_MAX_RESULTS
     _timeout: float = DEFAULT_CLIENT_TIMEOUT
@@ -132,6 +169,16 @@ class HttpxPluginBase:
         HttpxPluginBase._browser_user_agents.clear()
         HttpxPluginBase._session_adopted_at.clear()
 
+    @staticmethod
+    def set_cache(cache: CachePort | None) -> None:
+        """Inject the app's cache for every httpx plugin.
+
+        A plugin keeps what it reads once for many requests under a key
+        of its own (``aniworld:episodes:v1:<slug>``); ``None`` (tests,
+        no cache) makes it read anew every time.
+        """
+        HttpxPluginBase._cache = cache
+
     def _cf_fetcher_for(self, url: str) -> BrowserFetcherPort | None:
         """The browser fetcher if *url*'s host recently showed a challenge."""
         fetcher = self._browser_fetcher
@@ -141,12 +188,18 @@ class HttpxPluginBase:
         return fetcher
 
     def _mark_cf_blocked(self, url: str) -> None:
+        """Remember *url*'s host as challenging (its pages go through the
+        browser), and the challenge in the running search's record."""
         host = urlparse(url).hostname or ""
         self._cf_blocked_until[host] = time.monotonic() + _CF_BLOCK_MEMO_S
+        mark_challenge()
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._domain_verified: bool = False
+        # Until when an answering-only domain (_use_domain, pinned=False)
+        # serves without a new check
+        self._domain_recheck_at: float = 0.0
         self.base_url: str = f"https://{self._domains[0]}" if self._domains else ""
         # The base URL before the site moved (_follow_site_move)
         self._moved_from: str | None = None
@@ -187,39 +240,119 @@ class HttpxPluginBase:
 
         Uses the *final* URL after redirects so that domains that
         redirect (e.g. ``aniworld.info`` → ``www.aniworld.info``)
-        produce a correct ``base_url`` for subsequent requests.
+        produce a correct ``base_url`` for subsequent requests. The first
+        domain answering below 400 wins and stays for the process
+        lifetime; without one, the first that answers at all
+        (``_site_answers``: an error page, or a Cloudflare challenge the
+        plugin's browser fallback solves) serves the searches of the next
+        ``ANSWERING_DOMAIN_RECHECK_S`` and is checked again then. When no
+        domain answers, a host of the site's domain list that serves the
+        site (``_listed_domain``) is pinned like one. Raises
+        ``PluginUnreachableError`` when none answers; the next search
+        checks again.
         """
-        if self._domain_verified or len(self._domains) <= 1:
+        single = len(self._domains) <= 1 and not self.domain_list_url
+        if self._domain_verified or single:
             self._domain_verified = True
+            return
+        if time.monotonic() < self._domain_recheck_at:
             return
 
         client = await self._ensure_client()
+        answering: tuple[str, httpx.Response] | None = None
         for domain in self._domains:
             url = f"https://{domain}/"
             try:
-                resp = await client.head(url, timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT)
-                if resp.status_code < 400:
-                    # Use the final URL after any redirects (e.g. www. prefix).
-                    final_url = str(resp.url)
-                    final_host = resp.url.host
-                    self.base_url = final_url.rstrip("/")
-                    self._domain_verified = True
-                    self._log.info(
-                        f"{self.name}_domain_found",
-                        domain=domain,
-                        resolved=final_host,
-                    )
-                    return
+                # The browser's User-Agent, as the plugin's requests send it: a
+                # site behind Cloudflare blocks the shared client's bot UA
+                resp = await client.head(
+                    url,
+                    timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT,
+                    headers={"User-Agent": self._user_agent},
+                )
             except Exception:  # noqa: BLE001
                 self._log.debug(f"{self.name}_domain_check_failed", domain=domain)
                 continue
+            if resp.status_code < 400:
+                self._use_domain(domain, resp, pinned=True)
+                return
+            if answering is None and _site_answers(resp):
+                answering = (domain, resp)
 
-        # All failed — keep primary
-        self.base_url = f"https://{self._domains[0]}"
-        self._domain_verified = True
-        self._log.warning(
-            f"{self.name}_no_domain_reachable",
-            fallback=self._domains[0],
+        if answering is not None:
+            domain, resp = answering
+            self._log.info(
+                f"{self.name}_domain_answers", domain=domain, status=resp.status_code
+            )
+            self._use_domain(domain, resp, pinned=False)
+            return
+        if await self._listed_domain(client):
+            return
+        self._log.warning(f"{self.name}_no_domain_reachable")
+        raise PluginUnreachableError(self.name)
+
+    async def _listed_domain(self, client: httpx.AsyncClient) -> bool:
+        """Pin the first host of the site's domain list beyond ``_domains``
+        whose landing page shows ``domain_marker``; ``False`` without one."""
+        if not self.domain_list_url or not self.domain_marker:
+            return False
+        own = {d.lower().removeprefix("www.") for d in self._domains}
+        for host in await self._domain_list(client):
+            if host.removeprefix("www.") in own:
+                continue
+            try:
+                resp = await client.get(
+                    f"https://{host}/",
+                    timeout=DEFAULT_DOMAIN_CHECK_TIMEOUT,
+                    headers={"User-Agent": self._user_agent},
+                )
+            except httpx.HTTPError:
+                self._log.debug(f"{self.name}_domain_check_failed", domain=host)
+                continue
+            if resp.status_code < 400 and await serves_site(
+                resp.text, self.domain_marker
+            ):
+                self._log.info("plugin_domain_list_host", plugin=self.name, host=host)
+                self._use_domain(host, resp, pinned=True)
+                return True
+        return False
+
+    async def _domain_list(self, client: httpx.AsyncClient) -> list[str]:
+        """The hosts of the site's domain list, read at most once a day
+        (an hour after a failed read) through the app's cache."""
+        cache = self._cache
+        if cache is None or not self.domain_list_url:
+            self._log.debug("plugin_domain_list_skipped", plugin=self.name)
+            return []
+        key = f"{self.name}:domain_list:v1"
+        cached = await cache.get(key)
+        if isinstance(cached, list):
+            return [str(h) for h in cached]
+        try:
+            hosts = await read_domain_list(
+                client, self.domain_list_url, self._user_agent
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            self._log.warning(
+                "plugin_domain_list_failed", plugin=self.name, error=str(exc)
+            )
+            await cache.set(key, [], ttl=DOMAIN_LIST_FAILED_TTL_S)
+            return []
+        await cache.set(key, hosts, ttl=DOMAIN_LIST_TTL_S)
+        return hosts
+
+    def _use_domain(self, domain: str, resp: httpx.Response, *, pinned: bool) -> None:
+        """Take the domain's final URL after any redirects (e.g. a ``www.``
+        prefix) as ``base_url``: for the process lifetime when *pinned* (the
+        domain works), else for ``ANSWERING_DOMAIN_RECHECK_S`` (it only
+        answered an error page or a challenge)."""
+        self.base_url = str(resp.url).rstrip("/")
+        self._domain_verified = pinned
+        self._domain_recheck_at = (
+            0.0 if pinned else time.monotonic() + ANSWERING_DOMAIN_RECHECK_S
+        )
+        self._log.info(
+            f"{self.name}_domain_found", domain=domain, resolved=resp.url.host
         )
 
     async def cleanup(self) -> None:
@@ -228,6 +361,7 @@ class HttpxPluginBase:
             await self._client.aclose()
         self._client = None
         self._domain_verified = False
+        self._domain_recheck_at = 0.0
 
     def _follow_site_move(self, resp: httpx.Response) -> None:
         """Make a permanent move of the site to another host the base URL.
@@ -287,7 +421,12 @@ class HttpxPluginBase:
         Sends the plugin's timeout and User-Agent like ``_fetch_text()``
         (``_request_kwargs()``: the browser's User-Agent to a site whose
         session httpx took over); the caller's *headers* go on top.
-        Returns ``None`` on failure instead of raising.
+        Returns ``None`` on failure instead of raising. A challenge answer
+        is told apart from an error page (``detect_challenge``, as in
+        ``_fetch_text()``): logged as ``<plugin>_challenge``, the host put
+        into the browser memo, so the plugin's ``_fetch_text()`` calls go
+        to the browser; the fallback itself stays with ``_fetch_text()``,
+        a plugin behind a challenge fetches its pages with it.
         """
         client = await self._ensure_client()
 
@@ -311,12 +450,7 @@ class HttpxPluginBase:
                 context=context,
             )
         except httpx.HTTPStatusError as exc:
-            self._log.warning(
-                f"{self.name}_http_error",
-                url=url,
-                status=exc.response.status_code,
-                context=context,
-            )
+            self._log_http_error(url, exc.response, context)
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, httpx.TransportError):
                 self._undo_site_move(url)
@@ -327,6 +461,31 @@ class HttpxPluginBase:
                 context=context,
             )
         return None
+
+    def _log_http_error(self, url: str, resp: httpx.Response, context: str) -> None:
+        """Log an error answer to ``_safe_fetch()``: a challenge as
+        ``<plugin>_challenge`` with the host put into the browser memo, else
+        ``<plugin>_http_error``."""
+        challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
+        if challenge is not None:
+            self._mark_cf_blocked(url)
+            # No browser tries this answer: the search did not get past it
+            settle_challenge(solved=False)
+            self._log.warning(
+                f"{self.name}_challenge",
+                url=url,
+                host=urlparse(url).hostname or "",
+                status=resp.status_code,
+                challenge=challenge,
+                context=context,
+            )
+            return
+        self._log.warning(
+            f"{self.name}_http_error",
+            url=url,
+            status=resp.status_code,
+            context=context,
+        )
 
     async def _fetch_text(
         self,
@@ -385,6 +544,9 @@ class HttpxPluginBase:
                 fetcher, str(resp.url), context=context, challenge=challenge
             )
 
+        if challenge is not None:
+            mark_challenge()
+            settle_challenge(solved=False)
         self._log.warning(
             f"{self.name}_http_error",
             url=url,
@@ -422,7 +584,9 @@ class HttpxPluginBase:
             self._log.info(
                 f"{self.name}_browser_session_rejected", url=url, context=context
             )
-            return await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            settle_challenge(solved=body is not None)
+            return body
 
         self._log.info(
             f"{self.name}_browser_fallback",
@@ -433,7 +597,10 @@ class HttpxPluginBase:
         solve = asyncio.create_task(self._solve_and_adopt(fetcher, url))
         self._background_solves.add(solve)
         solve.add_done_callback(_forget_solve)
-        return await asyncio.shield(solve)
+        # A failed solve or a cut request leaves the challenge open: unsolved
+        body = await asyncio.shield(solve)
+        settle_challenge(solved=body is not None)
+        return body
 
     async def _solve_and_adopt(
         self, fetcher: BrowserFetcherPort, url: str
@@ -654,9 +821,22 @@ class HttpxPluginBase:
         *,
         season: int | None = None,
         episode: int | None = None,
+        episode_ref: EpisodeRef | None = None,
     ) -> list[SearchResult]:
-        """Run search — httpx plugins need no context isolation."""
-        return await self.search(query, category, season=season, episode=episode)
+        """Run search — httpx plugins need no context isolation.
+
+        *episode_ref* (the runner gives it to a plugin that locates
+        episodes only, see ``PluginProtocol``) reaches ``search()`` as a
+        keyword; without one ``search()`` is called as before the
+        reference existed, so a plugin without the keyword keeps working.
+        """
+        # A plugin that locates episodes takes the reference as a keyword
+        # of its search(); the base signature has none
+        search: Callable[..., Awaitable[list[SearchResult]]] = self.search
+        extra: dict[str, EpisodeRef] = {}
+        if episode_ref is not None:
+            extra["episode_ref"] = episode_ref
+        return await search(query, category, season=season, episode=episode, **extra)
 
     # ------------------------------------------------------------------
     # Abstract search (subclass must implement)

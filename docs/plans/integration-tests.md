@@ -57,7 +57,7 @@ def test_search_returns_valid_torznab_xml(client: TestClient) -> None:
 
 #### 2. Plugin Pipeline Integration (open)
 
-Tests that execute a full multi-stage Python plugin search against fixture HTML. Not implemented yet: the fixtures in `tests/fixtures/html/testsite/` and the `fixtures_dir` fixture in `tests/integration/conftest.py` exist but are unused.
+Tests that execute a full multi-stage Python plugin search against fixture HTML. Not implemented yet (the unused hand-written `testsite` pages and the `fixtures_dir` fixture were removed in row 85; the real pages below are the fixtures such a test would use).
 
 ```text
 Python plugin (HttpxPluginBase) search() → Stage 1 (fixture HTML) → Stage 2 (fixture HTML) → SearchResult[]
@@ -113,16 +113,13 @@ tests/
   fixtures/
     html/
       hdfilme/, kinoger/, megakino/, streamcloud/, streamkiste/,
-      filmpalast/, movie2k/, aniworld/, sto/, kinoking/, warezomen/
+      filmpalast/, movie2k/, aniworld/, sto/, kinoking/, warezomen/,
+      einschalten/, fireani/, haschcon/, kinox/, moflix/
         search-oppenheimer.html.gz, detail-oppenheimer.html.gz, ...
+        search-oppenheimer.json.gz, ...   # a JSON API's answers
                                 # real pages, parsed in tests/unit/infrastructure/test_real_pages.py
-      testsite/
-        search_results.html     # Stage 1 response (unused so far)
-        movie_detail.html       # Stage 2 response (unused so far)
-        movie_detail_2.html
-        empty_search.html
   integration/
-    conftest.py                 # http_client, diskcache, respx_mock, fixtures_dir
+    conftest.py                 # http_client, diskcache, respx_mock
     test_config_loading.py      # Category 5
     test_crawljob_lifecycle.py  # Category 3
     test_link_validation.py     # Category 4
@@ -135,6 +132,8 @@ Fixtures should be captured from real sites once and committed as static files. 
 
 **Real pages (2026-10-01):** search and detail pages of the five DataLife Engine sites, captured from a live run of the plugins (Oppenheimer, The Last of Us), the per-visitor `dle_login_hash` scrubbed, gzipped (230 KB for 13 pages). `test_real_pages.py` runs the plugins' parsers on them with values read off the pages. They found what the hand-written fixtures could not: kinoger's series pages hand out the first episode for every request, streamkiste reads the wrong year, kinoger's detail metadata is empty. Recapture when a site changes its theme: `scripts/capture_pages.py <plugin> "<query>"` records a live search's pages, `--fixture <page> <name>` stores one (scrubbed, gzipped).
 
+**More sites (2026-10-06):** 16 plugins have real pages now. aniworld, sto, kinoking, filmpalast, movie2k and warezomen followed the DataLife Engine sites, and einschalten, fireani, haschcon, kinox and moflix complete the Stremio plugins (12 pages, 84 KB). Four of the five answer from a JSON API: the capture script stores such an answer as `<name>.json`, `--fixture` as `<name>.json.gz`, and `_json()` in `test_real_pages.py` reads it. The JSON plugins' tests drive the plugin's own requests against `respx` routes that answer with the captured JSON (einschalten's search, fireani's GetAnime/GetEpisode RPCs, haschcon's player page, moflix's whole search), so a changed API shape fails there. kinox's mirror answers, which carry its hoster links, sit behind the site's verification wall; its fixtures cover the search and the detail page (hoster names and ids).
+
 ### Test Infrastructure
 
 #### conftest.py (integration)
@@ -146,11 +145,6 @@ def app_client() -> Iterator[TestClient]:
     app = create_app(test_config)
     with TestClient(app) as client:
         yield client
-
-@pytest.fixture
-def fixtures_dir() -> Path:
-    """Path to HTML fixtures directory."""
-    return Path(__file__).parent.parent / "fixtures" / "html"
 ```
 
 #### pytest markers
@@ -171,8 +165,8 @@ markers = [
 ### Phase 1: Infrastructure Setup
 
 - [x] Create `tests/integration/` directory structure
-- [ ] Create `tests/fixtures/` with initial HTML fixtures (files exist in `tests/fixtures/html/testsite/` but no test uses them)
-- [x] Add integration conftest with fixture loader (`fixtures_dir`; no app client — router tests use `TestClient` in `tests/e2e/`)
+- [x] Create `tests/fixtures/` with HTML fixtures (the real pages of `tests/fixtures/html/<plugin>/`)
+- [x] Add integration conftest (`http_client`, `diskcache`, `respx_mock`; no app client — router tests use `TestClient` in `tests/e2e/`)
 - [x] Add `integration` pytest marker
 - [x] Integration tests run in CI (`.github/workflows/ci.yml`, in the same pytest run as the unit tests)
 

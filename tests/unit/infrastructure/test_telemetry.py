@@ -15,6 +15,7 @@ from scavengarr.infrastructure.telemetry import (
     Telemetry,
     monitor_loop_lag,
 )
+from scavengarr.infrastructure.version import APP_VERSION
 
 
 def _sample(t: Telemetry, name: str, **labels: str) -> float | None:
@@ -40,6 +41,14 @@ class TestStage:
             t, "scavengarr_plugin_search_total", plugin="kinoger", outcome="hits"
         )
         assert total == 1
+
+    def test_a_stage_without_labels(self) -> None:
+        t = Telemetry()
+        with t.stage("hls_readahead") as stage:
+            stage.outcome = "too_large"
+
+        assert _sample(t, "scavengarr_hls_readahead_seconds_count") == 1
+        assert _sample(t, "scavengarr_hls_readahead_total", outcome="too_large") == 1
 
     def test_outcome_defaults_to_ok(self) -> None:
         t = Telemetry()
@@ -170,9 +179,23 @@ class TestRender:
             'scavengarr_plugin_search_total{outcome="hits",plugin="kinoger"} 1.0'
             in text
         )
-        assert "scavengarr_build_info{version=" in text
+        assert "scavengarr_build_info{" in text
         assert "python_info" in text
         assert "_created" not in text
+
+    def test_build_info_names_version_commit_and_build_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCAVENGARR_COMMIT", "7eeb50b63a57")
+        monkeypatch.setenv("SCAVENGARR_BUILT", "2026-10-06T18:00:00Z")
+
+        text = Telemetry().render().decode()
+
+        # prometheus_client sorts an Info's labels
+        assert (
+            'scavengarr_build_info{built="2026-10-06T18:00:00Z",'
+            f'commit="7eeb50b63a57",version="{APP_VERSION}"}} 1.0'
+        ) in text
 
     def test_instances_do_not_share_metrics(self) -> None:
         first, second = Telemetry(), Telemetry()

@@ -23,6 +23,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
@@ -91,7 +92,10 @@ class RapidgatorResolver:
                 canonical_url,
                 follow_redirects=True,
                 timeout=15,
-                headers={"Accept-Language": "en-US,en;q=0.8"},
+                headers={
+                    "User-Agent": DEFAULT_USER_AGENT,
+                    "Accept-Language": "en-US,en;q=0.8",
+                },
             )
         except httpx.HTTPError:
             log.warning("rapidgator_request_failed", url=url)

@@ -11,7 +11,14 @@ PluginProvides = Literal["stream", "download", "both"]
 
 @dataclass
 class SearchResult:
-    """Normalized search result."""
+    """Normalized search result.
+
+    ``metadata`` keys with a meaning beyond the plugin: ``season`` and
+    ``episode`` (ints) name the episode a series result is for, set by
+    plugins that know it from the page; the Stremio episode filter reads
+    them before guessing from the title. ``source_plugin`` is set by the
+    search runner.
+    """
 
     title: str
     download_link: str
@@ -66,6 +73,15 @@ def result_key(result: SearchResult) -> ResultKey:
     )
 
 
+class PluginUnreachableError(Exception):
+    """None of the plugin's domains answered its domain check: the search
+    cannot start. The next search checks the domains again."""
+
+    def __init__(self, plugin: str) -> None:
+        super().__init__(f"{plugin}: no domain reachable")
+        self.plugin = plugin
+
+
 class PluginProtocol(Protocol):
     """
     Protocol for Python plugins.
@@ -74,6 +90,14 @@ class PluginProtocol(Protocol):
     - has a `name: str` attribute
     - implements: async def search(query, category, season,
       episode) returning list[SearchResult]
+
+    Optional capability: a plugin that places a series episode by the
+    request's `EpisodeRef` (the episode's title, air date and absolute
+    number) sets `locates_episodes = True` and takes
+    `episode_ref: EpisodeRef | None = None` as a keyword of `search()`.
+    The Stremio plugin search passes the reference to such plugins only
+    (`locates_episodes()`); every other plugin is called with query,
+    category, season and episode alone.
     """
 
     name: str
@@ -86,6 +110,13 @@ class PluginProtocol(Protocol):
         season: int | None = None,
         episode: int | None = None,
     ) -> list[SearchResult]: ...
+
+
+def locates_episodes(plugin: object) -> bool:
+    """Whether *plugin* declares the episode-location capability. The
+    attribute must be ``True`` itself: a mock's attribute is an object,
+    and a truthy object declares nothing."""
+    return getattr(plugin, "locates_episodes", False) is True
 
 
 @runtime_checkable

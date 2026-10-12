@@ -466,7 +466,7 @@ class TestSerienjunkiesPluginSearch:
         assert len(results) > 0
         for r in results:
             # All results should be for season 2
-            assert r.metadata.get("season") == "2"
+            assert r.metadata.get("season") == 2
 
     @pytest.mark.asyncio
     async def test_search_with_episode_filter(self) -> None:
@@ -488,7 +488,7 @@ class TestSerienjunkiesPluginSearch:
         assert len(results) >= 1
         for r in results:
             ep = r.metadata.get("episode")
-            assert ep is None or ep == "1"
+            assert ep is None or ep == 1
 
     @pytest.mark.asyncio
     async def test_search_season_no_match(self) -> None:
@@ -608,7 +608,7 @@ class TestSerienjunkiesPluginSearch:
         results = await plug.search("Breaking Bad")
 
         # Find the specific episode release
-        ep_results = [r for r in results if r.metadata.get("episode") == "1"]
+        ep_results = [r for r in results if r.metadata.get("episode") == 1]
         assert len(ep_results) >= 1
 
         first = ep_results[0]
@@ -646,7 +646,7 @@ class TestSerienjunkiesPluginSearch:
         plug._client = mock_client
         results = await plug.search("test")
 
-        ep_results = [r for r in results if r.metadata.get("episode") == "1"]
+        ep_results = [r for r in results if r.metadata.get("episode") == 1]
         assert len(ep_results) >= 1
         desc = ep_results[0].description
         assert "720p" in desc

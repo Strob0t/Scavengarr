@@ -45,7 +45,13 @@ def _best_source(file: str) -> str | None:
 
 
 class FsstResolver:
-    """Resolves fsst embed pages to the MP4 of their best quality."""
+    """Resolves fsst embed pages to the MP4 of their best quality.
+
+    The MP4 URL plays only from the address that resolved it (finding 17:
+    410 from another address), so it is proxied.
+    """
+
+    address_bound = True
 
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client

@@ -58,7 +58,13 @@ def _extract_file_id(url: str) -> str | None:
 
 
 class MixdropResolver:
-    """Resolves mixdrop file and embed pages to the player's MP4."""
+    """Resolves mixdrop file and embed pages to the player's MP4.
+
+    The MP4 URL plays only from the address that resolved it (finding 17:
+    403 from another address), so it is proxied.
+    """
+
+    address_bound = True
 
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client

@@ -1,26 +1,39 @@
-# Scavengarr with Docker Compose (image built locally from Dockerfile.prod).
+# Scavengarr with Docker Compose (the published image, see the README).
 #
-#   docker compose up -d --build                    # Scavengarr only
-#   docker compose --profile solver up -d --build   # + Byparr captcha solver
-#   docker compose --profile redis up -d --build    # + Redis cache backend
-#   docker compose --profile tracing up -d --build  # + Tempo for traces
+#   docker compose up -d                          # Scavengarr only
+#   docker compose --profile solver up -d         # + Byparr captcha solver
+#   docker compose --profile redis up -d          # + Redis cache backend
+#   docker compose --profile tracing up -d        # + Tempo for traces
+#   docker compose pull && docker compose up -d   # update
 #
 # Profiles only start the extra service; enable its use in Scavengarr by
 # uncommenting the matching environment line below.
 
 services:
   scavengarr:
-    build:
-      context: .
-      dockerfile: Dockerfile.prod
-    image: scavengarr:local
+    # latest: the newest release; staging: every push to the staging branch
+    image: ghcr.io/strob0t/scavengarr:latest
+    # Or build this checkout (docker compose up -d --build): replace the image
+    # line with the block below. The build records the checkout's commit and
+    # the build time (scavengarr_build_info, /api/v1/healthz); the build
+    # arguments set them explicitly, e.g.
+    #   SCAVENGARR_COMMIT=$(git rev-parse --short=12 HEAD) \
+    #   SCAVENGARR_BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ) docker compose up -d --build
+    # image: scavengarr:local
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.prod
+    #   args:
+    #     SCAVENGARR_COMMIT: ${SCAVENGARR_COMMIT:-}
+    #     SCAVENGARR_BUILT: ${SCAVENGARR_BUILT:-}
     container_name: scavengarr
     ports:
       - "7979:7979"
     volumes:
-      - ./data:/app/config # config.yaml (edit, then restart)
-      - ./plugins:/app/plugins # the image does not bundle plugins
+      - ./data:/app/config # config.yaml (edit, then restart); seeded when missing
       - scavengarr-cache:/app/cache # search cache, clearance cookies, scores
+      # The image bundles the plugins; a mount replaces them (plugin work):
+      # - ./plugins:/app/plugins
     environment:
       SCAVENGARR_LOG_LEVEL: INFO
       # Honor X-Forwarded-Proto/-For of a reverse proxy (Caddy, Traefik, nginx)
@@ -36,6 +49,28 @@ services:
       # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
       # Traces to Tempo (profile "tracing"); Prometheus scrapes /metrics anyway:
       # SCAVENGARR_TELEMETRY_TRACING_ENDPOINT: http://tempo:4318
+      # Every setting reads SCAVENGARR_<SECTION>_<KEY> (docs/features/
+      # configuration.md, "Application Variables"). The values of the default
+      # config file, as environment entries; they win over the seeded file:
+      # SCAVENGARR_ENVIRONMENT: "prod"
+      # SCAVENGARR_TMDB_API_KEY: ""
+      # SCAVENGARR_VALIDATION_TIMEOUT_SECONDS: "3.0"
+      # SCAVENGARR_VALIDATION_MAX_CONCURRENT: "30"
+      # SCAVENGARR_PLUGINS_OVERRIDES: '{"cineby": {"enabled": false}}'
+      # SCAVENGARR_HTTP_TIMEOUT_SECONDS: "15.0"
+      # SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS: "10.0"
+      # SCAVENGARR_HTTP_RATE_LIMIT_RPS: "10.0"
+      # SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS: "2"
+      # SCAVENGARR_HTTP_RETRY_BACKOFF_BASE: "0.5"
+      # SCAVENGARR_HTTP_RETRY_MAX_BACKOFF: "10.0"
+      # SCAVENGARR_PLAYWRIGHT_TIMEOUT_MS: "20000"
+      # SCAVENGARR_CACHE_SEARCH_TTL_SECONDS: "1800"
+      # SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS: "15"
+      # SCAVENGARR_STREMIO_MAX_CONCURRENT_PLAYWRIGHT: "7"
+      # SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN: "50"
+      # SCAVENGARR_STREMIO_PROBE_CONCURRENCY: "20"
+      # SCAVENGARR_STREMIO_MAX_PROBE_COUNT: "80"
+      # SCAVENGARR_STREMIO_PROBE_STEALTH_TIMEOUT_SECONDS: "10.0"
     shm_size: 1gb # Chromium (Playwright plugins, browser capture) needs shared memory
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     # CPU profiles in the container (scripts/stremio_profile.py --py-spy):

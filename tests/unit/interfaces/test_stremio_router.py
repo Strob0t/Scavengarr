@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from scavengarr.application.stremio.answer import AnswerSource, StreamAnswer
 from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
@@ -16,9 +20,17 @@ from scavengarr.domain.entities.stremio import (
     StremioStream,
 )
 from scavengarr.interfaces.api.stremio.router import (
+    _BodyResponse,
     _parse_stream_id,
     router,
 )
+
+
+def _answer(
+    streams: list[StremioStream], source: AnswerSource = "search", complete: bool = True
+) -> StreamAnswer:
+    """The use case's answer: a fresh, complete search unless said otherwise."""
+    return StreamAnswer(streams, source, complete, ())
 
 
 def _make_app(
@@ -120,6 +132,35 @@ class TestParseStreamId:
         result = _parse_stream_id("series", "tmdb:12345:abc:5")
         assert result is None
 
+    def test_kitsu_movie_id(self) -> None:
+        result = _parse_stream_id("movie", "kitsu:11614")
+        assert result is not None
+        assert result.imdb_id == "kitsu:11614"
+        assert result.content_type == "movie"
+        assert result.season is None
+        assert result.episode is None
+
+    def test_kitsu_series_id_with_episode(self) -> None:
+        # The anime catalog counts episodes absolutely: no season part
+        result = _parse_stream_id("series", "kitsu:41982:3")
+        assert result is not None
+        assert result.imdb_id == "kitsu:41982"
+        assert result.content_type == "series"
+        assert result.season is None
+        assert result.episode == 3
+
+    def test_kitsu_series_without_episode(self) -> None:
+        result = _parse_stream_id("series", "kitsu:41982")
+        assert result is not None
+        assert result.imdb_id == "kitsu:41982"
+        assert result.episode is None
+
+    def test_kitsu_non_numeric_episode(self) -> None:
+        assert _parse_stream_id("series", "kitsu:41982:abc") is None
+
+    def test_kitsu_with_season_and_episode(self) -> None:
+        assert _parse_stream_id("series", "kitsu:41982:1:3") is None
+
 
 class TestManifestEndpoint:
     def test_lists_no_catalogs_without_catalog_use_case(self) -> None:
@@ -168,6 +209,7 @@ class TestManifestEndpoint:
         assert "catalog" in data["resources"]
         assert "tt" in data["idPrefixes"]
         assert "tmdb:" in data["idPrefixes"]
+        assert "kitsu:" in data["idPrefixes"]
 
     def test_cors_headers(self) -> None:
         app = _make_app()
@@ -362,14 +404,16 @@ class TestStreamEndpoint:
 
     def test_returns_streams_for_movie(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(
-            return_value=[
-                StremioStream(
-                    name="hdfilme HD 1080P",
-                    description="German Dub | VOE | 4.5 GB",
-                    url="https://voe.sx/e/abc123",
-                ),
-            ]
+        stream_uc.answer = AsyncMock(
+            return_value=_answer(
+                [
+                    StremioStream(
+                        name="hdfilme HD 1080P",
+                        description="German Dub | VOE | 4.5 GB",
+                        url="https://voe.sx/e/abc123",
+                    ),
+                ]
+            )
         )
 
         app = _make_app(stremio_stream_uc=stream_uc)
@@ -392,16 +436,43 @@ class TestStreamEndpoint:
 
         assert resp.headers["access-control-allow-origin"] == "*"
 
+    @pytest.mark.parametrize(
+        ("source", "complete", "x_cache"),
+        [
+            ("search", False, "MISS"),
+            ("cache", True, "HIT"),
+            ("stale", True, "STALE"),
+            ("joined", False, "JOINED"),
+        ],
+    )
+    def test_cache_and_search_complete_headers(
+        self, source: AnswerSource, complete: bool, x_cache: str
+    ) -> None:
+        """Where the answer came from and whether its search still runs
+        (continue-cut-searches): a retry knows what to expect."""
+        stream_uc = AsyncMock()
+        stream_uc.answer = AsyncMock(return_value=_answer([], source, complete))
+        app = _make_app(stremio_stream_uc=stream_uc)
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/stremio/stream/movie/tt0371746.json")
+
+        assert resp.headers["x-cache"] == x_cache
+        assert resp.headers["x-search-complete"] == ("true" if complete else "false")
+        assert resp.headers["access-control-allow-origin"] == "*"
+
     def test_returns_streams_for_tmdb_movie(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(
-            return_value=[
-                StremioStream(
-                    name="hdfilme HD 1080P",
-                    description="German Dub | VOE | 5.0 GB",
-                    url="https://voe.sx/e/xyz789",
-                ),
-            ]
+        stream_uc.answer = AsyncMock(
+            return_value=_answer(
+                [
+                    StremioStream(
+                        name="hdfilme HD 1080P",
+                        description="German Dub | VOE | 5.0 GB",
+                        url="https://voe.sx/e/xyz789",
+                    ),
+                ]
+            )
         )
 
         app = _make_app(stremio_stream_uc=stream_uc)
@@ -414,14 +485,14 @@ class TestStreamEndpoint:
         assert len(streams) >= 1
         assert "url" in streams[0]
         # Verify the parsed request was passed to use case
-        stream_uc.execute.assert_awaited_once()
-        call_arg = stream_uc.execute.call_args[0][0]
+        stream_uc.answer.assert_awaited_once()
+        call_arg = stream_uc.answer.call_args[0][0]
         assert call_arg.imdb_id == "tmdb:238"
         assert call_arg.content_type == "movie"
 
     def test_tmdb_series_resolves_with_season_episode(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -429,15 +500,15 @@ class TestStreamEndpoint:
         resp = client.get("/api/v1/stremio/stream/series/tmdb:1396:3:7.json")
 
         assert resp.status_code == 200
-        stream_uc.execute.assert_awaited_once()
-        call_arg = stream_uc.execute.call_args[0][0]
+        stream_uc.answer.assert_awaited_once()
+        call_arg = stream_uc.answer.call_args[0][0]
         assert call_arg.imdb_id == "tmdb:1396"
         assert call_arg.season == 3
         assert call_arg.episode == 7
 
     def test_series_search_includes_season_episode(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc)
         client = TestClient(app)
@@ -445,15 +516,15 @@ class TestStreamEndpoint:
         resp = client.get("/api/v1/stremio/stream/series/tt0903747:1:1.json")
 
         assert resp.status_code == 200
-        stream_uc.execute.assert_awaited_once()
-        call_arg = stream_uc.execute.call_args[0][0]
+        stream_uc.answer.assert_awaited_once()
+        call_arg = stream_uc.answer.call_args[0][0]
         assert call_arg.imdb_id == "tt0903747"
         assert call_arg.season == 1
         assert call_arg.episode == 1
 
     def test_returns_empty_when_no_plugins(self) -> None:
         stream_uc = AsyncMock()
-        stream_uc.execute = AsyncMock(return_value=[])
+        stream_uc.answer = AsyncMock(return_value=_answer([]))
 
         app = _make_app(stremio_stream_uc=stream_uc, plugin_names=[])
         client = TestClient(app)
@@ -629,3 +700,74 @@ class TestPlayEndpoint:
 
         assert resp.status_code == 502
         assert resp.headers["access-control-allow-origin"] == "*"
+
+
+class TestProxyFileLink:
+    """The file route serves address-bound files only; the other links keep
+    their routes."""
+
+    _FILE = "/api/v1/stremio/proxy/abc123/file"
+
+    @staticmethod
+    def _client(link: CachedStreamLink | None) -> TestClient:
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        return TestClient(_make_app(stream_link_repo=repo))
+
+    @pytest.mark.parametrize(
+        ("is_hls", "address_bound"),
+        [(True, True), (True, False), (False, False)],
+        ids=["hls", "hls-without-flag", "file-without-flag"],
+    )
+    def test_other_links_are_refused(self, is_hls: bool, address_bound: bool) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://mixdrop.ag/e/test",
+            hoster="mixdrop",
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4",
+            is_hls=is_hls,
+            resolved_at=time.time(),
+            address_bound=address_bound,
+        )
+
+        resp = self._client(link).get(self._FILE)
+
+        assert resp.status_code == 400
+
+    def test_without_a_link(self) -> None:
+        assert self._client(None).get(self._FILE).status_code == 404
+
+    def test_without_the_repository(self) -> None:
+        assert TestClient(_make_app()).get(self._FILE).status_code == 503
+
+
+class TestBodyResponse:
+    """A proxied body is closed when its transfer ends, the player's
+    disconnect included: Starlette leaves a cancelled body to the garbage
+    collector."""
+
+    @pytest.mark.asyncio
+    async def test_a_disconnect_mid_body_closes_the_generator(self) -> None:
+        closed = asyncio.Event()
+        gone = asyncio.Event()
+
+        async def _body() -> Any:
+            try:
+                yield b"first"
+                yield b"second"
+            finally:
+                closed.set()
+
+        async def receive() -> dict[str, Any]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.body" and message["body"]:
+                gone.set()  # the player goes away after the first piece
+                await asyncio.sleep(1)
+
+        response = _BodyResponse(content=_body(), media_type="video/mp2t")
+        await response({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+
+        assert closed.is_set()

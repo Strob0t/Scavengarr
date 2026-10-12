@@ -21,6 +21,9 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
+from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
+from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.page_budget import PageBudget
 from scavengarr.infrastructure.browser.page_gate import PageGate
@@ -39,6 +42,7 @@ from scavengarr.infrastructure.common.private_address_guard import (
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
+from scavengarr.infrastructure.config.load import changed_values
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.hoster_resolvers import HosterResolverRegistry
 from scavengarr.infrastructure.hoster_resolvers.ddownload import DDownloadResolver
@@ -58,10 +62,12 @@ from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
 from scavengarr.infrastructure.hoster_resolvers.serienstream import SerienstreamResolver
+from scavengarr.infrastructure.hoster_resolvers.state_store import HosterStateStore
 from scavengarr.infrastructure.hoster_resolvers.stmix import StmixResolver
 from scavengarr.infrastructure.hoster_resolvers.streamtape import StreamtapeResolver
 from scavengarr.infrastructure.hoster_resolvers.strmup import StrmupResolver
 from scavengarr.infrastructure.hoster_resolvers.supervideo import SuperVideoResolver
+from scavengarr.infrastructure.hoster_resolvers.upns import UpnsResolver
 from scavengarr.infrastructure.hoster_resolvers.veev import VeevResolver
 from scavengarr.infrastructure.hoster_resolvers.vidguard import VidguardResolver
 from scavengarr.infrastructure.hoster_resolvers.vidking import VidkingResolver
@@ -85,6 +91,7 @@ from scavengarr.infrastructure.plugins.constants import (
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
+from scavengarr.infrastructure.plugins.history import PluginHistory
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
 from scavengarr.infrastructure.resource_detector import detect_resources
@@ -92,7 +99,9 @@ from scavengarr.infrastructure.scoring.health_prober import HealthProber
 from scavengarr.infrastructure.scoring.query_pool import QueryPoolBuilder
 from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
 from scavengarr.infrastructure.scoring.search_prober import MiniSearchProber
+from scavengarr.infrastructure.stremio.cinemeta import CinemetaClient
 from scavengarr.infrastructure.stremio.episode_filter import filter_by_episode
+from scavengarr.infrastructure.stremio.hls_proxy import SegmentReadAhead
 from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
@@ -104,6 +113,7 @@ from scavengarr.infrastructure.telemetry.collectors import (
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
+from scavengarr.infrastructure.version import build_identity
 from scavengarr.interfaces.app_state import AppState
 
 log = structlog.get_logger(__name__)
@@ -117,6 +127,28 @@ _CONNECT_TIMEOUT_S = 5.0
 # in the idle connections: with 100 kept, the scan held the GIL 10-20% of
 # the time during stream requests on the Pi, 2% with httpx's defaults
 _KEEPALIVE_CONNECTIONS = 20
+
+
+def _log_config(config: AppConfig) -> None:
+    """What the server runs with: the values away from the defaults, secrets
+    masked, with the layer each came from, and the YAML keys and environment
+    names that loading ignored."""
+    source = config.source
+    config_file = str(source.file) if source.file else None
+    changed = changed_values(config)
+    sources = {path: source.value_sources.get(path, "defaults") for path in changed}
+    # One field per changed value, so the processors mask URL passwords in them
+    log.info("config_effective", config_file=config_file, sources=sources, **changed)
+    if source.unknown_keys:
+        log.warning(
+            "config_unknown_keys",
+            config_file=config_file,
+            keys=list(source.unknown_keys),
+        )
+    if source.unknown_env:
+        log.warning("config_unknown_env", names=list(source.unknown_env))
+    for used, ignored in source.env_conflicts:
+        log.warning("config_env_conflict", used=used, ignored=ignored)
 
 
 def _auto_tune_concurrency(config: AppConfig) -> None:
@@ -391,6 +423,7 @@ def _plugin_health(state: AppState, config: AppConfig) -> PluginHealthMonitor | 
         plugins=state.plugins,
         names=names,
         interval_s=interval,
+        history=state.plugin_history,
     )
 
 
@@ -408,6 +441,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     state = cast(AppState, app.state)
     config = state.config
+    _log_config(config)
     configure_event_loop()
 
     # 0) Telemetry (must exist before the components that record); tracing
@@ -448,8 +482,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         retry_max_attempts=config.http_retry_max_attempts,
     )
 
-    # 2b) Share HTTP client with httpx-based plugins
+    # 2b) Share HTTP client and cache with httpx-based plugins
     HttpxPluginBase.set_shared_http_client(state.http_client)
+    HttpxPluginBase.set_cache(state.cache)
 
     # 3) Plugin registry
     state.plugins = PluginRegistry(plugin_dir=config.plugin_dir)
@@ -504,6 +539,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Solved Cloudflare/DDoS-Guard challenges survive restarts
     clearance_store = ClearanceStore(state.cache)
     PlaywrightPluginBase.set_clearance_store(clearance_store)
+    PlaywrightPluginBase.set_page_timeout(config.playwright_timeout_ms)
     # The stealth browser's pages: 2 at the start, then adapted to the waits
     # for a page, the CPU and the free memory, up to max_concurrent_playwright
     ceiling = config.stremio.max_concurrent_playwright
@@ -574,6 +610,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             VinovoResolver(http_client=state.http_client),
             GxplayerResolver(http_client=state.http_client),
             FsstResolver(http_client=state.http_client),
+            UpnsResolver(http_client=state.http_client, hoster="upns"),
+            UpnsResolver(http_client=state.http_client, hoster="rpmplay"),
             # DDL resolvers (custom — non-XFS)
             MediafireResolver(http_client=state.http_client),
             GoFileResolver(http_client=state.http_client),
@@ -609,6 +647,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.stremio_links = StremioLinks(
         repo=state.stream_link_repo, resolver=state.hoster_resolver_registry
     )
+    # The HLS proxy fetches the next segments ahead of the player
+    state.hls_read_ahead = SegmentReadAhead(telemetry=state.telemetry)
 
     # 11) Plugin scoring (optional — background health + search probes)
     state.plugin_score_store = None
@@ -638,11 +678,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cooldown_seconds=60.0,
     )
     log.info("circuit_breaker_initialized")
-    state.telemetry.registry.register(
-        BreakerCollector({"plugin": state.circuit_breaker, "hoster": hoster_breaker})
-    )
+    breakers = {"plugin": state.circuit_breaker, "hoster": hoster_breaker}
+    state.telemetry.registry.register(BreakerCollector(breakers))
 
-    # 14b) Plugin health: Stremio searches skip sites that do not answer
+    # 14a) Resolutions, redirects and open breakers outlive a restart: a
+    #      snapshot in the cache, written every 30 s when it changed and at
+    #      shutdown, restored before the first request
+    state.hoster_state_store = HosterStateStore(
+        state.cache, state.hoster_resolver_registry, breakers
+    )
+    await state.hoster_state_store.restore()
+    state.hoster_state_store.start()
+
+    # 14b) The plugins' long-term record (searches, results, timeouts, checks
+    #      and unreachable marks per day, 180 days): in the cache, written
+    #      every minute when it changed and at shutdown, restored at the start
+    state.plugin_history = PluginHistory(state.cache)
+    await state.plugin_history.restore()
+    state.plugin_history.start()
+
+    # 14c) Plugin health: Stremio searches skip sites that do not answer
     state.plugin_health = _plugin_health(state, config)
     state._plugin_health_task = (
         asyncio.create_task(state.plugin_health.run_forever())
@@ -650,9 +705,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else None
     )
 
-    # 15) Stremio use cases (always initialized — fallback handles missing key)
+    # 15) Anime: the Kitsu addon's ids become IMDb requests (the addon's
+    # meta, the public id list as the fallback), both cached in the backend
+    state.anime_ids = KitsuAnimeIdResolver(
+        addon=KitsuAddonClient(http_client=state.http_client, cache=state.cache),
+        lists=AnimeIdLists(http_client=state.http_client, cache=state.cache),
+    )
+    # 15b) The catalog's record of a title (kind, episodes), cached 7 days
+    state.series_meta = CinemetaClient(http_client=state.http_client, cache=state.cache)
+
+    # 16) Stremio use cases (always initialized — fallback handles missing key)
     state.stremio_stream_uc = StremioStreamUseCase(
         tmdb=state.tmdb_client,
+        anime_ids=state.anime_ids,
+        series_meta=state.series_meta,
         plugins=state.plugins,
         search_engine=state.search_engine,
         config=config.stremio,
@@ -678,6 +744,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # hdfilme, streamcloud, streamkiste: one database, one asked per request
         mirror_groups=_mirror_groups(state.plugins),
         plugin_health=state.plugin_health,
+        plugin_history=state.plugin_history,
         # Search results per title, shared with Torznab's TTL (0 = off)
         cache=state.cache,
         search_ttl_seconds=config.cache.search_ttl_seconds,
@@ -689,7 +756,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Mark the application as ready for traffic
     state.graceful_shutdown.mark_ready()
-    log.info("app_startup_complete")
+    log.info("app_startup_complete", **build_identity())
 
     try:
         yield
@@ -701,8 +768,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # half-open hoster probes use the browser, HTTP client and cache
         # closed below
         await state.stremio_stream_uc.aclose()
+        # The anime id list's background load
+        await state.anime_ids.aclose()
         await state.stremio_links.aclose()
+        await state.hls_read_ahead.aclose()
         await state.hoster_resolver_registry.aclose()
+        # The last resolutions and breaker changes, before the cache closes
+        await state.hoster_state_store.aclose()
+        # The plugin record's last counts (the health task is cancelled
+        # below: a check it still runs is not worth a write)
+        await state.plugin_history.aclose()
 
         if state._scoring_task is not None:
             state._scoring_task.cancel()

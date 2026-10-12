@@ -2,9 +2,11 @@
 
 The other plugin tests feed hand-written HTML shaped like what the parsers
 expect, so a parser that drifted from a site's markup still passes them.
-These pages are the sites' own (captured 2026-10-01, the per-visitor
-``dle_login_hash`` scrubbed, gzipped). Recapture them from a live run when
-a site changes its theme, and update the expected values.
+These pages are the sites' own (captured 2026-10-01 unless a class names
+another date, the per-visitor ``dle_login_hash`` scrubbed, gzipped); the
+``.json.gz`` ones are answers of a site's JSON API. Recapture them from a
+live run (``scripts/capture_pages.py``) when a site changes its theme or
+API, and update the expected values.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import gzip
 import importlib.util
 import inspect
+import json
 import sys
 from functools import cache
 from pathlib import Path
@@ -21,15 +24,31 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import respx
 
+from scavengarr.domain.entities.stremio import EpisodeRef
 from scavengarr.infrastructure.plugins import devideosrc
+from scavengarr.infrastructure.plugins.episode_index import (
+    EpisodeRow,
+    SeasonPageParser,
+    locate,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PAGES = _ROOT / "tests" / "fixtures" / "html"
 
 
+def _fixture(site: str, filename: str) -> str:
+    return gzip.decompress((_PAGES / site / filename).read_bytes()).decode()
+
+
 def _page(site: str, name: str) -> str:
-    return gzip.decompress((_PAGES / site / f"{name}.html.gz").read_bytes()).decode()
+    return _fixture(site, f"{name}.html.gz")
+
+
+def _json(site: str, name: str) -> Any:
+    """A captured answer of the site's JSON API."""
+    return json.loads(_fixture(site, f"{name}.json.gz"))
 
 
 # Plugin files named other than the plugin (fixtures go by plugin name)
@@ -195,6 +214,49 @@ class TestKinoger:
         assert detail.stream_links[8]["link"] == "https://fsst.online/embed/991372/"
         assert detail.stream_links[8]["label"] == "2x1 "
 
+    def test_series_episodes_from_the_player_script(self) -> None:
+        """The live theme (2026-10-07) lists no ``span[data-id]``: the
+        player script holds the episodes, one array per season
+        (``pw.show(5,[[S1E1, …], [S2E1, …], …])``). Its first URL alone
+        served S01E01 for every request."""
+        detail = _detail("kinoger", self._BASE, "detail-stranger-things")
+        assert detail.episodes_listed
+        # 4 player tabs, 8 + 9 + 8 + 9 + 8 episodes each
+        assert len(detail.stream_links) == 4 * 42
+        labels = [lk["label"] for lk in detail.stream_links[:42]]
+        assert (labels[0], labels[8], labels[-1]) == (
+            "1x1 Stream HD+",
+            "2x1 Stream HD+",
+            "5x8 Stream HD+",
+        )
+        assert detail.stream_links[0]["link"] == "https://fsst.online/embed/1029126/"
+
+    async def test_series_request_gets_its_episode(self) -> None:
+        plugin = _plugin_module("kinoger").KinogerPlugin()
+        plugin._domain_verified = True
+
+        async def get(url: str, **kwargs: Any) -> httpx.Response:
+            text = _page("kinoger", "detail-stranger-things")
+            return httpx.Response(200, text=text, request=httpx.Request("GET", url))
+
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=get)
+        plugin._client = client
+
+        result = await plugin._scrape_detail(
+            {"url": f"{self._BASE}/stream/4040-stranger-things-staffel-1-2016.html"},
+            season=4,
+            episode=1,
+        )
+
+        assert result is not None
+        assert [lk["label"] for lk in result.download_links or ()] == [
+            "4x1 Stream HD+",
+            "4x1 Stream HD+",
+            "4x1 Stream HD",
+            "4x1 Stream HD",
+        ]
+
     async def test_film_request_gets_the_film(self) -> None:
         """The search also lists a series ("J. Robert Oppenheimer -
         Atomphysiker"); its detail page loads concurrently and is empty."""
@@ -350,6 +412,91 @@ class TestAniworld:
         ]
         assert parser.hoster_links[0]["link"] == "https://aniworld.to/redirect/3540458"
 
+    def test_series_page_names_its_seasons(self) -> None:
+        """The navigation of One Piece and Demon Slayer (captured 2026-10-09)."""
+        assert _detail("aniworld", self._BASE, "detail-one-piece").seasons == list(
+            range(1, 24)
+        )
+        assert _detail("aniworld", self._BASE, "detail-demon-slayer").seasons == [
+            1,
+            2,
+            3,
+            4,
+        ]
+
+    @staticmethod
+    def _rows(season: int, name: str) -> list[EpisodeRow]:
+        parser = SeasonPageParser(season, _plugin_module("aniworld")._ROW_SELECTORS)
+        parser.feed(_page("aniworld", name))
+        return parser.rows
+
+    def test_a_long_runners_season_page_numbers_its_rows(self) -> None:
+        """One Piece's staffel-2 (captured 2026-10-09): 16 rows numbered 62 to 77."""
+        rows = self._rows(2, "season-one-piece-staffel-2")
+
+        assert len(rows) == 16
+        assert [row.absolute for row in rows] == list(range(62, 78))
+        assert rows[0] == EpisodeRow(
+            2,
+            1,
+            "Ein Bad in Magensäure",
+            "The First Line of Defense? The Giant Whale Laboon Appears!",
+            62,
+        )
+        assert rows[-1].episode == 16
+
+    def test_a_season_page_without_numbers(self) -> None:
+        """Demon Slayer's staffel-3 (captured 2026-10-09): 11 rows with titles
+        only; the site escapes its titles twice."""
+        rows = self._rows(3, "season-demon-slayer-staffel-3")
+
+        assert len(rows) == 11
+        assert all(row.absolute is None for row in rows)
+        assert rows[0].english == "Someone&#039;s Dream"
+        assert rows[1] == EpisodeRow(3, 2, "Yoriichi Typ 0", "Yoriichi Type Zero", None)
+
+    def test_locates_on_the_captured_pages(self) -> None:
+        """The series page lists staffel-1; with staffel-2 the index places
+        S5E2 (absolute 62) by number, S1E1 by number despite the catalog's
+        other translation, and Demon Slayer S4E1 by title."""
+        one_piece = self._rows(1, "detail-one-piece") + self._rows(
+            2, "season-one-piece-staffel-2"
+        )
+        assert len(one_piece) == 77
+        laboon = locate(
+            one_piece,
+            EpisodeRef(
+                5,
+                2,
+                "The First Line of Defense? The Giant Whale Laboon Appears!",
+                "2001-03-21",
+                absolute=62,
+            ),
+        )
+        assert laboon is not None
+        assert (laboon.row.season, laboon.row.episode, laboon.by) == (2, 1, "number")
+        luffy = locate(
+            one_piece,
+            EpisodeRef(
+                1,
+                1,
+                "I'm Luffy! The Man Who's Gonna Be King of the Pirates!",
+                "1999-10-20",
+                absolute=1,
+            ),
+        )
+        assert luffy is not None
+        assert (luffy.row.season, luffy.row.episode, luffy.by) == (1, 1, "number")
+
+        demon_slayer = self._rows(1, "detail-demon-slayer") + self._rows(
+            3, "season-demon-slayer-staffel-3"
+        )
+        dream = locate(
+            demon_slayer, EpisodeRef(4, 1, "Someone's Dream", "2023-04-09", absolute=45)
+        )
+        assert dream is not None
+        assert (dream.row.season, dream.row.episode, dream.by) == (3, 1, "title")
+
 
 class TestSto:
     _BASE = "https://serienstream.to"
@@ -363,6 +510,26 @@ class TestSto:
                 "url": "https://serienstream.to/serie/the-last-of-us",
                 "slug": "the-last-of-us",
             }
+        ]
+
+    def test_search_lists_both_one_piece_series(self) -> None:
+        """The anime and the 2023 live action are two series on the site;
+        the hit keeps the year suffix, and both are scraped for the one-title
+        request (the title matcher decides by the year)."""
+        module = _plugin_module("sto")
+        parser = module._SearchSeriesParser(self._BASE)
+        parser.feed(_page("sto", "search-one-piece"))
+        titles = sorted(hit["title"] for hit in parser.results)
+        assert titles == [
+            "LEGO One Piece",
+            "One Piece",
+            "One Piece (2023)",
+            "One Piece Log: Fish-Man Island Saga",
+        ]
+        kept = module._relevant_series(parser.results, "One Piece", limit=3)
+        assert sorted(hit["title"] for hit in kept) == [
+            "One Piece",
+            "One Piece (2023)",
         ]
 
     def test_series_page_lists_seasons_and_episodes(self) -> None:
@@ -384,6 +551,45 @@ class TestSto:
             ("VOE", "Englisch"),
         ]
         assert parser.hosters[0]["play_url"] == "/r?t=scrubbed"
+
+    @staticmethod
+    def _rows(season: int, name: str) -> list[EpisodeRow]:
+        parser = SeasonPageParser(season, _plugin_module("sto")._ROW_SELECTORS)
+        parser.feed(_page("sto", name))
+        return parser.rows
+
+    def test_an_anime_season_page_numbers_its_rows(self) -> None:
+        """One Piece's staffel-2 (captured 2026-10-09): the English cell holds
+        the absolute number in place of a title."""
+        rows = self._rows(2, "season-one-piece-2")
+
+        assert len(rows) == 16
+        assert [row.absolute for row in rows] == list(range(62, 78))
+        assert rows[0] == EpisodeRow(2, 1, "Ein Bad in Magensäure", "", 62)
+        laboon = locate(
+            rows,
+            EpisodeRef(
+                5,
+                2,
+                "The First Line of Defense? The Giant Whale Laboon Appears!",
+                "2001-03-21",
+                absolute=62,
+            ),
+        )
+        assert laboon is not None
+        assert (laboon.row.episode, laboon.by) == (1, "number")
+
+    def test_a_series_season_page_names_its_episodes(self) -> None:
+        """The Last of Us' staffel-2 (captured 2026-10-09): English titles, no
+        numbers."""
+        rows = self._rows(2, "season-the-last-of-us-2")
+
+        assert len(rows) == 7
+        assert all(row.absolute is None for row in rows)
+        assert rows[1] == EpisodeRow(2, 2, "Durch das Tal", "Through the Valley", None)
+        valley = locate(rows, EpisodeRef(2, 2, "Through the Valley", "2025-04-20"))
+        assert valley is not None
+        assert (valley.row.episode, valley.by) == (2, "title")
 
 
 class TestKinoking:
@@ -409,6 +615,18 @@ class TestKinoking:
             "hoster": "filemoon",
             "link": "https://filemoon.to/e/fwzwu9ny19jk",
         }
+
+    def test_movie_year_and_genres(self) -> None:
+        mod = _plugin_module("kinoking")
+        page = _page("kinoking", "movie-oppenheimer")
+        assert mod._page_year(page) == 2023
+        assert mod._page_genres(page) == ["Drama"]
+
+    def test_series_year_and_genres(self) -> None:
+        mod = _plugin_module("kinoking")
+        page = _page("kinoking", "series-the-last-of-us")
+        assert mod._page_year(page) == 2023
+        assert mod._page_genres(page) == ["Drama"]
 
     def test_series_episodes(self) -> None:
         mod = _plugin_module("kinoking")
@@ -444,7 +662,7 @@ class TestFilmpalast:
         plugin._domain_verified = True
         plugin._client = AsyncMock()
         plugin._search_all = AsyncMock(return_value=self._hits("search-oppenheimer"))
-        plugin._scrape_detail = AsyncMock(return_value=("", "", []))
+        plugin._scrape_detail = AsyncMock(return_value=None)
 
         await plugin.search("Oppenheimer", 2000)
 
@@ -467,7 +685,7 @@ class TestFilmpalast:
                 )
             ]
         )
-        plugin._scrape_detail = AsyncMock(return_value=("", "", []))
+        plugin._scrape_detail = AsyncMock(return_value=None)
 
         await plugin.search("Dark", 5000, season=1, episode=1)
 
@@ -481,18 +699,31 @@ class TestFilmpalast:
             "Oppenheimer.2023.German.DL.1080p.BluRay.x264.RERiP-DETAiLS"
         )
         assert [lk["link"] for lk in detail.links] == ["https://voe.sx/xhoyeqr1jx6s"]
+        assert detail.year == 2023
+        assert detail.genres == ["Drama", "Biographie"]
 
     def test_episode_detail(self) -> None:
         detail = _detail(
             "filmpalast", "https://filmpalast.to", "detail-the-last-of-us-s01e01"
         )
         assert detail.title.strip() == "The Last of Us S01E01"
+        assert detail.year == 2023
+        assert detail.genres == ["Horror", "Thriller", "Drama", "Abenteuer"]
         assert [lk["link"] for lk in detail.links] == [
             "https://firestream.to/e/OXIURmQ-",
             "https://vidaraa.cc/e/ezpjajrJ48BF2",
             "https://voe.sx/laxed19ikr7i",
             "https://vidsonic.net/e/r00nm90ihj96",
         ]
+
+    def test_episode_detail_shows_its_seasons_year(self) -> None:
+        """Why the plugin stores no year for episodes: the second season's
+        page says 2025 for a series that started in 2023 (captured 2026-10-09)."""
+        detail = _detail(
+            "filmpalast", "https://filmpalast.to", "detail-the-last-of-us-s02e01"
+        )
+        assert detail.title.strip() == "The Last of Us S02E01"
+        assert detail.year == 2025
 
 
 class TestMovie2k:
@@ -578,3 +809,279 @@ class TestWarezomen:
         assert parser.results[0]["title"].startswith("Windows Server 2025 LTSC")
         assert {r["type"] for r in parser.results} == {"Software", "Other"}
         assert parser.next_page_url == "/download/windows/3/"
+
+
+class TestEinschalten:
+    """The site's JSON API (captured 2026-10-06): search, movie and watch."""
+
+    @respx.mock
+    async def test_search_answer_without_next_page(self) -> None:
+        """``pagination.hasMore`` is false: one request. The site also
+        lists "Jud Süß" (1940) for "Oppenheimer"."""
+        plugin = _plugin_module("einschalten").EinschaltenPlugin()
+        search = respx.post(f"{plugin.base_url}/api/search").respond(
+            200, json=_json("einschalten", "search-oppenheimer")
+        )
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            hits = await plugin._api_search("Oppenheimer")
+
+        assert [(h["id"], h["title"]) for h in hits] == [
+            (872585, "Oppenheimer"),
+            (8417, "Jud Süß"),
+        ]
+        assert search.call_count == 1
+
+    @respx.mock
+    async def test_film_request_scrapes_the_relevant_hit_only(self) -> None:
+        """ "Jud Süß" is no hit for "Oppenheimer": no movie or watch request
+        for it."""
+        plugin = _plugin_module("einschalten").EinschaltenPlugin()
+        base = plugin.base_url
+        respx.post(f"{base}/api/search").respond(
+            200, json=_json("einschalten", "search-oppenheimer")
+        )
+        respx.get(f"{base}/api/movies/872585").respond(
+            200, json=_json("einschalten", "detail-oppenheimer")
+        )
+        respx.get(f"{base}/api/movies/872585/watch").respond(
+            200, json=_json("einschalten", "watch-oppenheimer")
+        )
+        other = respx.get(url__startswith=f"{base}/api/movies/").respond(404)
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            results = await plugin.search("Oppenheimer", 2000)
+
+        assert [(r.title, r.category) for r in results] == [
+            ("Oppenheimer (2023)", 2000)
+        ]
+        assert results[0].download_link == "https://vide0.net/e/okvy5f1xez95"
+        assert not other.called
+
+    def test_film_result(self) -> None:
+        """Genres and IMDb id from the movie answer, the stream and the
+        release name from the watch answer."""
+        plugin = _plugin_module("einschalten").EinschaltenPlugin()
+        result = plugin._build_search_result(
+            _json("einschalten", "search-oppenheimer")["data"][0],
+            _json("einschalten", "detail-oppenheimer"),
+            _json("einschalten", "watch-oppenheimer"),
+        )
+
+        assert (result.title, result.category) == ("Oppenheimer (2023)", 2000)
+        assert result.download_links == [
+            {"hoster": "vide0.net", "link": "https://vide0.net/e/okvy5f1xez95"}
+        ]
+        assert result.release_name == "Oppenheimer.2023.German.BDRip.x264.RERiP-DETAiLS"
+        assert result.metadata["imdb_id"] == "tt15398776"
+        assert result.metadata["genres"] == "Drama, Historie"
+
+
+class TestFireani:
+    """The search page (a Nuxt payload) and the answers of the site's
+    AnimeService RPC (captured 2026-10-06)."""
+
+    def _search(self) -> tuple[list[dict[str, Any]], int]:
+        return _plugin_module("fireani")._parse_search_payload(
+            _page("fireani", "search-attack-on-titan")
+        )
+
+    def test_search_page(self) -> None:
+        items, pages = self._search()
+        assert pages == 1
+        assert [(i["title"], i["slug"]) for i in items] == [
+            ("Attack on Titan", "attack-on-titan"),
+            ("Attack on Titan: Junior High", "attack-on-titan-junior-high"),
+        ]
+
+    @respx.mock
+    async def test_series_result_links_the_first_episode(self) -> None:
+        """GetAnime lists the films first (seasons "Filme", "1" … "4"); the
+        result links episode 1 of season 1, its ProxyPlayer links dropped."""
+        mod = _plugin_module("fireani")
+        plugin = mod.FireaniPlugin()
+        rpc = f"{plugin.base_url}{mod._RPC_PATH}"
+        respx.post(f"{rpc}GetAnime").respond(
+            200, json=_json("fireani", "anime-attack-on-titan")
+        )
+        episode = respx.post(f"{rpc}GetEpisode").respond(
+            200, json=_json("fireani", "episode-attack-on-titan-s1e1")
+        )
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            result = await plugin._scrape_anime(self._search()[0][0])
+
+        assert json.loads(episode.calls.last.request.content) == {
+            "slug": "attack-on-titan",
+            "season": "1",
+            "episode": "1",
+        }
+        assert result is not None
+        assert (result.title, result.category) == ("Attack on Titan", 5070)
+        links = result.download_links or []
+        assert [(lk["hoster"], lk["language"]) for lk in links] == [
+            ("voe", "German Dub"),
+            ("voe", "English Sub"),
+            ("voe", "German Sub"),
+        ]
+        assert result.download_link == "https://voe.sx/e/8qronenyk5ks"
+        assert result.metadata["imdb"] == "tt2560140"
+        assert result.metadata["year"] == "2013"
+
+    @respx.mock
+    async def test_episode_request_skips_the_spin_off(self) -> None:
+        """ "Attack on Titan: Junior High" is another series: an episode
+        request loads the episode of the exact title only."""
+        mod = _plugin_module("fireani")
+        plugin = mod.FireaniPlugin()
+        respx.get(url__startswith=f"{plugin.base_url}/search").respond(
+            200, text=_page("fireani", "search-attack-on-titan")
+        )
+        episode = respx.post(f"{plugin.base_url}{mod._RPC_PATH}GetEpisode").respond(
+            200, json=_json("fireani", "episode-attack-on-titan-s1e1")
+        )
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            results = await plugin.search("Attack on Titan", 5000, season=1, episode=1)
+
+        assert [(r.title, r.category) for r in results] == [("Attack on Titan", 5070)]
+        slugs = [json.loads(c.request.content)["slug"] for c in episode.calls]
+        assert slugs == ["attack-on-titan"]
+
+
+class TestHaschcon:
+    """The site's WordPress REST answer and a video's player page
+    (captured 2026-10-06)."""
+
+    def test_search_answer(self) -> None:
+        """Titles come HTML-escaped (``&#8211;``, an en dash)."""
+        plugin = _plugin_module("haschcon").HaschconPlugin()
+        results = [
+            plugin._build_search_result(entry, None)
+            for entry in _json("haschcon", "search-dracula")
+        ]
+
+        assert [r.title for r in results] == [
+            "Dracula – Tot aber glücklich",
+            "Dracula",
+            "Die Stunde, wenn Dracula kommt",
+        ]
+        assert {r.category for r in results} == {2000}
+        assert results[0].source_url == (
+            "https://haschcon.com/video/dracula-tot-aber-gluecklich/"
+        )
+        assert results[0].metadata["genres"] == "Komödien"
+        assert results[0].metadata["actors"].startswith("Amy Yasbeck, Leslie Nielsen")
+
+    @respx.mock
+    async def test_player_page_embeds_youtube(self) -> None:
+        plugin = _plugin_module("haschcon").HaschconPlugin()
+        respx.get(f"{plugin.base_url}/player-embed/id/1690/").respond(
+            200, text=_page("haschcon", "player-1690")
+        )
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            link = await plugin._fetch_player_embed(1690)
+
+        assert link == "https://www.youtube.com/watch?v=ltZBsxkgkv4"
+
+
+class TestKinox:
+    """Captured 2026-10-06. The mirror answers, which carry the hoster
+    links, sit behind the site's verification wall: the detail page names
+    the hosters only."""
+
+    def test_search_lists_the_film_twice(self) -> None:
+        parser = _plugin_module("kinox")._SearchResultParser()
+        parser.feed(_page("kinox", "search-oppenheimer"))
+        assert [(r["title"], r["url"], r["genre"]) for r in parser.results] == [
+            ("Oppenheimer", "/Stream/Oppenheimer.html", "Drama"),
+            (
+                "Oppenheimer --- Bessere Qualität",
+                "/Stream/Oppenheimer-Bessere_Qualitaet.html",
+                "Thriller",
+            ),
+        ]
+
+    def test_film_detail(self) -> None:
+        detail = _detail("kinox", "https://www22.kinox.to", "detail-oppenheimer")
+        assert (detail.title, detail.year, detail.is_series) == (
+            "Oppenheimer",
+            "2023",
+            False,
+        )
+        assert detail.hosters == [{"name": "Dood.to", "id": "95"}]
+        assert detail.genres == ["Drama"]
+
+
+class TestMoflix:
+    """The site's JSON API (captured 2026-10-06)."""
+
+    @respx.mock
+    async def test_film_request_gets_the_film(self) -> None:
+        """The search lists 19 people next to the film; only the film's
+        title answer is fetched, its four mirrors are the links."""
+        plugin = _plugin_module("moflix").MoflixPlugin()
+        plugin._domain_verified = True
+        base = plugin.base_url
+        respx.get(f"{base}/").respond(
+            200, headers=[("Set-Cookie", "XSRF-TOKEN=token; Path=/")]
+        )
+        respx.get(url__startswith=f"{base}/api/v1/search/").respond(
+            200, json=_json("moflix", "search-oppenheimer")
+        )
+        respx.get(url__startswith=f"{base}/api/v1/titles/1992").respond(
+            200, json=_json("moflix", "detail-oppenheimer")
+        )
+        other_titles = respx.get(url__startswith=f"{base}/api/v1/titles/").respond(404)
+        async with httpx.AsyncClient() as client:
+            plugin._client = client
+            results = await plugin.search("Oppenheimer", 2000)
+
+        assert [(r.title, r.category) for r in results] == [
+            ("Oppenheimer (2023)", 2000)
+        ]
+        assert [lk["link"] for lk in results[0].download_links or []] == [
+            "https://moflix.rpmplay.xyz/#wqjv9",
+            "https://veev.to/e/2766Ds5SInMA2jHn7xNaN8wyXzdPdO61NCwMSbK",
+            "https://moflix.upns.xyz/#n8wux6",
+            "https://moflix-stream.click/embed/kulz2q4qc0fl",
+        ]
+        assert results[0].metadata["imdb_id"] == "tt15398776"
+        assert not other_titles.called
+
+
+class TestFilmo:
+    """The search for Interstellar, its page and Byse's interstitial
+    (captured 2026-10-11; payloads and tokens scrubbed)."""
+
+    def test_search_keeps_the_film_of_the_loose_matches(self) -> None:
+        module = _plugin_module("filmo")
+        hits = _search_hits("filmo", "https://filmo.to", "search")
+
+        assert len(hits) == 6
+        kept = module.relevant_hits(hits, "Interstellar", lambda h: h["title"])
+        assert kept == [
+            {
+                "title": "Interstellar",
+                "detail_url": "https://filmo.to/movies/interstellar",
+            }
+        ]
+
+    def test_detail_page_lists_both_rows(self) -> None:
+        page = _detail("filmo", "https://filmo.to", "detail")
+
+        assert (page.title, page.year) == ("Interstellar", 2014)
+        assert page.genres == ["Abenteuer", "Drama", "Science Fiction"]
+        assert [(c.language, c.hoster, c.link_id, c.quality) for c in page.chips] == [
+            ("English", "VOE", "2723", "720p"),
+            ("English", "Byse", "10973", "720p"),
+            ("Deutsch", "VOE", "2723", "720p"),
+            ("Deutsch", "Byse", "10973", "720p"),
+        ]
+
+    def test_interstitial_names_byse(self) -> None:
+        link = _plugin_module("filmo").interstitial_link(_page("filmo", "interstitial"))
+
+        assert link is not None
+        assert link.startswith("https://bysezejataos.com/d/")

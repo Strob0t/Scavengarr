@@ -31,6 +31,7 @@ import structlog
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
 from scavengarr.infrastructure.hoster_resolvers import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import is_error_redirect
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
@@ -115,6 +116,7 @@ class DDownloadResolver:
                 canonical_url,
                 follow_redirects=True,
                 timeout=15,
+                headers={"User-Agent": DEFAULT_USER_AGENT},
             )
         except httpx.HTTPError:
             log.warning("ddownload_request_failed", url=url)

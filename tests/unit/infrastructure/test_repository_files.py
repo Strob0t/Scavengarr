@@ -20,8 +20,11 @@ _ROOT = Path(__file__).resolve().parents[3]
 
 _EXECUTED_DIRECTLY = [
     "docker/entrypoint.sh",
+    "scripts/basedpyright.sh",
+    "scripts/worktree_venv.sh",
     ".claude/hooks/block-dangerous.sh",
     ".claude/hooks/format-and-lint.sh",
+    ".claude/hooks/usage-guard.sh",
     ".claude/plugins/basedpyright-lsp/scripts/langserver.sh",
     ".devcontainer/setup.sh",
     ".devcontainer/sync-jdownloader.sh",
@@ -53,6 +56,25 @@ def test_shipped_config_has_no_container_only_paths() -> None:
     for section, key in (("cache", "dir"), ("plugins", "plugin_dir")):
         value = str(config[section][key])
         assert not value.startswith("/"), f"{section}.{key} = {value}"
+
+
+def test_the_build_context_holds_what_the_image_copies() -> None:
+    """A `COPY` source in `.dockerignore` fails the build, and only the image
+    workflow builds the image (no Docker in the dev container)."""
+    ignored = {
+        line.strip().rstrip("/")
+        for line in (_ROOT / ".dockerignore").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    sources: list[str] = []
+    for line in (_ROOT / "Dockerfile.prod").read_text().splitlines():
+        words = line.split()
+        if words[:1] == ["COPY"] and not any(w.startswith("--from") for w in words):
+            sources += [w for w in words[1:-1] if not w.startswith("--")]
+
+    assert "plugins/" in sources
+    for source in sources:
+        assert source.strip("/").split("/")[0] not in ignored, source
 
 
 @pytest.mark.skipif(

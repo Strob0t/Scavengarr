@@ -14,7 +14,9 @@ from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
 from scavengarr.infrastructure.plugins.xenforo import XenForoPluginBase
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "myboerse.py"
@@ -103,10 +105,10 @@ class TestDomainVerification:
         mock_client.head = AsyncMock(side_effect=fail_exc)
         plugin._client = mock_client
 
-        await plugin._verify_domain()
+        with pytest.raises(PluginUnreachableError):
+            await plugin._verify_domain()
 
-        assert plugin._domain_verified is True
-        assert plugin.base_url == f"https://{_DOMAINS[0]}"
+        assert plugin._domain_verified is False
 
     async def test_skips_if_already_verified(self) -> None:
         plugin = _make_plugin()

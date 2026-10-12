@@ -75,8 +75,8 @@ async def metrics(request: Request) -> JSONResponse:
     """Return in-memory runtime metrics.
 
     Includes plugin search stats (from the Prometheus metrics, ``/metrics``),
-    circuit breaker state, concurrency pool utilisation, and graceful-shutdown
-    status.
+    circuit breaker state, the resolver state restored at the start,
+    concurrency pool utilisation, and graceful-shutdown status.
     """
     state = cast(AppState, request.app.state)
 
@@ -91,6 +91,17 @@ async def metrics(request: Request) -> JSONResponse:
     cb = getattr(state, "circuit_breaker", None)
     if cb is not None:
         data["circuit_breaker"] = cb.snapshot()
+
+    # Hosters probed for want of a resolver, the most frequent first (an open
+    # set of names, so JSON only and no Prometheus label)
+    registry = getattr(state, "hoster_resolver_registry", None)
+    if registry is not None:
+        data["unresolved_hosters"] = registry.unresolved_hosts()
+
+    # Resolutions and breakers the start restored (HosterStateStore)
+    hoster_state = getattr(state, "hoster_state_store", None)
+    if hoster_state is not None:
+        data["hoster_state"] = hoster_state.restored
 
     # Concurrency pool utilisation
     pool = getattr(state, "concurrency_pool", None)
@@ -107,3 +118,22 @@ async def metrics(request: Request) -> JSONResponse:
         }
 
     return JSONResponse(content=data)
+
+
+@router.get("/plugins")
+async def plugins(request: Request) -> JSONResponse:
+    """The plugins' long-term record.
+
+    Per plugin and UTC day: searches, results, timeouts, checks of its site
+    and the checks that found it unreachable (``days``), with the last day
+    that gave a result and the unreachable share over the last 30, 90 and
+    180 days. Evidence for keeping or dropping a plugin; 503 before the
+    record is wired in.
+    """
+    state = cast(AppState, request.app.state)
+    history = getattr(state, "plugin_history", None)
+    if history is None:
+        return JSONResponse(
+            status_code=503, content={"error": "plugin_history_not_enabled"}
+        )
+    return JSONResponse(content=history.report())

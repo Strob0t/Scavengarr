@@ -23,6 +23,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 log = structlog.get_logger(__name__)
 
@@ -88,6 +89,7 @@ class MediafireResolver:
                 _API_URL,
                 params={"quick_key": file_id, "response_format": "json"},
                 timeout=15,
+                headers={"User-Agent": DEFAULT_USER_AGENT},
             )
         except httpx.HTTPError:
             log.warning("mediafire_request_failed", url=url)

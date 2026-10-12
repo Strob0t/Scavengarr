@@ -5,10 +5,12 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+
+from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "jjs.py"
 
@@ -464,16 +466,12 @@ class TestJjsPlugin:
     @pytest.mark.asyncio()
     async def test_search_builds_correct_url(self) -> None:
         plugin = _make_plugin()
-        mock_response = httpx.Response(
-            200,
-            text=_search_page_html(),
-            request=httpx.Request("GET", "https://jjs.page/?s=iron+man"),
-        )
-        plugin._safe_fetch = AsyncMock(return_value=mock_response)
+        mock_response = _search_page_html()
+        plugin._fetch_text = AsyncMock(return_value=mock_response)
 
         await plugin.search("iron man")
 
-        first_call = plugin._safe_fetch.call_args_list[0]
+        first_call = plugin._fetch_text.call_args_list[0]
         assert first_call[0][0] == "https://jjs.page/?s=iron+man"
 
     @pytest.mark.asyncio()
@@ -492,32 +490,20 @@ class TestJjsPlugin:
 
         call_count = 0
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             nonlocal call_count
             call_count += 1
             if "page/2" in url:
-                return httpx.Response(
-                    200,
-                    text=page2_html,
-                    request=httpx.Request("GET", url),
-                )
+                return page2_html
             if url.endswith("/?s=iron+man"):
-                return httpx.Response(
-                    200,
-                    text=page1_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return page1_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         await plugin.search("iron man")
 
         assert call_count > 2
-        urls = [c[0][0] for c in plugin._safe_fetch.call_args_list]
+        urls = [c[0][0] for c in plugin._fetch_text.call_args_list]
         assert any("page/2" in u for u in urls)
 
     @pytest.mark.asyncio()
@@ -526,20 +512,12 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("iron man")
 
         assert len(results) == 1
@@ -554,23 +532,17 @@ class TestJjsPlugin:
     @pytest.mark.asyncio()
     async def test_search_empty_query(self) -> None:
         plugin = _make_plugin()
-        plugin._safe_fetch = AsyncMock()
+        plugin._fetch_text = AsyncMock()
         results = await plugin.search("")
 
         assert results == []
-        plugin._safe_fetch.assert_not_called()
+        plugin._fetch_text.assert_not_called()
 
     @pytest.mark.asyncio()
     async def test_search_no_results(self) -> None:
         plugin = _make_plugin()
         empty_html = "<html><body><p>No results</p></body></html>"
-        plugin._safe_fetch = AsyncMock(
-            return_value=httpx.Response(
-                200,
-                text=empty_html,
-                request=httpx.Request("GET", "https://jjs.page/?s=xyz"),
-            )
-        )
+        plugin._fetch_text = AsyncMock(return_value=empty_html)
 
         results = await plugin.search("xyz")
         assert results == []
@@ -578,7 +550,7 @@ class TestJjsPlugin:
     @pytest.mark.asyncio()
     async def test_search_fetch_failure(self) -> None:
         plugin = _make_plugin()
-        plugin._safe_fetch = AsyncMock(return_value=None)
+        plugin._fetch_text = AsyncMock(return_value=None)
 
         results = await plugin.search("test")
         assert results == []
@@ -601,20 +573,12 @@ class TestJjsPlugin:
         search_html = _search_page_html(results=[movie, series])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test", category=2000)
 
         assert len(results) == 1
@@ -638,20 +602,12 @@ class TestJjsPlugin:
         search_html = _search_page_html(results=[movie, series])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test", category=5000)
 
         assert len(results) == 1
@@ -675,20 +631,12 @@ class TestJjsPlugin:
         search_html = _search_page_html(results=[movie, series])
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test", season=1)
 
         assert len(results) == 1
@@ -700,20 +648,12 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         empty_detail = "<html><body><p>No downloads here</p></body></html>"
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=empty_detail,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return empty_detail
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test")
 
         assert results == []
@@ -723,16 +663,12 @@ class TestJjsPlugin:
         plugin = _make_plugin()
         search_html = _search_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response | None:
+        async def mock_fetch(url: str, **kwargs: object) -> str | None:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
+                return search_html
             return None
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test")
 
         assert results == []
@@ -743,20 +679,12 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("iron man")
 
         assert len(results) == 1
@@ -768,20 +696,12 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html(size_text="4.2 GB")
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test")
 
         assert len(results) == 1
@@ -793,20 +713,12 @@ class TestJjsPlugin:
         search_html = _search_page_html()
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("iron man")
 
         assert len(results) == 1
@@ -830,21 +742,52 @@ class TestJjsPlugin:
         )
         detail_html = _detail_page_html()
 
-        async def mock_fetch(url: str, **kwargs: object) -> httpx.Response:
+        async def mock_fetch(url: str, **kwargs: object) -> str:
             if "?s=" in url:
-                return httpx.Response(
-                    200,
-                    text=search_html,
-                    request=httpx.Request("GET", url),
-                )
-            return httpx.Response(
-                200,
-                text=detail_html,
-                request=httpx.Request("GET", url),
-            )
+                return search_html
+            return detail_html
 
-        plugin._safe_fetch = AsyncMock(side_effect=mock_fetch)
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
         results = await plugin.search("test")
 
         assert len(results) == 1
         assert results[0].category == 5000
+
+
+def _challenge(url: object, **_kwargs: object) -> MagicMock:
+    resp = MagicMock(spec=httpx.Response, history=[])
+    resp.status_code = 403
+    resp.text = "<title>Just a moment...</title>"
+    resp.headers = httpx.Headers()
+    resp.url = httpx.URL(str(url))
+    return resp
+
+
+async def _browser_page(url: str, **_kwargs: object) -> str:
+    """What the browser loads: the search page or a detail page."""
+    return _search_page_html() if "?s=" in url else _detail_page_html()
+
+
+class TestJjsBehindCloudflare:
+    """The site sits behind Cloudflare: a challenged page is loaded through
+    the browser (``_fetch_text``), which ``_safe_fetch`` never did."""
+
+    @pytest.mark.asyncio()
+    async def test_a_challenged_search_page_goes_to_the_browser(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(side_effect=_browser_page)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        plugin = _make_plugin()
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(side_effect=_challenge)
+        plugin._client = client
+
+        results = await plugin.search("iron man")
+
+        urls = [call.args[0] for call in fetcher.fetch_text.await_args_list]
+        assert urls[0] == "https://jjs.page/?s=iron+man"
+        assert client.get.await_count == 1  # the memo sends the detail pages too
+        assert len(results) == 1
