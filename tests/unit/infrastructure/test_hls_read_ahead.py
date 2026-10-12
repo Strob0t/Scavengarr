@@ -219,6 +219,7 @@ class TestReadAhead:
         assert not read_ahead._playbacks[_PLAYLIST].ahead
 
     async def test_a_segment_of_no_playlist_is_streamed_as_before(self) -> None:
+        """And counted ``miss``, so a playback the read-ahead lost shows."""
         cdn = _Cdn()
         telemetry = Telemetry()
         read_ahead = SegmentReadAhead(telemetry=telemetry)
@@ -227,7 +228,7 @@ class TestReadAhead:
 
         assert body == _segment_body(_SEGMENTS[0])
         assert cdn.requests == [_SEGMENTS[0]]
-        assert _count(telemetry, "miss") == 0
+        assert _count(telemetry, "miss") == 1
 
     async def test_served_from_memory_in_64_kib_pieces_and_counted(self) -> None:
         cdn = _Cdn(size=150_000)
@@ -313,7 +314,9 @@ class TestBounds:
         assert cdn.requested("seg-4.ts") == 1
         assert cdn.requested("seg-5.ts") == 1 and cdn.requested("seg-6.ts") == 1
 
-    async def test_an_idle_playback_is_dropped(self) -> None:
+    async def test_an_idle_playback_loses_only_its_fetches_ahead(self) -> None:
+        """Their memory goes; the segment order stays for a player that
+        resumes without fetching the playlist again."""
         cdn = _Cdn()
         telemetry = Telemetry()
         clock = _Clock()
@@ -326,11 +329,44 @@ class TestBounds:
             clock.now += 61
             read_ahead.remember(f"{_CDN}other.m3u8", other)
 
-        assert _PLAYLIST not in read_ahead._playbacks
         assert _count(telemetry, "dropped") == 3
-        assert read_ahead._playlist_of.get(_SEGMENTS[0]) is None
+        assert read_ahead._playbacks[_PLAYLIST].ahead == {}
+        assert read_ahead._playlist_of.get(_SEGMENTS[0]) == _PLAYLIST
+
+    async def test_a_player_resuming_after_a_pause_gets_its_read_ahead_back(
+        self,
+    ) -> None:
+        """Production, 2026-10-12: Stremio went on at the next segment after
+        a 20-minute pause without fetching the playlist again, and each
+        segment came from the CDN on demand, 4.1 to 4.6 s against 9 to 19 ms
+        before the pause."""
+        cdn = _Cdn()
+        telemetry = Telemetry()
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(telemetry=telemetry, clock=clock)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        bodies: list[bytes] = []
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+            clock.now += 61
+            # another playback's playlist sweeps the idle one
+            read_ahead.remember(f"{_CDN}other.m3u8", [f"{_CDN}other-1.ts"])
+            cdn.requests.clear()
+            for url in _SEGMENTS[1:5]:
+                body, _ = await _segment(client, read_ahead, url)
+                bodies.append(body)
+                await _settle(read_ahead)
+
+        assert bodies == [_segment_body(url) for url in _SEGMENTS[1:5]]
+        # the pause cost the fetches ahead; seg-2 came from the CDN on
+        # demand, seg-3 to seg-5 from memory
+        assert _count(telemetry, "dropped") == 3
+        assert _count(telemetry, "hit") == 3
+        assert [cdn.requested(f"seg-{i}.ts") for i in range(2, 7)] == [1] * 5
 
     async def test_at_most_eight_playbacks(self) -> None:
+        """The least recently used one goes with its segment order."""
         clock = _Clock()
         read_ahead = SegmentReadAhead(clock=clock)
         for i in range(9):
@@ -340,6 +376,7 @@ class TestBounds:
         assert len(read_ahead._playbacks) == 8
         assert f"{_CDN}p0.m3u8" not in read_ahead._playbacks
         assert f"{_CDN}p8.m3u8" in read_ahead._playbacks
+        assert read_ahead._playlist_of.get(f"{_CDN}p0-seg-1.ts") is None
 
     async def test_a_playlist_fetched_again_keeps_the_segments_still_listed(
         self,

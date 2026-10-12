@@ -334,7 +334,7 @@ _AHEAD = 3
 _MAX_PLAYBACKS = 8
 # A segment larger than this is left to the player's own request
 _MAX_AHEAD_BYTES = 16 * 1024 * 1024
-# A playback without a request for this long is dropped
+# A playback without a request for this long loses its fetches ahead
 _IDLE_SECONDS = 60.0
 # A CDN that answered a fetch ahead with 429 gets none for this long
 _THROTTLE_SECONDS = 600.0
@@ -400,8 +400,11 @@ class SegmentReadAhead:
     cap is cut and ends the playback's fetches ahead) or ``throttled`` (the
     CDN answered 429: no fetches ahead for its host for
     ``_THROTTLE_SECONDS``).
-    A playback is dropped ``_IDLE_SECONDS`` after its last request, and
-    the least recently used one when ``_MAX_PLAYBACKS`` are followed.
+    A playback loses its fetches ahead ``_IDLE_SECONDS`` after its last
+    request (``dropped``) and keeps its segment order: a player that
+    resumes after a pause without fetching the playlist again gets the
+    next segments fetched ahead again. The least recently used playback
+    is forgotten when ``_MAX_PLAYBACKS`` are followed, its order with it.
     """
 
     def __init__(
@@ -470,11 +473,10 @@ class SegmentReadAhead:
                 )
 
     async def take(self, url: str) -> AheadSegment | None:
-        """*url* from memory when it was fetched ahead, else ``None``."""
+        """*url* from memory when it was fetched ahead, else ``None``
+        (``miss``, a segment no playback lists included)."""
         playback = self._playback(url)
-        if playback is None:
-            return None
-        task = playback.ahead.pop(url, None)
+        task = None if playback is None else playback.ahead.pop(url, None)
         if task is None:
             self._telemetry.count("hls_readahead", "miss")
             return None
@@ -494,15 +496,19 @@ class SegmentReadAhead:
         return None if key is None else self._playbacks.get(key)
 
     def _sweep(self, now: float) -> None:
-        for key, playback in list(self._playbacks.items()):
+        """Idle playbacks lose their fetches ahead; their order stays."""
+        for playback in self._playbacks.values():
             if playback.last_request + _IDLE_SECONDS <= now:
-                self._forget(self._playbacks.pop(key))
+                self._drop_ahead(playback)
 
     def _forget(self, playback: _Playback) -> None:
+        self._drop_ahead(playback)
+        self._unlist(playback)
+
+    def _drop_ahead(self, playback: _Playback) -> None:
         for task in playback.ahead.values():
             self._drop(task)
         playback.ahead.clear()
-        self._unlist(playback)
 
     def _unlist(self, playback: _Playback) -> None:
         for url in playback.urls:
