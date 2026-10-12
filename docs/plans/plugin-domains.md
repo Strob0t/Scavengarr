@@ -264,6 +264,51 @@ Staging 229d833 (rows 87, 89, 90, 91, 92 and 93 of the day: the hoster registry'
 
 No resolver is broken on every link in its own code: each one reached its video URL or named an offline file, and every failure after that lies at a CDN reached from the dev container. Three of them (firestream, veev, vidhide) still pass no live case from here; firestream's production figures place the fault at the network, veev's and vidhide's need a resolution where their CDN answers (production, or a later run).
 
+## Live suite (2026-10-12, evening)
+
+Staging 1d79ec7 (row 95; production runs it since 15:11:28 UTC). The same steps as the afternoon run above: `scripts/probes/resolver_urls.py` (15:12:53 to 15:19:56 UTC: 19 titles, 258 results, 733 claimed links, 20 resolvers; its failed searches: cineby, megakino_to and movie4k `PluginUnreachableError` 22 each, kinoking timeout 10), then `PYTHONPATH=src xvfb-run -a poetry run pytest -m live -q -p no:cacheprovider -rA --tb=line` from the dev container, 15:20:21 to 15:29:25 UTC, 9.1 min: **64 passed, 12 failed, 4 skipped** of 80 (afternoon: 65, 12, 3). **No regression:** the twelve failures are the afternoon's twelve, with the same reasons. The one change is kinoking, passed then and skipped now on a slow search. Between the two runs only row 95 changed code (`git log 229d833..1d79ec7` on `plugins/`, the plugin bases and the resolvers: aniworld's and sto's episode placement, one line each); no failing plugin's or resolver's code changed. The resolver reasons again come from a rerun of the nine live links through the app's registry with the log captured, after the run (event names and fixed fields only).
+
+**Plugins** (`tests/live/test_plugin_smoke.py`; rows that passed in both runs are left out: aniworld, burningseries, cine, dataload, einschalten, filmfans, filmo, filmpalast, fireani, haschcon, hdfilme, hdworld, kinoger, megakino, moflix, movie2k, nima4k, nox, scnlog, serienfans, sto, streamcloud, streamkiste, warezomen, animeloads, boerse, ddlspot, ddlvalley, scnsrc):
+
+| Plugin | Base | Afternoon | Evening | Reason (evening) |
+|---|---|---|---|---|
+| byte | httpx | skipped | skipped | site: "Network error reaching byte" again; `domains.py --plugins kinoking,byte` after the run: HEAD and GET 200 through Cloudflare in 111 and 70 ms, a slow answer during the run only |
+| kinoking | httpx | passed | skipped | site: "Network error reaching kinoking"; the link probe before the run saw 10 search timeouts (afternoon: 9, and the test passed), in the end-to-end run it answered Breaking Bad and missed Oppenheimer's budget; after the run HEAD 200 in 339 ms, GET 200: the site's search is slow at times, no code changed |
+| kinox | httpx | **failed** | **failed** | site, as before: `Plugin 'kinox' returned 0 results` (row 73's captcha redirect) |
+| megakino_to | httpx | **failed** | **failed** | site, as before: no domain reachable |
+| movie4k | httpx | **failed** | **failed** | site, as before: no domain reachable |
+| myboerse | httpx | skipped | skipped | no credentials in the dev container |
+| mygully | Playwright | skipped | skipped | no credentials in the dev container |
+
+**Resolvers** (`tests/live/test_resolver_live.py`, one link per resolver from each run's probe; every dead case passed in both runs; resolvers that passed their live case in both runs are left out: doodstream, filemoon, fsst, gxplayer, mixdrop, streamtape, strmup, vidsonic, vinovo, vixeo, voe):
+
+| Resolver | Links afternoon | Links evening | Live afternoon | Live evening | Reason (evening) |
+|---|---|---|---|---|---|
+| dropload | 83 | 83 | **failed** | **failed** | network, as before: the captcha capture finds the stream (`dropload_browser_stream cdn=dropcdn`), then `hoster_resolve_check_error error=ConnectTimeout` |
+| firestream | 16 | 16 | **failed** | **failed** | as before: `firestream_resolved`, then `playback_check_failed reason='status 502'` (its CDN refuses the dev container on every link, the lost-cases table above) |
+| playmate | 6 | 6 | **failed** | **failed** | dead link, as before: the probe's first link is again moflix's removed file (`status 404`); link 2 passed in the afternoon |
+| rpmplay | 14 | 14 | **failed** | **failed** | dead link, as before: `rpmplay_file_offline` |
+| supervideo | 63 | 63 | **failed** | **failed** | as before: Cloudflare 403, the browser captures a stream, its CDN answers HTML (`playback_check_failed reason='html'`) |
+| upns | 14 | 14 | **failed** | **failed** | dead link, as before: `upns_file_offline` |
+| veev | 27 | 27 | **failed** | **failed** | network, as before: `veev_resolved`, then `hoster_resolve_check_error error=ConnectTimeout` (6.7 s) |
+| vidhide | 22 | 22 | **failed** | **failed** | network: moflix's mirror again, now `vidhide_video_head_failed status=502 cdn=acek-cdn` (afternoon: a verify error at the 8 s timeout on the same CDN) |
+| vidoza | 2 | 2 | **failed** | **failed** | network, as before: `private_address_refused` |
+
+The link counts match the afternoon's for every resolver except voe (175, afternoon 179).
+
+**Grabs** (`tests/live/test_grab_resolve_live.py`): nox (Iron Man) and animeloads (One Punch Man) passed in both runs.
+
+**Stremio end to end** (`tests/live/test_stremio_e2e_live.py`):
+
+| Title | Afternoon | Evening | Streams (evening) | Played (evening) |
+|---|---|---|---|---|
+| Oppenheimer (2023) | passed, 5 of 18 links | passed | 5 returned of 14 links (5 attempted and resolved, 9 unresolved at the budget; 6 plugins missing: cineby, kinoger, kinoking, kinox, megakino_to, movie4k): voe (filmpalast, HLS), mixdrop (its mxdrop domain, hdfilme), vinovo (movie2k), gxplayer (megakino, HLS), voe (filmo, HLS), the afternoon's five | stream 1: **VOE from filmpalast** (HLS) |
+| Breaking Bad S01E01 | passed, 2 of 5 links | passed | 2 returned of 5 links (3 attempted; 3 plugins missing: cineby, megakino_to, movie4k): voe (filmpalast, HLS), voe (sto, HLS); dr0pstream (hdfilme) `hoster_resolve_check_error error=ConnectTimeout` (afternoon: `ConnectError`) | stream 1: **VOE from filmpalast** (HLS) |
+
+The test returns at the first stream that plays and logs none, so the played stream comes from a rerun of its path right after the run (the same app setup and the test's own `_play()`): both titles listed the same streams in the same order, and stream 1 played at once. No resolution met a challenge (`challenge=None` on all seven).
+
+**Reading.** Against the afternoon nothing regressed: the same three dead-site plugins and the same nine resolver failures with the same reasons, all at sites, dead files or CDNs reached from the dev container. kinoking's skip is its slow search, which the probe already showed in both runs. Both end-to-end titles play VOE from filmpalast first.
+
 ## boerse (2026-10-09, step 38)
 
 **Question.** The live suite above called boerse a parser miss: Cloudflare solved, then `no login form` on five domains. Step 38 asked for the login page the plugin sees after the solve, compared with the parser's selectors.
