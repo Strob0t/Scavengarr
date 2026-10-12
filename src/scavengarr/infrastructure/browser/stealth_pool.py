@@ -21,7 +21,11 @@ import structlog
 from patchright.async_api import Browser, BrowserContext, Page, Request, Route
 from patchright.async_api import Error as PlaywrightError
 
-from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
+from scavengarr.domain.ports.browser_fetcher import (
+    BrowserSession,
+    ClickThrough,
+    Redirect,
+)
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
 from scavengarr.infrastructure.browser.page_gate import (
     ChallengeMark,
@@ -674,7 +678,7 @@ class StealthPool:
                 "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
             )
 
-    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+    async def resolve_redirect(self, url: str, *, timeout: float) -> Redirect:
         """Return the first off-site URL *url* redirects to.
 
         Implements ``BrowserFetcherPort``. Listens to ``request`` events,
@@ -682,6 +686,12 @@ class StealthPool:
         chain), and records the first navigation that leaves the origin host.
         Navigation waits only for ``commit``; the target may well be dead
         (e.g. a removed link container) — link validation decides that.
+
+        The answer is ``passed`` when the site gave its verdict: a target, a
+        page without a challenge (an error page too: an expired link-out's
+        404), or a challenge that cleared. A navigation that broke, no page
+        in time and a challenge that stayed are not (code review 2026-10-12,
+        finding 14).
         """
         origin = urlparse(url).hostname
         targets: list[str] = []
@@ -695,6 +705,7 @@ class StealthPool:
                 targets.append(request.url)
 
         timeout_ms = int(timeout * 1000)
+        passed = False
         try:
             async with (
                 self._pages.page("plugin", timeout=timeout),
@@ -711,18 +722,22 @@ class StealthPool:
                         timeout_ms=timeout_ms,
                         done=lambda: bool(targets),
                     ):
-                        return None
+                        # An error page without a challenge: the site's verdict
+                        return Redirect(None, passed=True)
                     # A challenge page redirects once solved; the listener sees it
                     if not targets and await is_challenge_page(page):
-                        await solve_cloudflare(page, timeout_ms=timeout_ms)
+                        passed = await solve_cloudflare(page, timeout_ms=timeout_ms)
+                    else:
+                        passed = True
                 except Exception:  # noqa: BLE001
                     log.debug("stealth_redirect_error", url=url, exc_info=True)
                 finally:
                     await self._close(page)
         except PageBusy:
             log.info("stealth_page_busy", url=url)
-            return None
-        return targets[0] if targets else None
+            return Redirect(None, passed=False)
+        target = targets[0] if targets else None
+        return Redirect(target, passed=passed or target is not None)
 
     async def click_through(
         self, page_url: str, selector: str, *, timeout: float

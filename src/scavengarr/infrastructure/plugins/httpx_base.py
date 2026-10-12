@@ -744,9 +744,10 @@ class HttpxPluginBase:
         """
         memo_fetcher = self._cf_fetcher_for(url)
         if memo_fetcher is not None:
-            return await memo_fetcher.resolve_redirect(
+            redirect = await memo_fetcher.resolve_redirect(
                 url, timeout=_BROWSER_FETCH_TIMEOUT_S
             )
+            return redirect.target
 
         client = await self._ensure_client()
         kwargs = self._request_kwargs(client, url)
@@ -778,12 +779,13 @@ class HttpxPluginBase:
                 resp.status_code, resp.text
             ):
                 self._mark_cf_blocked(current)
-                target = await fetcher.resolve_redirect(
+                redirect = await fetcher.resolve_redirect(
                     current, timeout=_BROWSER_FETCH_TIMEOUT_S
                 )
-                # The browser got past the challenge when it found the target
-                settle_challenge(solved=target is not None)
-                return target
+                # Past the challenge, a link-out without a target is dead, not
+                # unsolved (code review 2026-10-12, finding 14)
+                settle_challenge(solved=redirect.passed)
+                return redirect.target
             self._log.debug(
                 f"{self.name}_no_redirect",
                 url=current,

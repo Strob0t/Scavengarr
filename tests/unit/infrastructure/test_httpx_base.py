@@ -15,6 +15,7 @@ from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
 )
+from scavengarr.domain.ports.browser_fetcher import Redirect
 from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -612,13 +613,13 @@ class TestChallengeFlag:
         assert flag.unsolved_search is True
 
     async def _link_out(
-        self, monkeypatch: pytest.MonkeyPatch, target: str | None
+        self, monkeypatch: pytest.MonkeyPatch, redirect: Redirect
     ) -> tuple[str | None, ChallengeFlag]:
         """A link-out answered with a challenge, which the browser resolves
-        to *target*."""
+        to *redirect*."""
         monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
         fetcher = AsyncMock()
-        fetcher.resolve_redirect = AsyncMock(return_value=target)
+        fetcher.resolve_redirect = AsyncMock(return_value=redirect)
         monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
         respx.get("https://example.com/external/abc").respond(403, html=self._CHALLENGE)
         plugin = _TestPlugin()
@@ -639,7 +640,9 @@ class TestChallengeFlag:
     async def test_a_link_out_the_browser_resolves_is_solved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        found, flag = await self._link_out(monkeypatch, "https://hoster.example/e/1")
+        found, flag = await self._link_out(
+            monkeypatch, Redirect("https://hoster.example/e/1", passed=True)
+        )
 
         assert found == "https://hoster.example/e/1"
         assert flag.seen is True
@@ -650,11 +653,24 @@ class TestChallengeFlag:
     async def test_a_link_out_the_browser_does_not_resolve_is_unsolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        found, flag = await self._link_out(monkeypatch, None)
+        found, flag = await self._link_out(monkeypatch, Redirect(None, passed=False))
 
         assert found is None
         assert flag.seen is True
         assert flag.unsolved_search is True
+
+    @respx.mock
+    async def test_a_dead_link_out_behind_a_passed_challenge_is_solved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The review's case (code review 2026-10-12, finding 14): the browser
+        gets past the challenge, and the link-out answers a same-host 404 (an
+        expired hash). A dead link, not an unsolved challenge."""
+        found, flag = await self._link_out(monkeypatch, Redirect(None, passed=True))
+
+        assert found is None
+        assert flag.seen is True
+        assert flag.unsolved_search is False
 
     @respx.mock
     async def test_an_error_page_leaves_the_flag(

@@ -21,6 +21,22 @@ class ClickThrough:
 
 
 @dataclass(frozen=True)
+class Redirect:
+    """Where a link-out led, and whether the browser got past the site's
+    challenge on the way.
+
+    *target* is the first off-site URL, ``None`` when the link-out did not
+    leave its host. *passed* says the site gave its verdict on the link-out
+    past any challenge (or showed none): a link-out without a target after
+    it is dead, not an unsolved challenge (code review 2026-10-12, finding
+    14).
+    """
+
+    target: str | None
+    passed: bool
+
+
+@dataclass(frozen=True)
 class BrowserSession:
     """A site's session in the browser: what an HTTP client needs to reuse it.
 
@@ -66,12 +82,13 @@ class BrowserFetcherPort(Protocol):
         """
         ...
 
-    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+    async def resolve_redirect(self, url: str, *, timeout: float) -> Redirect:
         """Return the first off-site URL that *url* redirects to.
 
         For link-out endpoints (e.g. ``/external/<hash>`` → hoster or link
-        container). The target page itself is not loaded. Returns None when
-        *url* does not leave its host within *timeout* seconds.
+        container). The target page itself is not loaded. The target is None
+        when *url* does not leave its host within *timeout* seconds; whether
+        the browser got past the site's challenge says ``passed``.
         """
         ...
 

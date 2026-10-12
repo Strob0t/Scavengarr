@@ -11,7 +11,7 @@ import pytest
 import respx
 import structlog.testing
 
-from scavengarr.domain.ports.browser_fetcher import BrowserSession
+from scavengarr.domain.ports.browser_fetcher import BrowserSession, Redirect
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _CF_CHALLENGE = (
@@ -72,7 +72,7 @@ class TestResolveRedirect:
         respx.get("https://cf.example/external/abc").respond(403, text=_CF_CHALLENGE)
         fetcher = AsyncMock()
         fetcher.resolve_redirect = AsyncMock(
-            return_value="https://filecrypt.cc/Container/y.html"
+            return_value=Redirect("https://filecrypt.cc/Container/y.html", passed=True)
         )
         HttpxPluginBase.set_browser_fetcher(fetcher)
 
@@ -130,7 +130,9 @@ class TestCloudflareHostMemo:
         )
         fetcher = AsyncMock()
         fetcher.fetch_text = AsyncMock(return_value="<html>ok</html>")
-        fetcher.resolve_redirect = AsyncMock(return_value="https://filecrypt.cc/c")
+        fetcher.resolve_redirect = AsyncMock(
+            return_value=Redirect("https://filecrypt.cc/c", passed=True)
+        )
         HttpxPluginBase.set_browser_fetcher(fetcher)
 
         async with httpx.AsyncClient() as client:

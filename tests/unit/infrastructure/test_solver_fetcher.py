@@ -13,6 +13,7 @@ from scavengarr.domain.ports.browser_fetcher import (
     BrowserFetcherPort,
     BrowserSession,
     ClickThrough,
+    Redirect,
 )
 from scavengarr.infrastructure.browser.solver_fetcher import (
     ChainedBrowserFetcher,
@@ -100,11 +101,13 @@ class TestSolverFetcher:
 
         async with httpx.AsyncClient() as client:
             fetcher = SolverFetcher(http_client=client, base_url=_SOLVER)
-            target = await fetcher.resolve_redirect(
+            redirect = await fetcher.resolve_redirect(
                 "https://site.example/external/abc", timeout=40
             )
 
-        assert target == "https://filecrypt.cc/Container/X.html"
+        assert redirect == Redirect(
+            "https://filecrypt.cc/Container/X.html", passed=True
+        )
 
     @respx.mock
     async def test_session_of_the_last_solution(self) -> None:
@@ -128,12 +131,27 @@ class TestSolverFetcher:
 
         async with httpx.AsyncClient() as client:
             fetcher = SolverFetcher(http_client=client, base_url=_SOLVER)
-            assert (
-                await fetcher.resolve_redirect(
-                    "https://site.example/external/abc", timeout=40
-                )
-                is None
+            redirect = await fetcher.resolve_redirect(
+                "https://site.example/external/abc", timeout=40
             )
+
+        # The solver got past the challenge; the link-out leads nowhere
+        # (code review 2026-10-12, finding 14)
+        assert redirect == Redirect(None, passed=True)
+
+    @respx.mock
+    async def test_resolve_redirect_of_a_failed_solution_is_not_passed(self) -> None:
+        respx.post(f"{_SOLVER}/v1").respond(
+            200, json={"status": "error", "message": "Challenge not solved"}
+        )
+
+        async with httpx.AsyncClient() as client:
+            fetcher = SolverFetcher(http_client=client, base_url=_SOLVER)
+            redirect = await fetcher.resolve_redirect(
+                "https://site.example/external/abc", timeout=40
+            )
+
+        assert redirect == Redirect(None, passed=False)
 
 
 class TestChainedBrowserFetcher:
@@ -149,12 +167,24 @@ class TestChainedBrowserFetcher:
         first, second = AsyncMock(), AsyncMock()
         first.fetch_text.return_value = None
         second.fetch_text.return_value = "two"
-        first.resolve_redirect.return_value = None
-        second.resolve_redirect.return_value = "https://t/"
+        first.resolve_redirect.return_value = Redirect(None, passed=False)
+        second.resolve_redirect.return_value = Redirect("https://t/", passed=True)
         chain = ChainedBrowserFetcher([first, second])
 
         assert await chain.fetch_text("https://x/", timeout=10) == "two"
-        assert await chain.resolve_redirect("https://x/", timeout=10) == "https://t/"
+        assert await chain.resolve_redirect("https://x/", timeout=10) == Redirect(
+            "https://t/", passed=True
+        )
+
+    async def test_a_redirect_passed_by_any_fetcher_is_passed(self) -> None:
+        first, second = AsyncMock(), AsyncMock()
+        first.resolve_redirect.return_value = Redirect(None, passed=True)
+        second.resolve_redirect.return_value = Redirect(None, passed=False)
+        chain = ChainedBrowserFetcher([first, second])
+
+        assert await chain.resolve_redirect("https://x/", timeout=10) == Redirect(
+            None, passed=True
+        )
 
     async def test_session_comes_from_the_fetcher_that_answered(self) -> None:
         """The browser that solved the page holds the site's session."""

@@ -132,7 +132,7 @@ Ports define the boundaries between Application and Infrastructure. All are `Pro
 | `PluginHistoryPort` | `ports/plugin_history.py` | sync | `count` (a plugin's `searches`, `results`, `timeouts`, `dropped`, `challenges`, `checks`, `unreachable` or `unreachable_searches` of today); `NO_PLUGIN_HISTORY` counts nothing |
 | `ConcurrencyPoolPort` | `ports/concurrency.py` | async context manager | `request()` → `ConcurrencyBudgetPort` |
 | `ConcurrencyBudgetPort` | `ports/concurrency.py` | async context manager | `acquire_httpx()`, `acquire_pw()` |
-| `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect`, `click_through`, `session` |
+| `BrowserFetcherPort` | `ports/browser_fetcher.py` | async | `fetch_text`, `resolve_redirect` (a `Redirect`: target and `passed`), `click_through`, `session` |
 | `TelemetryPort` | `ports/telemetry.py` | sync | `stage()` (context manager timing a step), `count()`, `record()`; `NO_TELEMETRY` records nothing |
 
 Key design choice: `PluginRegistryPort` is **synchronous** (plugin files are loaded from disk, not from network), and so is `TelemetryPort` (in-memory counters). All other ports are **asynchronous** because they involve I/O (HTTP, cache, validation) or awaitable slot acquisition.

@@ -19,6 +19,7 @@ from scavengarr.domain.ports.browser_fetcher import (
     BrowserSession,
     ClickThrough,
     PageClaim,
+    Redirect,
     page_claim,
 )
 from scavengarr.infrastructure.browser.hardening import (
@@ -541,11 +542,13 @@ class TestStealthPoolResolveRedirect:
         )
         context.new_page = AsyncMock(return_value=page)
 
-        target = await StealthPool(browser_pool=shared_pool).resolve_redirect(
+        redirect = await StealthPool(browser_pool=shared_pool).resolve_redirect(
             "https://filmfans.org/external/abc", timeout=10
         )
 
-        assert target == "https://filecrypt.cc/Container/2bdf64bab2.html?mirror=0"
+        assert redirect == Redirect(
+            "https://filecrypt.cc/Container/2bdf64bab2.html?mirror=0", passed=True
+        )
         page.close.assert_awaited_once()
 
     async def test_same_host_only_returns_none(self) -> None:
@@ -554,10 +557,10 @@ class TestStealthPoolResolveRedirect:
         context.new_page = AsyncMock(return_value=page)
         pool = StealthPool(browser_pool=shared_pool)
 
-        assert (
-            await pool.resolve_redirect("https://filmfans.org/external/abc", timeout=10)
-            is None
-        )
+        # The site's own page: its verdict on the link-out, no challenge open
+        assert await pool.resolve_redirect(
+            "https://filmfans.org/external/abc", timeout=10
+        ) == Redirect(None, passed=True)
 
     async def test_ignores_subresource_requests(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
@@ -573,10 +576,9 @@ class TestStealthPoolResolveRedirect:
 
         page.goto = AsyncMock(side_effect=_goto)
 
-        assert (
-            await pool.resolve_redirect("https://filmfans.org/external/abc", timeout=10)
-            is None
-        )
+        assert await pool.resolve_redirect(
+            "https://filmfans.org/external/abc", timeout=10
+        ) == Redirect(None, passed=True)
 
     async def test_retries_rate_limit(self) -> None:
         shared_pool, _, context = _mock_pool_stack()
@@ -599,11 +601,13 @@ class TestStealthPoolResolveRedirect:
             "scavengarr.infrastructure.browser.stealth_pool.asyncio.sleep",
             AsyncMock(),
         ) as mock_sleep:
-            target = await StealthPool(browser_pool=shared_pool).resolve_redirect(
+            redirect = await StealthPool(browser_pool=shared_pool).resolve_redirect(
                 "https://filmfans.org/external/abc", timeout=10
             )
 
-        assert target == "https://filecrypt.cc/Container/x.html"
+        assert redirect == Redirect(
+            "https://filecrypt.cc/Container/x.html", passed=True
+        )
         mock_sleep.assert_awaited_once_with(2.0)
 
     async def test_http_error_returns_none(self) -> None:
@@ -612,12 +616,46 @@ class TestStealthPoolResolveRedirect:
         page.title = AsyncMock(return_value="Not Found")
         context.new_page = AsyncMock(return_value=page)
 
-        assert (
-            await StealthPool(browser_pool=shared_pool).resolve_redirect(
+        # An error page without a challenge is the site's verdict: dead
+        assert await StealthPool(browser_pool=shared_pool).resolve_redirect(
+            "https://filmfans.org/external/gone", timeout=10
+        ) == Redirect(None, passed=True)
+
+    @staticmethod
+    async def _challenged(solved: bool) -> Redirect:
+        """A link-out behind a challenge page that *solved* clears or not,
+        without a redirect after it (a dead link-out)."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page([(["https://filmfans.org/external/gone"], 403)])
+        page.title = AsyncMock(return_value="Just a moment...")
+        context.new_page = AsyncMock(return_value=page)
+        with patch(
+            "scavengarr.infrastructure.browser.stealth_pool.solve_cloudflare",
+            AsyncMock(return_value=solved),
+        ):
+            return await StealthPool(browser_pool=shared_pool).resolve_redirect(
                 "https://filmfans.org/external/gone", timeout=10
             )
-            is None
-        )
+
+    async def test_a_dead_link_out_behind_a_cleared_challenge_is_passed(
+        self,
+    ) -> None:
+        """Code review 2026-10-12, finding 14: the browser got past the
+        challenge, and the link-out leads nowhere."""
+        assert await self._challenged(solved=True) == Redirect(None, passed=True)
+
+    async def test_an_unsolved_challenge_is_not_passed(self) -> None:
+        assert await self._challenged(solved=False) == Redirect(None, passed=False)
+
+    async def test_a_navigation_error_is_not_passed(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        page = _redirect_page([])
+        page.goto = AsyncMock(side_effect=RuntimeError("net::ERR_CONNECTION_RESET"))
+        context.new_page = AsyncMock(return_value=page)
+
+        assert await StealthPool(browser_pool=shared_pool).resolve_redirect(
+            "https://filmfans.org/external/abc", timeout=10
+        ) == Redirect(None, passed=False)
 
 
 # ------------------------------------------------------------------
@@ -1466,7 +1504,9 @@ class TestBusyPages:
         self._too_late()
 
         assert await pool.fetch_text("https://x.org/a", timeout=30) is None
-        assert await pool.resolve_redirect("https://x.org/b", timeout=30) is None
+        assert await pool.resolve_redirect("https://x.org/b", timeout=30) == Redirect(
+            None, passed=False
+        )
         assert await pool.click_through("https://x.org/c", "a", timeout=30) is None
         context.new_page.assert_not_awaited()
 

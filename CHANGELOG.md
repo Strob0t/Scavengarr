@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Dead Link-Out Behind a Passed Challenge Is No Unsolved Challenge
+- `BrowserFetcherPort.resolve_redirect()` answers a `Redirect` (`domain/ports/browser_fetcher.py`): the `target` and whether the browser got past the site's challenge (`passed`). The stealth pool passes on a target, a page without a challenge (an error page too) and a cleared challenge, not on a broken navigation, no page in time or a challenge that stayed; the solver on any solution; the chain when any fetcher did, the first target winning. The httpx base settles a link-out's challenge by `passed` (`settle_challenge()`), so a dead link-out behind a passed challenge counts as solved; a link-out served from the challenge memo counts nothing, as before.
+- Why: code review 2026-10-12, finding 14. A link-out behind a challenge that the browser passed and that answered a same-host 404 (an expired hash) or, for sto, no redirect without its Referer, flagged the whole search as unsolved: one dead link-out inflated the plugin record's `challenges_unsolved`, which N20's 5 % rule for a solver trial reads (sto, byte and kinox; filmfans and serienfans through `_resolve_result_links`).
+
 ### Fixed: A Request's Own Cut at the Bound Cancels Its Capture; a Completion's Check Error Is Logged
 - A challenged capture runs on in the background only when the bound's cancel is the only new one on the request's task (`Task.cancelling()` against its count at the attempt's start). A request cut in the loop iteration in which the bound fires (the answer went out) cancels the capture and counts as `cut`, as any request cut does.
 - A completion judges its stream inside a try: an unexpected error of the playback check logs `hoster_challenge_completion_error` (outcome `none`), caches nothing and does not step the cooldown up.
