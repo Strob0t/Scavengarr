@@ -346,6 +346,29 @@ No popup in the 88 runs with `--diagnose` (the 12 `--restore` runs ran without i
 
 **Limits.** The dev container: a fast CPU, page loads of 0.2 to 2.1 s. One link per hoster, two to six runs per cell, within 13 minutes. A Pi's page and player are slower, so a wait the player takes in the dev container can come too early there, and a missed click costs 5 s.
 
+**On the Pi (production 503a0eb, 19:51:08 to 19:52:58 UTC).** Mr. Fable's four calls through `scripts/prodctl.py probe`, `--runs 2 --diagnose` each (run 1 cold, run 2 warm), with production's `capture_timing.py` of 503a0eb and only `--autoplay-wait` added: today's probe needs row 97's capture state, which 503a0eb lacks. The links are the dev runs'. Before each call the container had been up for 2 hours, its CPU was at 0.00 to 0.27 of 4 cores, and its log had no `/play`, `/proxy` or HLS line in the last 2 minutes; the maintainer's playback held the calls back from 19:04 until 19:49. Times are seconds after the resolution's start, a page as its start and its load:
+
+| Hoster, wait | Run | Page | Clicks | `captcha`, `captcha/verify` | Stream | At 3 s (an earlier call) |
+|---|---|---|---|---|---|---|
+| Filemoon (Byse), 1.5 s | 1 (cold) | `/d/` 3.5 s, 1.9 s | 6.9, 13.0, 18.1 s | 14.1 s, 14.6 s | 22.7 s | 17:48: page 1.3 s, 0.8 s; clicks 5.2, 10.8, 15.9 s; captcha 7.2 s, no verify; no stream by 21.1 s |
+| | 2 (warm) | `/d/` 2.0 s, 3.5 s | 7.1, 12.2, 17.4 s | – | 18.9 s | 17:48: page 0.6 s, 0.8 s; click 4.5 s; captcha 5.5 s, verify 6.8 s; stream 8.0 s |
+| Filemoon (filemoon.to), 1.5 s | 1 (cold) | `/e/` 1.5 s, 1.8 s | 4.9, 9.9 s | 10.7 s, 11.3 s | 13.3 s | 17:49: page 1.3 s, 1.4 s; click 5.8 s; captcha 6.6 s, verify 8.0 s; stream 9.2 s |
+| | 2 (warm) | `/e/` 0.6 s, 1.2 s | 3.4 s | – | 6.2 s | 17:49: page 0.8 s, 1.1 s; click 5.1 s; stream 6.5 s |
+| DoodStream, 0.5 s | 1, 2 | none | – | – | none in the browser: resolved over HTTP in 1.0 and 0.3 s | none on the Pi |
+| Vixeo, 0.5 s | 1 (cold) | `/e/` 0.7 s, 1.2 s | 2.6 s | – | 3.0 s | 06:33: click 5.3 s, stream 5.5 s |
+| | 2 (warm) | `/e/` 0.8 s, 2.3 s | 4.1 s | – | 5.9 s | 06:33: click 4.8 s, stream 5.0 s |
+
+The 3 s calls are row 101's (`docs/plans/challenge-reactions.md` → R4, production 503a0eb) and row 83's (`docs/plans/header-bound-hosters.md` → Vixeo with the own-scripts rule, production 39f4790). No popup in the eight runs. The Filemoon and DoodStream calls overlapped no app request. Vixeo's call overlapped a real Stremio request from 19:52:46 on (two stream requests, a kinoger search page in the app's browser at 19:52:48, then Dropload's open breaker and six VOE resolutions over HTTP), most likely in its run 2. No app capture line fell into the calls' windows; the request's Byse capture timed out at 19:53:32, after them.
+
+**Reading (Pi).**
+- **Filemoon keeps 3 s.** At 1.5 s the player left the first click unanswered in 3 of 4 runs: no captcha and no stream before the next click, 5 s later. At 3 s, row 101's four runs answered it with the captcha or the stream. filemoon.to's pages loaded as at 17:49 (1.8 and 1.2 s against 1.4 and 1.1 s). Its cold capture's missed click put the stream at 13.3 s instead of 9.2 s, past production's 10 s resolve bound. Its warm capture's click was answered 1.7 s sooner, but the stream came only 0.3 s sooner (6.2 s against 6.5 s). Byse's pages started 1.4 to 2.2 s later and loaded 1.1 to 2.7 s slower than at 17:48, and its warm run left its second click unanswered too, 6.7 s after its page: its two runs also measure a slower site or Pi. Unlike in the dev container, Filemoon's warm player did not start itself on the Pi, at 1.5 s here or at 3 s at 17:49, so production's warm captures need their click.
+- **Vixeo takes the first click at 0.5 s on the Pi**, in 2 of 2 runs, without a popup. Run 1, before the app's request, found its stream at 3.0 s, against 5.5 and 5.0 s at 3 s in the morning. Run 2's page loaded in 2.3 s instead of 1.2 s, and its stream came 1.8 s after the click (run 1: 0.4 s; the morning's runs: 0.2 s), at 5.9 s; it most likely ran during the app's request.
+- **DoodStream did not capture on the Pi.** The site sent the Pi's request no Cloudflare challenge, so the resolver resolved the link over HTTP, opened no browser page, and the wait never began. Production's log since 503a0eb's deploy, to about 20:00 UTC, shows no `doodstream_cloudflare_browser_fallback` either (8 `doodstream_offline`, 2 `doodstream_captcha_required`, 1 `doodstream_invalid_video_base`). The dev container's requests meet the challenge, so the dev numbers are the only numbers for DoodStream's capture. A 3 s call would have taken the same HTTP path, so none was added.
+
+**For the change (Mr. Fable's go per resolver).** By Mr. Fable's rule: 0.5 s for Vixeo, whose first click the Pi answered; 3 s kept for Filemoon, Dropload and SuperVideo. DoodStream's click was not measured on the Pi; while the Pi's requests meet no challenge, its wait changes nothing in production.
+
+**Limits (Pi).** One link per hoster and one call each, a few minutes after the maintainer's playback. The 3 s calls are other calls, 2 hours earlier for Filemoon and 13 hours earlier for Vixeo, perhaps with other links (the earlier links are not recorded), at other loads of the Pi and the sites, as Byse's page times show. Vixeo's run 2 overlapped an app request.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:
