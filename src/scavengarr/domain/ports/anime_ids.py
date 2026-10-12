@@ -34,6 +34,15 @@ class AnimeIdResolverPort(Protocol):
         download."""
         ...
 
+    async def has_whole_series_entry(self, imdb_id: str) -> bool | None:
+        """Whether a Kitsu entry counts the series *imdb_id* from its start
+        (One Piece's does, Duel Monsters has an entry per season); ``None``
+        while the sources cannot say. Where none does, the catalog's
+        position numbers an episode as the sites do, as far as anything
+        knows; where one does, only its number is sure. Waits for no list
+        download."""
+        ...
+
     async def aclose(self) -> None:
         """End the background work still running (at shutdown)."""
         ...
@@ -51,6 +60,10 @@ class _NoAnimeIds:
     async def kitsu_episode(self, request: StremioStreamRequest) -> int | None:
         del request
         return None
+
+    async def has_whole_series_entry(self, imdb_id: str) -> bool | None:
+        del imdb_id
+        return False
 
     async def aclose(self) -> None:
         return None

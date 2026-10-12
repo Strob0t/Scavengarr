@@ -18,6 +18,7 @@ from typing import Protocol
 
 from scavengarr.application.stremio.queries import build_multi_lang_reference
 from scavengarr.domain.entities.stremio import (
+    AbsoluteSource,
     EpisodeRef,
     SeriesMeta,
     StremioStreamRequest,
@@ -165,6 +166,7 @@ class TitleResolver:
         meta: SeriesMeta | None,
         *,
         absolute: int | None = None,
+        position_trusted: bool = False,
         titles: tuple[str, ...] = (),
     ) -> EpisodeRef | None:
         """The episode *request* means, for plugins that locate episodes on
@@ -180,9 +182,13 @@ class TitleResolver:
         Piece: 1089 where the list says 1088); Kitsu has an entry per
         season for most anime, whose number counts that season alone and
         would place the episode in season 1, so a number far from the
-        position gives way to it. A special (season 0) and an episode 0
-        entry of a regular season have no position: their number is
-        *absolute* alone. ``None`` without a record, for a request
+        position gives way to it. The reference names the number's source:
+        Kitsu's, or the position, which counts as the sites do only where
+        *position_trusted* (no Kitsu entry counts the series whole) and is
+        unchecked otherwise: it may lie one off the sites' count (code
+        review of 2026-10-12, finding 1). A special (season 0) and an
+        episode 0 entry of a regular season have no position: their number
+        is *absolute* alone. ``None`` without a record, for a request
         without an episode, and for an episode the list lacks unless
         *absolute* names it: a reference with neither a title nor a number
         has nothing a plugin can locate by, and such an episode (the newest
@@ -196,6 +202,8 @@ class TitleResolver:
         )
         if entry is None and absolute is None:
             return None
+        # A reference without a number keeps the default source
+        source: AbsoluteSource = "kitsu" if absolute is not None else "position"
         if entry is not None and entry.season >= 1 and entry.episode >= 1:
             # An episode 0 entry of a regular season (Duel Monsters' S2E0)
             # is no numbered episode: the sites and Kitsu count without it
@@ -206,12 +214,14 @@ class TitleResolver:
             position = regular.index(entry) + 1
             if absolute is None or abs(absolute - position) > _KITSU_SLACK:
                 absolute = position
+                source = "position" if position_trusted else "unchecked"
         return EpisodeRef(
             season=request.season,
             episode=request.episode,
             title=entry.name or None if entry is not None else None,
             aired=entry.released if entry is not None else None,
             absolute=absolute,
+            source=source,
             titles=titles,
         )
 

@@ -8,7 +8,9 @@ row of the series' season pages, ``(season, episode, german, english,
 absolute)``, cached per series for 7 days; ``locate`` finds the row a
 request's ``EpisodeRef`` means: the row that shows its absolute number
 (``[Episode 062]`` in the English title), whatever its title; without
-one, by the title. On a series named only by a shorter form of the
+one, by the title. An unchecked number (the catalog's position where a
+Kitsu entry may count the series one off) takes a titled row only where
+the title confirms it. On a series named only by a shorter form of the
 request's titles (``is_partial_series``: Bleach for the Thousand-Year
 Blood War, which the sites keep as Bleach's season 17) the number counts
 another series, and the title alone places the episode. A plugin passes
@@ -239,27 +241,41 @@ def locate(
     4. ``fuzzy_title``: the best title match of at least ``_TITLE_MIN``
        over the index.
 
-    On a *partial* series (``is_partial_series``) the number counts
-    another series: only rules 3 and 4 apply.
+    An unchecked number (``EpisodeRef.source``) may lie one off the
+    site's count, so rule 1 places only a row without an English title
+    (s.to's anime rows) or a reference without one; a titled row needs
+    rule 2 (``number`` where it is the number's row, which wins a tie)
+    or the rules after it (code review of 2026-10-12, finding 1). On a
+    *partial* series (``is_partial_series``) the number counts another
+    series: only rules 3 and 4 apply.
     """
     absolute = None if partial else ref.absolute
+    title = normalize_title(ref.title) if ref.title else ""
     if absolute is not None:
         exact = next((row for row in index if row.absolute == absolute), None)
-        if exact is not None:
+        if exact is not None and (
+            ref.source != "unchecked" or not title or not exact.english
+        ):
             return Located(exact, "number")
-    title = normalize_title(ref.title) if ref.title else ""
     if not title:
         return None
     if absolute is not None:
-        near = [
-            row
-            for row in index
-            if row.absolute is not None
-            and abs(row.absolute - absolute) <= _NUMBER_SLACK
-        ]
+        # The number's row first: ``_best`` keeps the first of equal
+        # matches, so it wins a tie (a neighbour whose title is a word
+        # subset of the reference's matches as fully as the identical one)
+        near = sorted(
+            (
+                row
+                for row in index
+                if row.absolute is not None
+                and abs(row.absolute - absolute) <= _NUMBER_SLACK
+            ),
+            key=lambda row: row.absolute != absolute,
+        )
         best = _best(near, title)
         if best is not None and best[1] >= _NEIGHBOUR_MIN:
-            return Located(best[0], "neighbour")
+            row = best[0]
+            return Located(row, "number" if row.absolute == absolute else "neighbour")
     for row in index:
         if row.english and normalize_title(row.english) == title:
             return Located(row, "title")

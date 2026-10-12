@@ -187,6 +187,22 @@ class TestWholeSeries:
 
     @respx.mock
     @pytest.mark.asyncio
+    async def test_the_load_can_start_before_the_first_lookup(
+        self, lists: AnimeIdLists
+    ) -> None:
+        """The app's start begins it, so an IMDb request right after a start
+        finds the list in memory."""
+        route = respx.get(LIST_URL).respond(json=self._RECORDS)
+
+        lists.load_in_background()
+        lists.load_in_background()
+        await _loaded(lists)
+
+        assert lists.whole_series("tt0388629") == [12]
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.asyncio
     async def test_only_series_entries_without_a_season(
         self, lists: AnimeIdLists
     ) -> None:

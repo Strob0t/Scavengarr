@@ -785,6 +785,7 @@ class StoPlugin(HttpxPluginBase):
             "season": ref.season,
             "episode": ref.episode,
             "absolute": ref.absolute,
+            "absolute_source": ref.source,
             "partial": partial,
         }
         if located is None:

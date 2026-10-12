@@ -5,12 +5,13 @@ row a request's ``EpisodeRef`` means."""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import AbsoluteSource, EpisodeRef
 from scavengarr.infrastructure.plugins.episode_index import (
     INDEX_TTL_SECONDS,
     EpisodeRow,
@@ -100,13 +101,75 @@ class TestLocate:
 
         assert locate(_CONAN, ref) == Located(_CONAN[5], "number")
 
+    @pytest.mark.parametrize("source", ["kitsu", "position"])
     def test_the_numbers_row_wins_against_a_neighbour_with_a_better_title(
-        self,
+        self, source: AbsoluteSource
     ) -> None:
-        # "The Art Museum Murder Case" matches 0.73, the number's row 0.38
-        ref = EpisodeRef(1, 13, "The Strange Person Hunt Murder Case", absolute=13)
+        # "The Art Museum Murder Case" matches 0.73, the number's row 0.38:
+        # Kitsu's number, or the position of a series no Kitsu entry counts
+        # whole, is the sites' count
+        ref = EpisodeRef(
+            1, 13, "The Strange Person Hunt Murder Case", absolute=13, source=source
+        )
 
         assert locate(_CONAN, ref) == Located(_CONAN[3], "number")
+
+    def test_an_unchecked_position_goes_to_the_neighbour_with_the_title(
+        self,
+    ) -> None:
+        """Code review of 2026-10-12, finding 1: right after a start (the id
+        list not in memory) One Piece S22E4 is the catalog's position 1088,
+        where Kitsu and the site count 1089; the site's #1088 is the episode
+        before."""
+        ref = EpisodeRef(22, 4, _SABO, "2024-01-07", absolute=1088, source="unchecked")
+
+        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[7], "neighbour")
+
+    def test_an_unchecked_position_its_title_confirms_is_the_numbers_row(
+        self,
+    ) -> None:
+        ref = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62, source="unchecked")
+
+        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[3], "number")
+
+    def test_the_numbers_row_wins_a_title_tie(self) -> None:
+        """Fairy Tail as aniworld lists it: #246's title is a word subset of
+        #249's, so both match the reference fully; an unchecked position's
+        own row takes the tie (row 95's live run)."""
+        underworld = "Tartaros Chapter - Celestial Spirit King vs. Underworld King"
+        index = [
+            _row(6, 20, "Tartaros Chapter - Underworld King", 246),
+            _row(6, 21, "Tartaros Chapter - The Lost Key", 247),
+            _row(6, 23, underworld, 249),
+        ]
+        ref = EpisodeRef(6, 23, underworld, absolute=249, source="unchecked")
+
+        assert locate(index, ref) == Located(index[2], "number")
+
+    def test_an_unchecked_position_without_a_title_match_is_no_location(
+        self,
+    ) -> None:
+        # Kitsu's 13 would take "Mystery Mastermind" whatever its title
+        ref = EpisodeRef(1, 13, "Nothing Like It", absolute=13, source="unchecked")
+
+        assert locate(_CONAN, ref) is None
+        assert locate(_CONAN, replace(ref, source="kitsu")) == Located(
+            _CONAN[3], "number"
+        )
+
+    def test_an_unchecked_position_on_a_number_only_row(self) -> None:
+        # s.to's anime rows show the number in place of a title: nothing to
+        # compare, so the number places it, as before
+        ref = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62, source="unchecked")
+
+        assert locate(_STO_ANIME, ref) == Located(_STO_ANIME[0], "number")
+
+    def test_an_unchecked_position_without_a_title_takes_the_numbers_row(
+        self,
+    ) -> None:
+        ref = EpisodeRef(5, 2, absolute=62, source="unchecked")
+
+        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[3], "number")
 
     def test_the_numbers_row_wins_against_an_exact_title_elsewhere(self) -> None:
         # The number points at season 1, the title names the Laboon episode

@@ -533,6 +533,7 @@ class TestEpisodeReference:
         meta: SeriesMeta | None,
         translated: StremioStreamRequest | None = None,
         kitsu_number: int | None = None,
+        whole_series: bool | None = True,
     ) -> StremioStreamUseCase:
         tmdb = AsyncMock()
         tmdb.get_title_and_year = AsyncMock(
@@ -551,6 +552,8 @@ class TestEpisodeReference:
         anime_ids = AsyncMock()
         anime_ids.translate = AsyncMock(return_value=translated)
         anime_ids.kitsu_episode = AsyncMock(return_value=kitsu_number)
+        # One Piece: a Kitsu entry counts the series whole
+        anime_ids.has_whole_series_entry = AsyncMock(return_value=whole_series)
         return make_use_case(
             tmdb=tmdb,
             plugins=plugins,
@@ -575,7 +578,11 @@ class TestEpisodeReference:
             season=22,
             episode=4,
             episode_ref=EpisodeRef(
-                season=22, episode=4, absolute=1089, titles=("One Piece",)
+                season=22,
+                episode=4,
+                absolute=1089,
+                source="kitsu",
+                titles=("One Piece",),
             ),
         )
 
@@ -613,9 +620,53 @@ class TestEpisodeReference:
             season=5,
             episode=2,
             episode_ref=EpisodeRef(
-                season=5, episode=2, title="S5E2", absolute=62, titles=("One Piece",)
+                season=5,
+                episode=2,
+                title="S5E2",
+                absolute=62,
+                source="unchecked",
+                titles=("One Piece",),
             ),
         )
+
+    @pytest.mark.parametrize(
+        ("whole_series", "source"),
+        [(False, "position"), (True, "unchecked"), (None, "unchecked")],
+        ids=["no-whole-series-entry", "number-not-out", "ids-cannot-say"],
+    )
+    async def test_without_a_kitsu_number_the_position_counts_only_where_no_entry_does(
+        self, whole_series: bool | None, source: str
+    ) -> None:
+        """Code review of 2026-10-12, finding 1. A series no Kitsu entry
+        counts whole (Duel Monsters) is counted by the catalog's position as
+        far as anything knows. Where one does (One Piece) but its number did
+        not come out (the id list not in memory, the episode not mapped yet)
+        or the anime ids cannot say, the position may be one off."""
+        plugin = self._plugin(locates=True)
+        uc = self._use_case(plugin, meta=self._META, whole_series=whole_series)
+        request = make_request(
+            imdb_id="tt0388629", content_type="series", season=5, episode=2
+        )
+
+        await uc.execute(request)
+
+        uc._anime_ids.has_whole_series_entry.assert_awaited_once_with("tt0388629")  # type: ignore[attr-defined]  # noqa: SLF001
+        ref = plugin.search.await_args.kwargs["episode_ref"]
+        assert (ref.absolute, ref.source) == (62, source)
+
+    async def test_a_kitsu_number_asks_nothing_more(self) -> None:
+        plugin = self._plugin(locates=True)
+        uc = self._use_case(plugin, meta=self._META, kitsu_number=63)
+
+        await uc.execute(
+            make_request(
+                imdb_id="tt0388629", content_type="series", season=5, episode=2
+            )
+        )
+
+        uc._anime_ids.has_whole_series_entry.assert_not_awaited()  # type: ignore[attr-defined]  # noqa: SLF001
+        ref = plugin.search.await_args.kwargs["episode_ref"]
+        assert (ref.absolute, ref.source) == (63, "kitsu")
 
     async def test_a_plugin_without_the_capability_is_called_as_today(self) -> None:
         plugin = self._plugin(locates=False)
@@ -661,9 +712,40 @@ class TestEpisodeReference:
             season=22,
             episode=4,
             episode_ref=EpisodeRef(
-                season=22, episode=4, absolute=1089, titles=("One Piece",)
+                season=22,
+                episode=4,
+                absolute=1089,
+                source="kitsu",
+                titles=("One Piece",),
             ),
         )
+
+    @pytest.mark.parametrize(
+        ("whole_series", "source"),
+        [(False, "position"), (True, "unchecked"), (None, "unchecked")],
+        ids=["no-whole-series-entry", "whole-series-entry", "ids-cannot-say"],
+    )
+    async def test_a_season_entrys_number_leaves_the_position_as_the_ids_know_it(
+        self, whole_series: bool | None, source: str
+    ) -> None:
+        """A season's Kitsu entry counts that season alone: its number gives
+        way to the position, which counts as the sites do only where no
+        Kitsu entry counts the series whole."""
+        plugin = self._plugin(locates=True)
+        translated = make_request(
+            imdb_id="tt0388629", content_type="series", season=5, episode=2
+        )
+        uc = self._use_case(
+            plugin, meta=self._META, translated=translated, whole_series=whole_series
+        )
+
+        await uc.execute(
+            make_request(imdb_id="kitsu:99", content_type="series", season=1, episode=2)
+        )
+
+        uc._anime_ids.has_whole_series_entry.assert_awaited_once_with("tt0388629")  # type: ignore[attr-defined]  # noqa: SLF001
+        ref = plugin.search.await_args.kwargs["episode_ref"]
+        assert (ref.absolute, ref.source) == (62, source)
 
     @staticmethod
     def _gated_plugin(gate: asyncio.Event) -> AsyncMock:

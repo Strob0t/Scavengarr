@@ -387,7 +387,32 @@ def _tallied() -> Any:
     with patch.object(
         _mod, "locate", side_effect=lambda _, ref, **_kw: placed[ref.episode]
     ):
-        return _mod.tally("Series", "series", "tt1", index, meta, {(1, 2): 2})
+        return _mod.tally(
+            "Series", "series", "tt1", index, meta, {(1, 2): 2}, position_trusted=True
+        )
+
+
+def _offset_series() -> tuple[SeriesMeta, list[EpisodeRow], dict[Any, int]]:
+    """A series whose site and Kitsu count an episode the catalog lacks
+    (One Piece from #590 on): each position is one below the Kitsu
+    number, and the third episode's title matches no row."""
+    meta = SeriesMeta(
+        name="Series",
+        year=2000,
+        genres=("Animation",),
+        episodes=(
+            EpisodeMeta(1, 1, name="Luffy and Sabo"),
+            EpisodeMeta(1, 2, name="The Island of the Future"),
+            EpisodeMeta(1, 3, name="Nothing Like It"),
+        ),
+    )
+    index = [
+        _row(1, 1, "The Episode the Catalog Lacks", 1),
+        _row(1, 2, "Luffy and Sabo", 2),
+        _row(1, 3, "The Island of the Future", 3),
+        _row(1, 4, "A Genius Appears", 4),
+    ]
+    return meta, index, {(1, 1): 2, (1, 2): 3, (1, 3): 4}
 
 
 class TestTally:
@@ -435,6 +460,7 @@ class TestTally:
                 "tt14986406",
                 index,
                 meta,
+                position_trusted=True,
                 site_name=site_name,
                 titles=titles,
             )
@@ -445,12 +471,55 @@ class TestTally:
         whole = tally("Bleach: Thousand-Year Blood War")
         assert (whole.partial, dict(whole.kinds)) == (False, {"exact": 1})
 
+    def test_the_position_of_a_series_a_kitsu_entry_counts_whole_is_unchecked(
+        self,
+    ) -> None:
+        """Row 95: the episodes without a Kitsu number are placed as the
+        app places an unchecked position, by the titles."""
+        meta, index, _ = _offset_series()
+
+        # The first episode's number came out, the others' did not
+        counts = _mod.tally(
+            "Series", "series", "tt1", index, meta, {(1, 1): 2}, position_trusted=False
+        )
+
+        assert (counts.kitsu, counts.unchecked) == (1, 2)
+        # The first at its Kitsu number's row; the second's title takes the
+        # row after its position's, the third's confirms no row
+        assert dict(counts.kinds) == {"exact": 1, "neighbour": 1, "unconfirmed": 1}
+
+    def test_right_after_a_start_every_position_is_unchecked(self) -> None:
+        """``--start`` (row 95): no Kitsu number, every position unchecked,
+        each placement judged by the Kitsu number; the same references as
+        trusted positions (before row 95) take the rows one below."""
+        meta, index, numbers = _offset_series()
+
+        counts = _mod.tally(
+            "Series",
+            "series",
+            "tt1",
+            index,
+            meta,
+            numbers,
+            position_trusted=True,
+            start=True,
+        )
+
+        assert (counts.kitsu, counts.unchecked) == (3, 3)
+        assert dict(counts.kinds) == {"neighbour": 2, "unconfirmed": 1}
+        assert (counts.judged, counts.off) == (3, 3)
+        assert (counts.right, counts.right_off) == (2, 2)
+        assert (counts.trusted_right, counts.trusted_right_off) == (0, 0)
+        assert _mod.start_row("tt1", counts) == (
+            "| Series | tt1 | series | 3 | 3 | 3 | 2 (2) | 0 (0) | 0 | 2 | 0 | 1 | 0 |"
+        )
+
 
 class TestSiteReport:
     def test_the_row_names_counts_and_offsets(self) -> None:
         assert _mod.site_row("tt1", _tallied()) == (
-            "| Series | tt1 | series | no | 4 | 4 | 3 | 1 | 1 | 1 (+1: 1) | 0 | 1 (1)"
-            " | 0 | 2 | 1 (0) |"
+            "| Series | tt1 | series | no | 4 | 4 | 3 | 1 | 0 | 1 | 1 (+1: 1) | 0"
+            " | 1 (1) | 0 | 2 | 1 (0) |"
         )
 
     def test_the_share_sums_the_series(self) -> None:

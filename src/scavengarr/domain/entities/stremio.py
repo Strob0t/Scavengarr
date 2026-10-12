@@ -148,6 +148,10 @@ class SeriesMeta:
     episodes: tuple[EpisodeMeta, ...]
 
 
+# Where an episode reference's absolute number comes from (``EpisodeRef``)
+AbsoluteSource = Literal["kitsu", "position", "unchecked"]
+
+
 @dataclass(frozen=True)
 class EpisodeRef:
     """Which episode a series request means, for a plugin that locates
@@ -162,6 +166,14 @@ class EpisodeRef:
     ordered by season and episode, or the Kitsu number (a ``kitsu:``
     request's episode, or the one the anime ids give an IMDb request's)
     when it lies near that position or the list lacks the episode.
+    *source* names where *absolute* comes from: ``"kitsu"`` for the Kitsu
+    number; ``"position"`` for the position of a series no Kitsu entry
+    counts whole (the anime ids know none, or none are wired in), which
+    the sites count by as far as anything knows; ``"unchecked"`` for the
+    position of any other series (the id list not in memory, or a series a
+    Kitsu entry counts whole whose number did not come out), which may lie
+    one off the sites' count (One Piece), so a titled row's own title has
+    to confirm it (``locate``).
     *titles* are the request's series titles (each language's title and
     alternatives): a site's series named only by a shorter form of them
     is the request's parent, whose rows count another series
@@ -173,6 +185,7 @@ class EpisodeRef:
     title: str | None = None
     aired: str | None = None
     absolute: int | None = None
+    source: AbsoluteSource = "position"
     titles: tuple[str, ...] = ()
 
 

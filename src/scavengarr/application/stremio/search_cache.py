@@ -79,14 +79,19 @@ def search_cache_key(
     same season and episode (the list's position) place the episode
     differently on the anime sites, so they neither share an entry nor
     join each other's running search (``title_search.py`` keys its
-    single-flight by this key). ``v3``: the entries from before are not
-    answered.
+    single-flight by this key). An unchecked position (``EpisodeRef``)
+    carries a ``u``: the titles place it, where the number places a
+    trusted one, so an answer placed one way is never served for the
+    other. ``v3``: the entries from before are not answered.
     """
-    absolute = episode_ref.absolute if episode_ref is not None else None
+    placement = "-"
+    if episode_ref is not None and episode_ref.absolute is not None:
+        placement = str(episode_ref.absolute)
+        if episode_ref.source == "unchecked":
+            placement = f"u{placement}"
     return (
         f"stremio:search:v3:{request.content_type}:{request.imdb_id}"
-        f":{request.season}:{request.episode}"
-        f":{'-' if absolute is None else absolute}"
+        f":{request.season}:{request.episode}:{placement}"
     )
 
 

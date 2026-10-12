@@ -707,9 +707,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 15) Anime: the Kitsu addon's ids become IMDb requests (the addon's
     # meta, the public id list as the fallback), both cached in the backend
+    anime_id_lists = AnimeIdLists(http_client=state.http_client, cache=state.cache)
     state.anime_ids = KitsuAnimeIdResolver(
         addon=KitsuAddonClient(http_client=state.http_client, cache=state.cache),
-        lists=AnimeIdLists(http_client=state.http_client, cache=state.cache),
+        lists=anime_id_lists,
     )
     # 15b) The catalog's record of a title (kind, episodes), cached 7 days
     state.series_meta = CinemetaClient(http_client=state.http_client, cache=state.cache)
@@ -760,6 +761,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The browser and the stealth context with the kept state, so the first
     # capture (a breaker trial after a restart) does not pay for the launch
     state._browser_warmup_task = asyncio.create_task(state.stealth_pool.warmup())
+    # The anime id list, so an IMDb anime request right after the start has
+    # its episode's Kitsu number (the shutdown ends a load still running)
+    anime_id_lists.load_in_background()
 
     try:
         yield

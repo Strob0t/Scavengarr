@@ -64,6 +64,23 @@ class TestSearchCacheKey:
             episode, by_position
         )
 
+    def test_an_unchecked_position_has_an_entry_of_its_own(self) -> None:
+        """The position while the Kitsu number is unknown is placed by the
+        titles, a number the sites count by (Kitsu's, or the position of a
+        series no Kitsu entry counts whole) by its row: an answer placed one
+        way is never served for the other."""
+        episode = StremioStreamRequest(
+            imdb_id="tt0388629", content_type="series", season=22, episode=4
+        )
+        unchecked = EpisodeRef(season=22, episode=4, absolute=1088, source="unchecked")
+        trusted = EpisodeRef(season=22, episode=4, absolute=1088, source="position")
+
+        assert (
+            search_cache_key(episode, unchecked)
+            == "stremio:search:v3:series:tt0388629:22:4:u1088"
+        )
+        assert search_cache_key(episode, trusted).endswith(":22:4:1088")
+
     def test_without_a_reference_the_key_is_stable(self) -> None:
         episode = StremioStreamRequest(
             imdb_id="tt0903747", content_type="series", season=1, episode=2

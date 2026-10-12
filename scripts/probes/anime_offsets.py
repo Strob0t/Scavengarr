@@ -4,6 +4,7 @@
         [--kitsu 12,210,...] [--position]
     PYTHONPATH=src poetry run python scripts/probes/anime_offsets.py
         --aniworld [--imdb tt0249327,...] [--slug IMDB=SLUG ...] [--cases 5]
+        [--start]
 
 Runs in the dev container: it reads two public catalogs, Cinemeta and the
 Anime Kitsu addon, and Fribb's id list, and writes nothing (the app's
@@ -45,6 +46,15 @@ brackets the ties: the number's row matches as well), the share over the
 series, and ``--cases`` of each series' N26 cases and placements at another
 row. It also reads the title client and the aniworld site; nothing is
 stored.
+
+Row 95: an episode without the Kitsu number gets the catalog's position as
+the app gives it, trusted only for a series no Kitsu entry counts whole
+(``has_whole_series_entry``) and unchecked otherwise (``Unchecked``: placed
+by the titles). ``--start`` builds the references as right after a start,
+the id list not in memory: no Kitsu number, every position unchecked. It
+judges each placement by the app's Kitsu number where there is one (right:
+at the row that shows it; off: the position is not that number) and places
+the same reference as a trusted position too (as before row 95).
 """
 
 from __future__ import annotations
@@ -55,7 +65,7 @@ import logging
 import math
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -421,17 +431,41 @@ class SiteCounts:
     numbered_rows: int = 0  # rows that show an absolute number
     episodes: int = 0  # regular Cinemeta episodes (season and episode 1 and up)
     kitsu: int = 0  # references with the app's Kitsu number
+    unchecked: int = 0  # references with an unchecked position (row 95)
     kinds: Counter[str] = field(default_factory=Counter)
     offsets: Counter[int] = field(default_factory=Counter)  # the neighbours'
     confirmed: int = 0  # placements a title confirmed, with an exact-number row
     elsewhere: list[Case] = field(default_factory=list)  # ...at another row
     unconfirmed: list[Case] = field(default_factory=list)  # N26's cases
+    # --start: the references judged by the Kitsu number, those whose
+    # position is not that number, and the placements at the row that shows
+    # it (of those off), as unchecked and as trusted positions
+    judged: int = 0
+    off: int = 0
+    right: int = 0
+    right_off: int = 0
+    trusted_right: int = 0
+    trusted_right_off: int = 0
 
     @property
     def ties(self) -> int:
         """Placements at another row whose title matches no better than the
         exact row's."""
         return sum(1 for _, verdict in self.elsewhere if verdict.tie)
+
+    def add(self, ref: EpisodeRef, verdict: Verdict) -> None:
+        """Counts *ref*'s placement, *verdict*."""
+        if ref.source == "unchecked":
+            self.unchecked += 1
+        self.kinds[verdict.kind] += 1
+        if verdict.kind == "neighbour" and verdict.offset is not None:
+            self.offsets[verdict.offset] += 1
+        if verdict.kind == "unconfirmed":
+            self.unconfirmed.append((ref, verdict))
+        if verdict.confirmed and verdict.exact is not None:
+            self.confirmed += 1
+            if verdict.row != verdict.exact:
+                self.elsewhere.append((ref, verdict))
 
     @property
     def exact_best(self) -> int:
@@ -452,14 +486,20 @@ def tally(
     meta: SeriesMeta,
     numbers: Mapping[tuple[int, int], int] | None = None,
     *,
+    position_trusted: bool,
+    start: bool = False,
     site_name: str = "",
     titles: tuple[str, ...] = (),
 ) -> SiteCounts:
     """Each regular episode of *meta*, Cinemeta's list of *imdb_id*, placed
     on *index* by the reference the app builds for an IMDb request, with
     the Kitsu *numbers* its look-up gave (IMDb season and episode -> Kitsu
-    number) and the request's series *titles*: by title alone where
-    *site_name*, the site's name of the series, is partial against them."""
+    number), the position trusted as the app trusts it (*position_trusted*:
+    no Kitsu entry counts the series whole) and the request's series
+    *titles*: by title alone where *site_name*, the site's name of the
+    series, is partial against them. *start*: the references as right after
+    a start (no Kitsu number, every position unchecked), judged by the
+    Kitsu *numbers*."""
     counts = SiteCounts(
         name,
         slug,
@@ -470,34 +510,63 @@ def tally(
         if entry.season < 1 or entry.episode < 1:
             continue
         counts.episodes += 1
-        absolute = (numbers or {}).get((entry.season, entry.episode))
-        if absolute is not None:
+        kitsu = (numbers or {}).get((entry.season, entry.episode))
+        if kitsu is not None:
             counts.kitsu += 1
         request = StremioStreamRequest(
             imdb_id, "series", season=entry.season, episode=entry.episode
         )
-        ref = TitleResolver.episode_ref(request, meta, absolute=absolute, titles=titles)
+        ref = TitleResolver.episode_ref(
+            request,
+            meta,
+            absolute=None if start else kitsu,
+            position_trusted=position_trusted and not start,
+            titles=titles,
+        )
         if ref is None:  # never for a listed entry
             continue
         counts.partial = is_partial_series([site_name], ref)
         verdict = place(index, ref, partial=counts.partial)
-        counts.kinds[verdict.kind] += 1
-        if verdict.kind == "neighbour" and verdict.offset is not None:
-            counts.offsets[verdict.offset] += 1
-        if verdict.kind == "unconfirmed":
-            counts.unconfirmed.append((ref, verdict))
-        if verdict.confirmed and verdict.exact is not None:
-            counts.confirmed += 1
-            if verdict.row != verdict.exact:
-                counts.elsewhere.append((ref, verdict))
+        counts.add(ref, verdict)
+        if start and kitsu is not None:
+            _judge(counts, index, ref, verdict, kitsu)
     return counts
+
+
+def _judge(
+    counts: SiteCounts,
+    index: list[EpisodeRow],
+    ref: EpisodeRef,
+    verdict: Verdict,
+    kitsu: int,
+) -> None:
+    """Counts *ref*'s placement (*verdict*) and the same reference's as a
+    trusted position against *kitsu*, the episode's Kitsu number."""
+    off = ref.absolute != kitsu
+    counts.judged += 1
+    if off:
+        counts.off += 1
+    if verdict.row is not None and verdict.row.absolute == kitsu:
+        counts.right += 1
+        if off:
+            counts.right_off += 1
+    trusted = locate(index, replace(ref, source="position"), partial=counts.partial)
+    if trusted is not None and trusted.row.absolute == kitsu:
+        counts.trusted_right += 1
+        if off:
+            counts.trusted_right_off += 1
 
 
 _SITE_HEADER = (
     "| Series | IMDb | aniworld | Partial | Rows | Numbered rows | Episodes"
-    " | Kitsu numbered | Exact | Neighbour | Title | N26 (exact best) | Nothing"
-    " | Confirmed | Elsewhere (ties) |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    " | Kitsu numbered | Unchecked | Exact | Neighbour | Title | N26 (exact best)"
+    " | Nothing | Confirmed | Elsewhere (ties) |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+)
+_START_HEADER = (
+    "| Series | IMDb | aniworld | Episodes | Judged | Off | Right (off)"
+    " | As trusted: right (off) | Exact | Neighbour | Title | N26 | Nothing |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 )
 
 
@@ -515,6 +584,7 @@ def site_row(imdb_id: str, counts: SiteCounts) -> str:
         counts.numbered_rows,
         counts.episodes,
         counts.kitsu,
+        counts.unchecked,
         counts.kinds["exact"],
         neighbour,
         counts.kinds["title"],
@@ -522,6 +592,27 @@ def site_row(imdb_id: str, counts: SiteCounts) -> str:
         counts.kinds["nothing"],
         counts.confirmed,
         f"{len(counts.elsewhere)} ({counts.ties})",
+    )
+    return "| " + " | ".join(str(cell) for cell in cells) + " |"
+
+
+def start_row(imdb_id: str, counts: SiteCounts) -> str:
+    """A series' ``--start`` row: the judged placements, then where the
+    unchecked positions were placed."""
+    cells = (
+        counts.name,
+        imdb_id,
+        counts.slug,
+        counts.episodes,
+        counts.judged,
+        counts.off,
+        f"{counts.right} ({counts.right_off})",
+        f"{counts.trusted_right} ({counts.trusted_right_off})",
+        counts.kinds["exact"],
+        counts.kinds["neighbour"],
+        counts.kinds["title"],
+        counts.kinds["unconfirmed"],
+        counts.kinds["nothing"],
     )
     return "| " + " | ".join(str(cell) for cell in cells) + " |"
 
@@ -634,11 +725,13 @@ async def aniworld_series(
     imdb_id: str,
     slug: str | None = None,
     titles: tuple[str, ...] = (),
+    *,
+    start: bool = False,
 ) -> tuple[SiteCounts | None, str]:
     """The series' regular episodes placed on aniworld's index (the series
     its search gives Cinemeta's name, or the one under *slug*), with the
-    request's series *titles*, and a note: the search's relevant hits, or
-    why there are no counts."""
+    request's series *titles* (*start*: as right after a start), and a
+    note: the search's relevant hits, or why there are no counts."""
     listed = await _meta(http, f"{CINEMETA_URL}/meta/series/{imdb_id}.json")
     meta = cinemeta._reduce(listed) if listed is not None else None
     if meta is None:
@@ -648,6 +741,8 @@ async def aniworld_series(
         return None, f"aniworld lists no series for {meta.name!r}"
     slug, site_name, titles_found, index = found
     numbers = None
+    # Without the id list the anime ids cannot say: the position is unchecked
+    position_trusted = False
     if resolver is not None:
         places = [
             (e.season, e.episode)
@@ -655,6 +750,7 @@ async def aniworld_series(
             if e.season >= 1 and e.episode >= 1
         ]
         numbers = await kitsu_numbers(resolver, imdb_id, places)
+        position_trusted = await resolver.has_whole_series_entry(imdb_id) is False
     if titles_found:
         note = f"search {meta.name!r}: " + ", ".join(map(repr, titles_found))
     else:
@@ -666,6 +762,8 @@ async def aniworld_series(
         index,
         meta,
         numbers,
+        position_trusted=position_trusted,
+        start=start,
         site_name=site_name,
         titles=titles,
     )
@@ -694,12 +792,16 @@ async def _site_counts(
     slug: str | None,
     tmdb: TmdbClientPort,
     languages: list[str],
+    *,
+    start: bool = False,
 ) -> tuple[SiteCounts | None, str]:
     """``aniworld_series`` with the request's titles, a failed read named
     in the note."""
     try:
         titles = await request_titles(tmdb, imdb_id, languages)
-        return await aniworld_series(http, plugin, resolver, imdb_id, slug, titles)
+        return await aniworld_series(
+            http, plugin, resolver, imdb_id, slug, titles, start=start
+        )
     except (httpx.HTTPError, ValueError) as exc:
         return None, f"failed ({type(exc).__name__})"
 
@@ -720,7 +822,11 @@ async def site_series(http: httpx.AsyncClient) -> tuple[list[str], list[str]]:
 
 
 async def aniworld_main(
-    imdb_ids: list[str], slugs: Mapping[str, str], *, cases: int = 5
+    imdb_ids: list[str],
+    slugs: Mapping[str, str],
+    *,
+    cases: int = 5,
+    start: bool = False,
 ) -> None:
     config = load_config(cli_overrides={"plugin_dir": _REPO / "plugins"})
     registry = PluginRegistry(config.plugin_dir)
@@ -758,22 +864,27 @@ async def aniworld_main(
                     slugs.get(imdb_id),
                     tmdb,
                     languages,
+                    start=start,
                 )
                 if counts is not None:
                     found.append((imdb_id, counts))
                 notes.append(f"{imdb_id}: {note}")
     finally:
         await plugin.cleanup()
-    print("\n".join(site_report(found, cases)))
+    print("\n".join(site_report(found, cases, start=start)))
     for note in notes:
         print(note)
 
 
-def site_report(found: list[tuple[str, SiteCounts]], cases: int) -> list[str]:
-    """The table per series (by IMDb id), the share over them and *cases*
-    of each series' N26 cases and placements at another row."""
-    lines = [_SITE_HEADER]
-    lines.extend(site_row(imdb_id, counts) for imdb_id, counts in found)
+def site_report(
+    found: list[tuple[str, SiteCounts]], cases: int, *, start: bool = False
+) -> list[str]:
+    """The table per series (by IMDb id; *start*: the ``--start`` table),
+    the share over them and *cases* of each series' N26 cases and
+    placements at another row."""
+    lines = [_START_HEADER if start else _SITE_HEADER]
+    row = start_row if start else site_row
+    lines.extend(row(imdb_id, counts) for imdb_id, counts in found)
     lines.append(share_line(counts for _, counts in found))
     for imdb_id, counts in found:
         for label, listed in (
@@ -855,6 +966,12 @@ def _parser() -> argparse.ArgumentParser:
         default=5,
         help="with --aniworld: the cases shown per series and kind",
     )
+    parser.add_argument(
+        "--start",
+        action="store_true",
+        help="with --aniworld: the references as right after a start (no Kitsu"
+        " number, every position unchecked), judged by the Kitsu number (row 95)",
+    )
     return parser
 
 
@@ -866,6 +983,6 @@ if __name__ == "__main__":
     args = _parser().parse_args()
     if args.aniworld:
         slugs = dict(item.split("=", 1) for item in args.slug)
-        asyncio.run(aniworld_main(args.imdb, slugs, cases=args.cases))
+        asyncio.run(aniworld_main(args.imdb, slugs, cases=args.cases, start=args.start))
     else:
         asyncio.run(main(args.kitsu, position=args.position))

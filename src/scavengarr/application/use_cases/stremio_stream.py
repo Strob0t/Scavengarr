@@ -293,12 +293,14 @@ class StremioStreamUseCase:
             # 2. Titles: one per language the selected plugins search in,
             # and the episode's Kitsu number alongside
             languages = self._titles.languages(selected)
-            (title_infos, meta), absolute = await asyncio.gather(
+            (title_infos, meta), (absolute, position_trusted) = await asyncio.gather(
                 self._titles.title_infos(request, languages),
-                self._kitsu_number(request, absolute),
+                self._numbering(request, absolute),
             )
             titles = self._titles.series_titles(title_infos, languages)
-            episode_ref = self._episode_ref(request, meta, absolute, titles)
+            episode_ref = self._episode_ref(
+                request, meta, absolute, titles, position_trusted=position_trusted
+            )
 
             primary_title_info = first_available_title(title_infos, languages)
             metadata.outcome = "not_found" if primary_title_info is None else "found"
@@ -412,15 +414,24 @@ class StremioStreamUseCase:
         stage.outcome = "streams" if streams else "empty"
         return StreamAnswer(streams, source, complete, progress.missing)
 
-    async def _kitsu_number(
+    async def _numbering(
         self, request: StremioStreamRequest, absolute: int | None
-    ) -> int | None:
+    ) -> tuple[int | None, bool]:
         """The episode's number as Kitsu counts it: a ``kitsu:`` request's
         own (*absolute*), else the one the anime ids give an IMDb anime
-        episode (the anime sites count by it)."""
-        if absolute is not None:
-            return absolute
-        return await self._anime_ids.kitsu_episode(request)
+        episode (the anime sites count by it); and whether the catalog's
+        position counts as the sites do where that number is missing or
+        gives way: only for a series no Kitsu entry counts whole (code
+        review of 2026-10-12, finding 1)."""
+        if absolute is None:
+            absolute = await self._anime_ids.kitsu_episode(request)
+            if absolute is not None:
+                # Its entry counts the series whole
+                return absolute, False
+        if request.season is None or request.episode is None:
+            return absolute, False
+        whole_series = await self._anime_ids.has_whole_series_entry(request.imdb_id)
+        return absolute, whole_series is False
 
     def _episode_ref(
         self,
@@ -428,17 +439,27 @@ class StremioStreamUseCase:
         meta: SeriesMeta | None,
         absolute: int | None,
         titles: tuple[str, ...],
+        *,
+        position_trusted: bool,
     ) -> EpisodeRef | None:
         """The episode's placement for the plugins that locate episodes (the
-        title and air date from the Cinemeta list, the absolute number, the
-        request's series titles), logged when there is one."""
-        ref = self._titles.episode_ref(request, meta, absolute=absolute, titles=titles)
+        title and air date from the Cinemeta list, the absolute number and
+        its source, the request's series titles), logged when there is
+        one."""
+        ref = self._titles.episode_ref(
+            request,
+            meta,
+            absolute=absolute,
+            position_trusted=position_trusted,
+            titles=titles,
+        )
         if ref is not None:
             log.debug(
                 "stremio_episode_ref",
                 season=ref.season,
                 episode=ref.episode,
                 absolute=ref.absolute,
+                source=ref.source,
                 has_title=ref.title is not None,
             )
         return ref

@@ -751,6 +751,7 @@ class TestLocatesEpisodes:
                 "season": 5,
                 "episode": 2,
                 "absolute": 62,
+                "absolute_source": "position",
                 "site_season": 2,
                 "site_episode": 1,
                 "located_by": "number",

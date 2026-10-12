@@ -543,8 +543,32 @@ class TestEpisodeRef:
         ref = TitleResolver.episode_ref(_series(), _one_piece())
 
         assert ref == EpisodeRef(
-            season=5, episode=2, title=_LABOON, aired="2001-03-21", absolute=62
+            season=5,
+            episode=2,
+            title=_LABOON,
+            aired="2001-03-21",
+            absolute=62,
+            source="unchecked",
         )
+
+    def test_a_position_where_no_kitsu_entry_counts_the_series_whole(self) -> None:
+        # The anime ids know no such entry (Duel Monsters): the sites count
+        # as the catalog does, as far as anything knows
+        ref = TitleResolver.episode_ref(_series(), _one_piece(), position_trusted=True)
+
+        assert ref is not None
+        assert (ref.absolute, ref.source) == (62, "position")
+
+    def test_a_position_while_the_kitsu_number_is_unknown_is_unchecked(
+        self,
+    ) -> None:
+        """Code review of 2026-10-12, finding 1: the id list not in memory
+        (a start, the hour after a failed download) or the episode not
+        mapped yet; on a long runner the position may be one off."""
+        ref = TitleResolver.episode_ref(_series(), _one_piece())
+
+        assert ref is not None
+        assert (ref.absolute, ref.source) == (62, "unchecked")
 
     def test_the_order_of_the_list_does_not_count(self) -> None:
         meta = _one_piece()
@@ -563,7 +587,9 @@ class TestEpisodeRef:
         # off at times (One Piece: 1089 where the list says 1088)
         ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=given)
 
-        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=given)
+        assert ref == EpisodeRef(
+            5, 2, _LABOON, "2001-03-21", absolute=given, source="kitsu"
+        )
 
     @pytest.mark.parametrize("given", [2, 56, 68, 1089])
     def test_a_season_entrys_number_gives_way_to_the_position(self, given: int) -> None:
@@ -571,7 +597,10 @@ class TestEpisodeRef:
         # the fifth season is no absolute number
         ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=given)
 
-        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62)
+        # The number that gave way says nothing about the position's
+        assert ref == EpisodeRef(
+            5, 2, _LABOON, "2001-03-21", absolute=62, source="unchecked"
+        )
 
     def test_a_special_has_no_absolute_number(self) -> None:
         request = make_request(
@@ -600,7 +629,7 @@ class TestEpisodeRef:
 
         ref = TitleResolver.episode_ref(request, _one_piece(), absolute=1090)
 
-        assert ref == EpisodeRef(22, 90, None, None, absolute=1090)
+        assert ref == EpisodeRef(22, 90, None, None, absolute=1090, source="kitsu")
 
     def test_the_reference_carries_the_requests_titles(self) -> None:
         """A plugin tells a parent series by them (``is_partial_title``)."""
