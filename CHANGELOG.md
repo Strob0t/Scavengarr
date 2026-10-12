@@ -4,6 +4,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Fixed: A Link-Out the Browser Resolves No Longer Counts as an Unsolved Challenge
+- `HttpxPluginBase._resolve_redirect()` hands a link-out that meets a Cloudflare challenge to the browser fetcher; it marked the challenge but never settled it, so every such search counted in `challenges_unsolved`, whatever the browser did. It now settles with the browser's outcome: solved when the browser returned the target, unsolved without one (as `_fetch_via_browser()` does for pages). Affects sto (its own link-outs) and byte and kinox (through `_resolve_own_links()`); their `challenges_unsolved` counts from before this fix overstate the misses.
+
+---
+
 ## v0.4.0 - 2026-10-12
 
 Anime and the right episode: the Kitsu catalogs' ids, an anime episode's absolute number from Kitsu (for IMDb requests too; an episode 0 entry no longer shifts it), aniworld and sto placing the episode on the site's own season pages, and a series filter that keeps other series and episodes out. Playback through Scavengarr: address-bound direct files (DoodStream, MixDrop, Vinovo, FSST) go through a byte-range file proxy, the HLS proxy keeps three segments ahead, and the browser captures keep the players' ad tags out. Cut searches continue in the background under an answer budget of their own, resolutions and circuit breakers outlive a restart, the plugins' long-term record counts results, timeouts, challenges and dead sites, and quality and size come from the stream itself. Also the filmo plugin, two resolvers for moflix's mirrors, the sites' official domain lists, every setting from the environment, a published multi-arch image (`ghcr.io/strob0t/scavengarr`), Dependabot, alert rules, and the production diagnostics' digest, Stremio round and post-deploy check.

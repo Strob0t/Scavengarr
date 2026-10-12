@@ -778,9 +778,12 @@ class HttpxPluginBase:
                 resp.status_code, resp.text
             ):
                 self._mark_cf_blocked(current)
-                return await fetcher.resolve_redirect(
+                target = await fetcher.resolve_redirect(
                     current, timeout=_BROWSER_FETCH_TIMEOUT_S
                 )
+                # The browser got past the challenge when it found the target
+                settle_challenge(solved=target is not None)
+                return target
             self._log.debug(
                 f"{self.name}_no_redirect",
                 url=current,

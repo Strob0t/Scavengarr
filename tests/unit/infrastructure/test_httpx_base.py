@@ -611,6 +611,51 @@ class TestChallengeFlag:
         assert flag.seen is True
         assert flag.unsolved_search is True
 
+    async def _link_out(
+        self, monkeypatch: pytest.MonkeyPatch, target: str | None
+    ) -> tuple[str | None, ChallengeFlag]:
+        """A link-out answered with a challenge, which the browser resolves
+        to *target*."""
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.resolve_redirect = AsyncMock(return_value=target)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/external/abc").respond(403, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                found = await plugin._resolve_redirect(
+                    "https://example.com/external/abc"
+                )
+        finally:
+            challenge_flag.reset(token)
+        fetcher.resolve_redirect.assert_awaited_once()
+        return found, flag
+
+    @respx.mock
+    async def test_a_link_out_the_browser_resolves_is_solved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        found, flag = await self._link_out(monkeypatch, "https://hoster.example/e/1")
+
+        assert found == "https://hoster.example/e/1"
+        assert flag.seen is True
+        # The browser got past it (row 88: it stayed open, so unsolved)
+        assert flag.unsolved_search is False
+
+    @respx.mock
+    async def test_a_link_out_the_browser_does_not_resolve_is_unsolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        found, flag = await self._link_out(monkeypatch, None)
+
+        assert found is None
+        assert flag.seen is True
+        assert flag.unsolved_search is True
+
     @respx.mock
     async def test_an_error_page_leaves_the_flag(
         self, monkeypatch: pytest.MonkeyPatch
