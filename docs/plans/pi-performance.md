@@ -304,6 +304,44 @@ The paragraph that waited for this (the read-ahead metrics and the player's answ
 
 **Limits.** One title and one run from the Pi, 10 segments per run; one connection's pace varied from 0.1 to 2.0 Mbit/s per segment. The maintainer's playback numbers come from production's logs and metrics, not from the probe.
 
+## The capture's autoplay wait (2026-10-12, row 103)
+
+**Question.** Every browser capture first waits `_MEDIA_AUTOPLAY_WAIT_S` (3 s, `_start_player` in `src/scavengarr/infrastructure/browser/stealth_pool.py`) for a player that starts itself, then clicks the player. A click the player does not take costs the next wait, `_MEDIA_CLICK_WAIT_S` (5 s). Row 96's production round (`docs/plans/challenge-reactions.md` → R7) had 10 Filemoon captures end at the 10 s bound without a mark, and 6 of its 7 streams at 5.9 to 10.3 s. Per hoster: does a shorter wait bring the stream sooner, without more clicks, popups or missed clicks?
+
+**Measurement (dev container, 18:43 to 18:56 UTC).** `scripts/probes/capture_timing.py --autoplay-wait S --runs 2 --diagnose`, each invocation in a browser of its own: run 1 cold (a fresh context), run 2 warm (the same context). One link per capture resolver from `scripts/probes/resolver_urls.py` (collected at 18:42; Filemoon's is a Byse link) and one filemoon.to link. The waits 3, 1.5 and 0.5 s ran in two passes of opposite order; Filemoon's two hosts ran twice more at 3 and 1.5 s, and once each with `--restore` at 3 and 1.5 s (a run, then a cold control and a context restored from the kept state, each in a relaunched browser, as after a restart). A screening at 3 s found these six captures: VidHide's and Vidoza's links went no further than HTTP, and the other resolvers do not capture. The wait starts when the page's navigation ends (0.4 to 2.2 s in). Times are seconds after the resolution's start:
+
+| Hoster | Wait | Cold: first click | Cold: stream | Warm: first click | Warm: stream | First click missed |
+|---|---|---|---|---|---|---|
+| Filemoon (Byse) | 3 s | 3.5 to 3.7 s | 4.4, 4.8, 5.4, 5.4, 6.6, 7.0 s | none | 1.3 to 1.4 s (4 runs); restored 1.8 s | 0 of 6 |
+| | 1.5 s | 2.0 to 2.2 s | 2.9, 2.9, 3.5, 3.5, 4.3, 4.4 s | none | 1.3 to 1.4 s (4 runs); restored 1.9 s | 0 of 6 |
+| | 0.5 s | 1.1 s | 7.3, 7.6 s | 0.9 s | 1.4, 1.4 s | 2 of 2 cold |
+| Filemoon (filemoon.to) | 3 s | 3.9 to 4.0 s | 5.0, 5.8, 5.9, 6.5, 7.7, 8.4 s | none | 1.6 to 2.5 s (4 runs); restored 2.2 s | 0 of 6 |
+| | 1.5 s | 2.4 to 2.5 s | 3.5, 4.3, 6.4, 7.0, 7.1, 13.0 s | none | 1.6 to 1.8 s (4 runs); restored 2.2 s | 0 of 6 |
+| | 0.5 s | 1.4 s | 7.7, 8.7 s | 1.1 s | 1.7, 1.7 s | 2 of 2 cold |
+| DoodStream | 3 s | 3.8 s | 3.8, 3.8 s | 3.5 s | 3.5, 3.6 s | 0 |
+| | 1.5 s | 2.3 to 2.4 s | 2.3, 2.4 s | 2.0 s | 2.1, 2.1 s | 0 |
+| | 0.5 s | 1.3 s | 1.3, 1.3 s | 1.0 to 1.1 s | 1.1, 1.1 s | 0 |
+| Vixeo | 3 s | 3.7, 5.2 s | 3.7, 5.2 s | 3.6, 4.1 s | 3.6, 4.1 s | 0 |
+| | 1.5 s | 2.2, 3.2 s | 2.3, 3.2 s | 2.2, 2.4 s | 2.2, 2.4 s | 0 |
+| | 0.5 s | 1.3, 1.4 s | 1.3, 1.4 s | 1.1, 1.2 s | 1.1, 1.2 s | 0 |
+| Dropload | 3 s | 3.5 s | 4.6, 4.6 s | none | 0.6, 0.6 s | 0 |
+| | 1.5 s | 2.0 s | 8.0, 8.1 s | none | 0.6, 0.6 s | 2 of 2 cold |
+| | 0.5 s | 1.0 s | 7.1, 7.1 s | none | 0.6, 0.6 s | 2 of 2 cold |
+| SuperVideo | each | none | 0.7 to 0.9 s (6 runs) | none | 0.5 to 0.6 s (6 runs) | – |
+
+No popup in the 88 runs with `--diagnose` (the 12 `--restore` runs ran without it).
+
+**Reading.**
+- **DoodStream and Vixeo take the first click whenever it comes.** The stream request follows the click within 0.1 s, cold and warm, so the wait is the stream's delay. With 0.5 s the stream came at 1.1 to 1.4 s, against 3.5 to 5.2 s with 3 s, without a missed click or a popup.
+- **Filemoon's player starts itself when warm**, in the same context or restored from a kept state (production's case after row 96's restart). None of these 20 runs at 3 and 1.5 s clicked, and the stream came at 1.3 to 2.5 s, inside the wait; at 0.5 s a warm click at 0.9 to 1.1 s came first, with the stream at 1.4 to 1.7 s, as without it.
+- **A cold Filemoon capture needs the click for its captcha**, which follows it 0.2 to 0.4 s later. With 1.5 s the first click came 1.5 s sooner and was taken in 12 of 12 cold runs. Byse's stream came at a median 3.5 s instead of 5.4 s. filemoon.to's came at 6.7 s instead of 6.2 s: its captcha's verify came at about the same time after the start whenever the click came (median 6.2 s with 1.5 s, 5.8 s with 3 s), once only at 12.5 s after two more clicks. With 0.5 s the click at 1.1 to 1.4 s came before the player took it (4 of 4 cold runs); the next click came 5 s later, and the stream at 7.3 to 8.7 s.
+- **Dropload needs about 3 s when cold.** Its Turnstile frame shows at 0.6 s; a click at 2.0 or 1.0 s went unanswered (4 of 4 cold runs), and the stream came at 7.1 to 8.1 s against 4.6 s. Warm, its player starts itself at 0.6 s.
+- **SuperVideo starts itself** at 0.5 to 0.9 s: its stream comes before the wait ends.
+
+**What it means for the change (after the Pi runs and Mr. Fable's go).** A wait per resolver, from the dev numbers: 0.5 s for DoodStream and Vixeo, 3 s kept for Dropload and SuperVideo. For Filemoon, 1.5 s helps a cold capture on one of its two hosts, and in the dev container it does not matter warm, production's case. Whether it matters on the Pi is the Pi runs' question: the idle Pi's warm filemoon.to run of 17:49 (`docs/plans/challenge-reactions.md` → R4) clicked at 5.1 s and found the stream at 6.5 s, so there the warm player had not started itself 3 s after its page. Whether a click 1.5 s after the page brings it sooner there, or comes too early, the dev numbers cannot tell.
+
+**Limits.** The dev container: a fast CPU, page loads of 0.2 to 2.1 s. One link per hoster, two to six runs per cell, within 13 minutes. A Pi's page and player are slower, so a wait the player takes in the dev container can come too early there, and a missed click costs 5 s.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:
