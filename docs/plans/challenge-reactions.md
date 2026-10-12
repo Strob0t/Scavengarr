@@ -91,6 +91,8 @@ Dev proof with the app's registry and resolvers (a fresh context per attempt, on
 
 Limits: the dev container, one link per hoster, one run each; the short bounds stand in for production's 10 s against the Pi's cold captures of 13.3 to 17.8 s. Production after the deploy is task 2.7.
 
+**Deployed 2026-10-12 10:39:09 UTC (7c23863).** The first production completion came with the post-deploy check's movie request: hdfilme's Dropload link fell back to the browser at 10:39:43 (`dropload_captcha_browser_fallback`), was marked `turnstile` and cut at the bound at 10:39:52 (`challenge`, cooldown 60 s). The capture ran on and ended at 10:40:05 without a stream (`dropload_browser_no_stream`), 22 s after its start and 13 s after the cut, before the 20 s deadline: its own waits (the autoplay wait, then 3 clicks with 5 s each, `_start_player`) ran out. So `hoster_challenge_unsolved` with a 300 s cooldown, `hoster_challenge_completion_total{outcome="none",resolver="dropload"}` 1, and the breaker untouched; the next Dropload link (10:40:10) waited out the cooldown (`left_s=295`). One sample. In dev the same capture streamed 4.4 to 9.5 s after its start in 6 of 6 runs, so on the Pi either the Turnstile pass or the player after it differs; the day's outcomes (task 2.7 with 1.10) tell which.
+
 ### R3: a capture budget of its own (gaps 1 and 3)
 
 - **What:** a separate time bound for captures, or simply production's resolve bound raised: `http.timeout_resolve_seconds` 25 in the Pi's YAML, against the default of 15.
@@ -177,6 +179,7 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
 
   - The launch took 0.3 s in the dev container (about 9 s on the Pi). A run with an empty cache logged the launch and `stealth_pool_started` 0.7 s after `app_startup_complete` and no restore line; a run whose port was taken shut down during the warm-up without an error.
   - **Production (10d43f4, deployed 2026-10-12 10:11:59 UTC):** `app_startup_complete` 10:11:59, `shared_browser_launched` and `stealth_pool_started` 10:12:06 (7 s on the Pi), the first Stremio request 10:12:25 (the post-deploy check), so no capture waited for the launch. No `capture_state_restored`: no capture has kept a state yet. The restore brought Filemoon's breaker back open (`hoster_resolve_circuit_open` from 10:12:26, due at about 10:57:20), so its next trial is the first with the browser up since the start.
+  - **The first kept state across a restart (7c23863, 10:39:16 UTC):** `capture_state_restored hosts=['vixeo.io']` right after `shared_browser_launched`, before `stealth_pool_started`. It is Vidsonic's player (the Vixeo resolver); its capture streamed at 10:12:57 in 10d43f4 (`hoster_resolve_success hoster=vidsonic`, 1768 ms), most likely the save (that container's log went with it), and the start of 10:11:59 had restored none. So the save and the restore work in production. Task 3.2 still needs a Filemoon or Dropload capture that keeps a state, and the restart after it.
 
 ### R5: warm-up after a start (gap 5)
 
