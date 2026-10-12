@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Capture Probe Uses the App's Challenge Rule and Store
+- `scripts/probes/capture_timing.py` marked a run's challenges by its own rule (any request to Cloudflare's challenge host, any `captcha` path segment) and `--restore` copied the context state into its own context, beside `ClearanceStore`. It now judges each request with the stealth pool's rule (`_challenge_of`: a captcha provider's challenge frame, or a request matching the resolver's own captcha pattern, which the probe's pool takes from the capture; the hoster captcha is still split into `captcha` and `captcha/verify`), and `--restore` keeps the state under every host it names through the app's `ClearanceStore` in a temporary directory, from which the app's own context creation starts the `restored` run. What it measures stays: a control and a restored run of the whole state (code review of 2026-10-12; backlog row 99). Dev container, one Filemoon link, `--runs 1 --restore`: run 1 and the control met `captcha, captcha/verify` (5.3 s, 4.4 s), the restored run none (1.9 s), as in row 91's measurement.
+
 ### Changed: The Filemoon Captcha-Pattern Test Mocks HTTP With respx
 - `test_the_players_captcha_requests_are_named` (`tests/unit/infrastructure/test_filemoon_resolver.py`) served the embed page from an `AsyncMock` client, against the respx rule for resolver tests (AGENTS.md §6). It now runs the resolver on a real `httpx.AsyncClient` with the Byse embed page and details API mocked by respx, and reads the pattern from the recording `_FakePool` (code review of 2026-10-12; backlog row 99).
 

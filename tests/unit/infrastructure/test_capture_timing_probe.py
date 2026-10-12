@@ -19,6 +19,7 @@ import pytest
 
 from scavengarr.infrastructure.browser import stealth_pool as stealth
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia, StealthPool
+from scavengarr.infrastructure.hoster_resolvers.filemoon import _CAPTCHA_REQUESTS
 
 _PROBES = Path(__file__).resolve().parents[3] / "scripts" / "probes"
 
@@ -594,24 +595,47 @@ class TestBlocks:
 
 
 class TestChallenges:
-    def test_the_marks_of_the_players_captcha_and_the_turnstile_widget(self) -> None:
-        assert _mod.challenge_mark("https://byse.example/api/videos/x1y2/captcha") == (
-            "captcha"
-        )
-        assert _mod.challenge_mark(
-            "https://byse.example/api/videos/x1y2/captcha/verify?t=1"
-        ) == ("captcha/verify")
-        assert _mod.challenge_mark(
+    """The app's rule (``stealth_pool._challenge_of``): a captcha
+    provider's frame, or a request the resolver names as its hoster's own
+    captcha; the probe splits the latter into ``captcha`` and
+    ``captcha/verify``."""
+
+    def test_the_marks_of_the_players_captcha_and_the_turnstile_frame(self) -> None:
+        named = _CAPTCHA_REQUESTS
+        player = "https://byse.example/api/videos/x1y2"
+        turnstile = (
             "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile"
-        ) == ("turnstile")
-        assert _mod.challenge_mark("https://byse.example/e/captchas") is None
-        assert (
-            _mod.challenge_mark("https://challenges.cloudflare.com.llvpn.com/x") is None
         )
+
+        assert _mod.challenge_mark(_Request(f"{player}/captcha"), named) == "captcha"
+        assert _mod.challenge_mark(_Request(f"{player}/captcha/verify?t=1"), named) == (
+            "captcha/verify"
+        )
+        assert _mod.challenge_mark(_Request(turnstile, "document"), named) == (
+            "turnstile"
+        )
+        # The widget's script is no challenge frame
+        assert _mod.challenge_mark(_Request(turnstile, "script"), named) is None
+        assert (
+            _mod.challenge_mark(_Request("https://byse.example/e/captchas"), named)
+            is None
+        )
+        assert (
+            _mod.challenge_mark(
+                _Request("https://challenges.cloudflare.com.llvpn.com/x", "document"),
+                named,
+            )
+            is None
+        )
+
+    def test_without_the_resolvers_pattern_no_captcha_is_named(self) -> None:
+        request = _Request("https://byse.example/api/videos/x1y2/captcha")
+
+        assert _mod.challenge_mark(request, None) is None
 
     def test_a_run_notes_each_challenge_once_in_order(self) -> None:
         page, run = _Page(), _mod.Run(0.0)
-        _mod.watch_challenges(page, run)
+        _mod.watch_challenges(page, run, lambda: _CAPTCHA_REQUESTS)
 
         for url in (
             "https://byse.example/e/abc",
@@ -637,10 +661,28 @@ class TestChallenges:
         await pool._navigate(
             page, "https://byse.example/e/abc", wait_until="commit", timeout_ms=1
         )
-        page.emit("request", _Request("https://challenges.cloudflare.com/turnstile"))
+        page.emit(
+            "request",
+            _Request("https://challenges.cloudflare.com/turnstile", "document"),
+        )
 
         assert pool.run.challenges == ["turnstile"]
         assert "popup" not in page.handlers
+
+    async def test_the_pool_takes_the_resolvers_captcha_pattern(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def capture(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(StealthPool, "capture_media", capture)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+
+        await pool.capture_media(
+            "https://byse.example/e/abc", challenge_requests=_CAPTCHA_REQUESTS
+        )
+
+        assert pool.named is _CAPTCHA_REQUESTS
 
 
 _STATE: dict[str, Any] = {
@@ -693,7 +735,17 @@ class TestState:
         assert await pool.saved_state() is _STATE
         context.storage_state.assert_awaited_once_with(indexed_db=True)
 
-    async def test_a_restored_context_starts_from_the_state(self) -> None:
+    def test_the_state_is_kept_under_every_host_it_names(self) -> None:
+        assert _mod.state_hosts(_STATE) == {
+            "byse.example",
+            "203.0.113.7",
+            "player.byse.example",
+            "filemoon.example",
+        }
+
+    async def test_a_restored_context_starts_from_the_stores_state(
+        self, tmp_path: Path
+    ) -> None:
         context = MagicMock()
         context.route = AsyncMock()
         chromium = MagicMock()
@@ -701,13 +753,19 @@ class TestState:
         chromium.new_context = AsyncMock(return_value=context)
         browser = MagicMock()
         browser.warmup = AsyncMock(return_value=(chromium, None))
-        pool = _mod.TimedStealthPool(browser_pool=browser)
-        pool.storage = _STATE
 
-        assert await pool._ensure_context() is context
-        assert await pool._ensure_context() is context
+        async with _mod.kept_state(_STATE, tmp_path) as store:
+            pool = _mod.TimedStealthPool(browser_pool=browser, clearance_store=store)
+            assert await pool._ensure_context() is context
+            assert await pool._ensure_context() is context
 
-        chromium.new_context.assert_awaited_once_with(
-            service_workers="block", storage_state=_STATE
+        chromium.new_context.assert_awaited_once()
+        restored = chromium.new_context.await_args.kwargs["storage_state"]
+        # The whole state, through the app's store
+        assert sorted(c["name"] for c in restored["cookies"]) == sorted(
+            c["name"] for c in _STATE["cookies"]
+        )
+        assert sorted(o["origin"] for o in restored["origins"]) == sorted(
+            o["origin"] for o in _STATE["origins"]
         )
         context.route.assert_awaited_once()

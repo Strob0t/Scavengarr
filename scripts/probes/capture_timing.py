@@ -22,16 +22,19 @@ at the latest, the whole probe after its runs' share plus a minute, and at
 exit the probe kills every process it started. Per run it prints the pages
 the browser loaded (the path's first segment, when the load started, how
 long it took), the clicks on the player, when the stream was captured (its
-CDN's domain), the challenges the run met (the player's ``captcha`` and
-``captcha/verify`` requests, ``turnstile`` for a request to Cloudflare's
-challenge host) and the resolver's whole time, then production's two
+CDN's domain), the challenges the run met by the app's rule (a captcha
+provider's challenge frame such as ``turnstile``, or a request the resolver
+names as its hoster's captcha, split into ``captcha`` and
+``captcha/verify``) and the resolver's whole time, then production's two
 bounds. ``--restore`` adds two runs after the others: it takes their
-context's state (cookies, local storage and IndexedDB, in memory only) and
-prints its make-up (the cookies' names per domain, ids masked, and the
-keys and databases per origin, no values), then resolves the link once
-more in a relaunched browser in a fresh context (the cold ``control``) and
-once in a relaunched browser in a context restored from the state
-(``restored``), as after a restart of the app. ``--diagnose`` adds per run
+context's state (cookies, local storage and IndexedDB) and prints its
+make-up (the cookies' names per domain, ids masked, and the keys and
+databases per origin, no values), keeps it under every host it names
+through the app's ``ClearanceStore`` (in a temporary directory, deleted at
+the end), then resolves the link once more in a relaunched browser in a
+fresh context (the cold ``control``) and once in a relaunched browser
+whose context the app creates from the store (``restored``), as after a
+restart of the app. ``--diagnose`` adds per run
 the page's requests (domain, path with its ids masked as
 ``/api/videos/<id>/embed/playback``, resource type, and the status,
 ``redirect``, the browser's error or ``pending``) and, after the clicks,
@@ -50,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import os
@@ -61,7 +65,7 @@ import tempfile
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -72,9 +76,10 @@ import structlog
 
 from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
 from scavengarr.infrastructure.browser import stealth_pool as stealth
-from scavengarr.infrastructure.browser.hardening import block_heavy_resources
+from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia, StealthPool
+from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.config import load_config
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
@@ -84,7 +89,7 @@ from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolv
 from scavengarr.interfaces.composition import build_http_client
 
 if TYPE_CHECKING:
-    from patchright.async_api import BrowserContext, StorageState
+    from patchright.async_api import StorageState
 
 RUN_LIMIT_S = 90.0
 MIN_AVAILABLE = 1024 * 1048576  # bytes of memory left for the second browser
@@ -112,10 +117,8 @@ _FRAME_READ_S = 3.0
 # --block: the browser's error for a request the probe aborted (Chromium
 # names it net::ERR_BLOCKED_BY_CLIENT.Inspector: the block came over DevTools)
 _BLOCKED_ERROR = "net::ERR_BLOCKED_BY_CLIENT"
-# The challenges a run meets: Cloudflare's challenge host (the Turnstile
-# widget), and the player's captcha path segment
-_CHALLENGE_HOST = "challenges.cloudflare.com"
-_CAPTCHA = "captcha"
+# A hoster captcha's verification request (the player's answer)
+_CAPTCHA_VERIFY = "/captcha/verify"
 # Asked in each frame after the clicks: the player's video element (its
 # MediaError code and network state) and what the browser can play
 _FRAME_CHECK = """() => {
@@ -358,25 +361,26 @@ class Run:
     challenges: list[str] = field(default_factory=list)  # challenge_mark()s
 
 
-def challenge_mark(url: str) -> str | None:
-    """The challenge a request to *url* belongs to: ``turnstile``,
-    ``captcha`` or ``captcha/verify``; None for any other request."""
-    parts = urlsplit(url)
-    if (parts.hostname or "").lower() == _CHALLENGE_HOST:
-        return "turnstile"
-    segments = [segment for segment in parts.path.split("/") if segment]
-    if _CAPTCHA not in segments:
-        return None
-    after = segments.index(_CAPTCHA) + 1
-    verify = segments[after : after + 1] == ["verify"]
-    return f"{_CAPTCHA}/verify" if verify else _CAPTCHA
+def challenge_mark(request: Any, named: re.Pattern[str] | None) -> str | None:
+    """The challenge *request* shows by the app's rule (``_challenge_of``):
+    a captcha provider's frame (``turnstile``, ``hcaptcha``, ``recaptcha``),
+    or a request *named* as the hoster's captcha, ``captcha`` or
+    ``captcha/verify``; None for any other request."""
+    kind = stealth._challenge_of(request, named)
+    if kind != "hoster_captcha":
+        return kind
+    verify = _CAPTCHA_VERIFY in urlsplit(request.url).path
+    return "captcha/verify" if verify else "captcha"
 
 
-def watch_challenges(page: Any, run: Run) -> None:
-    """Note in *run* each challenge *page* meets, once, in order."""
+def watch_challenges(
+    page: Any, run: Run, named: Callable[[], re.Pattern[str] | None]
+) -> None:
+    """Note in *run* each challenge *page* meets, once, in order; *named*
+    gives the running resolver's captcha pattern."""
 
     def requested(request: Any) -> None:
-        mark = challenge_mark(request.url)
+        mark = challenge_mark(request, named())
         if mark is not None and mark not in run.challenges:
             run.challenges.append(mark)
 
@@ -477,8 +481,8 @@ class TimedStealthPool(StealthPool):
     run: Run | None = None
     diagnose: bool = False
     blocked: tuple[str, ...] = ()
-    # --restore: the state the next context starts from
-    storage: StorageState | None = None
+    # The running resolver's captcha pattern (``challenge_requests``)
+    named: re.Pattern[str] | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -512,22 +516,6 @@ class TimedStealthPool(StealthPool):
             )
         return loaded
 
-    async def _ensure_context(self) -> BrowserContext:
-        if self.storage is None:
-            return await super()._ensure_context()
-        # The app's context, started from the state
-        async with self._lock:
-            if not self._context_is_usable():
-                browser, _ = await self._browser_pool.warmup()
-                context = await browser.new_context(
-                    service_workers="block", storage_state=self.storage
-                )
-                await context.route("**/*", block_heavy_resources)
-                self._browser, self._context = browser, context
-                self._user_agent = None
-            assert self._context is not None
-            return self._context
-
     async def saved_state(self) -> StorageState | None:
         """The context's cookies, local storage and IndexedDB; None before
         the first page."""
@@ -537,7 +525,7 @@ class TimedStealthPool(StealthPool):
 
     async def _prepare(self, page: Any) -> None:
         if self.run is not None:
-            watch_challenges(page, self.run)
+            watch_challenges(page, self.run, lambda: self.named)
             if self.diagnose:
                 watch_requests(page, self.run)
                 count_popups(page, self.run)
@@ -554,6 +542,7 @@ class TimedStealthPool(StealthPool):
 
     async def capture_media(self, url: str, **kwargs: Any) -> CapturedMedia | None:
         # The image's own parameters, whichever version runs the probe
+        self.named = kwargs.get("challenge_requests")
         media = await super().capture_media(url, **kwargs)
         if self.run is not None and media is not None:
             self.run.stream_at = time.monotonic() - self.run.started
@@ -746,6 +735,27 @@ async def timed_run(
     return run
 
 
+def state_hosts(state: Mapping[str, Any]) -> set[str]:
+    """Every host *state* names: its cookies' domains and its origins'
+    hosts (kept under all of them, the store keeps the whole state)."""
+    cookies = state.get("cookies") or []
+    origins = state.get("origins") or []
+    hosts = {str(c.get("domain", "")).lstrip(".").lower() for c in cookies}
+    hosts |= {urlsplit(str(o.get("origin", ""))).hostname or "" for o in origins}
+    return hosts - {""}
+
+
+@contextlib.asynccontextmanager
+async def kept_state(
+    state: Mapping[str, Any], directory: Path
+) -> AsyncIterator[ClearanceStore]:
+    """A ``ClearanceStore`` over a cache in *directory* that keeps *state*."""
+    async with create_cache("diskcache", directory=str(directory)) as cache:
+        store = ClearanceStore(cache)
+        await store.keep_capture_state(state_hosts(state), state)
+        yield store
+
+
 async def restore_runs(
     pool: TimedStealthPool,
     browser: SharedBrowserPool,
@@ -760,18 +770,24 @@ async def restore_runs(
         return []
     print("\n".join(state_lines(state)))
     runs: list[tuple[int | str, Run]] = []
-    for label, storage in (("control", None), ("restored", state)):
-        await _close("stealth pool", pool.cleanup())
-        await _close("browser", browser.cleanup())
-        pool.storage = storage
-        started = time.monotonic()
-        await browser.warmup()
-        took = time.monotonic() - started
-        print(f"browser relaunched for the {label} run: {took:.1f} s")
-        print("\n".join(_TABLE))
-        run = await timed_run(pool, resolver, url)
-        runs.append((label, run))
-        print(report_row(label, run), flush=True)
+    with tempfile.TemporaryDirectory(prefix="capture-state-") as directory:
+        async with kept_state(state, Path(directory)) as store:
+            for label, kept in (("control", None), ("restored", store)):
+                await _close("stealth pool", pool.cleanup())
+                await _close("browser", browser.cleanup())
+                pool._clearance_store = kept
+                started = time.monotonic()
+                await browser.warmup()
+                took = time.monotonic() - started
+                print(f"browser relaunched for the {label} run: {took:.1f} s")
+                print("\n".join(_TABLE))
+                run = await timed_run(pool, resolver, url)
+                runs.append((label, run))
+                print(report_row(label, run), flush=True)
+            # The app keeps a captured stream's state in the background:
+            # done before the store's cache closes
+            await _close("stealth pool", pool.cleanup())
+            pool._clearance_store = None
     return runs
 
 
