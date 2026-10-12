@@ -13,6 +13,14 @@ Row 91 measured the premise on 2026-10-12, in the dev container and on the Pi (`
 
 The maintainer's decision of 2026-10-12 07:02 UTC: R4 with R5 (backlog row 91). R5 is needed only where a kept state turns out to expire.
 
+**The first capture after a start waits for the browser** (production, 2026-10-12, after R4's deploy at 08:54:40; backlog row 93). The shared browser launches at the first search's warm-up, so the first capture pays the launch inside its 10 s resolve bound:
+- 08:55:26: the first request (the post-deploy check) starts the launch.
+- 08:55:27: Filemoon's breaker trial starts, with a link of a stored search.
+- 08:55:35: the browser is up (`shared_browser_launched`), about 9 s after the launch began.
+- 08:55:37: the trial times out at the bound, and Filemoon's breaker reopens for 3600 s. Dropload and SuperVideo reopened in the same minute.
+
+A kept state cannot help a capture that has 2 s left. The browser is never closed when idle (only recycled after 200 pages), so starting it with the app costs nothing in steady state.
+
 ## What Changes
 
 - **Kept after a capture with a stream.**
@@ -24,14 +32,16 @@ The maintainer's decision of 2026-10-12 07:02 UTC: R4 with R5 (backlog row 91). 
   - A corrupt entry is dropped.
   - A failure to keep or restore costs a challenge, never a capture.
   - No value is logged.
-- **R5 is not built.** It waits for R7's numbers (backlog row 89) to show a cold capture after a restart despite a kept state.
+- **The browser starts with the app.** Once the app is ready, the shared browser and the stealth pool's context (with the kept state) start in the background (R5's first step, backlog row 93).
+- **R5's warm-up capture is not built.** It waits for R7's numbers (backlog row 89) to show a cold capture after a restart despite a kept state.
 
 ## Impact
 
 - **Affected specs:** new `browser-capture-state`.
 - **Affected code:**
   - `src/scavengarr/infrastructure/browser/clearance_store.py` (the capture states beside the clearance cookies; one `storage_state()` for the stealth pool's new context; `restore()` stays for the Playwright plugins' own contexts);
-  - `src/scavengarr/infrastructure/browser/stealth_pool.py` (`_ensure_context()` and the capture's stream path);
+  - `src/scavengarr/infrastructure/browser/stealth_pool.py` (`_ensure_context()`, the capture's stream path, a public `warmup()`);
+  - `src/scavengarr/interfaces/composition.py` (the lifespan starts the warm-up after `app_startup_complete` and ends it at shutdown);
   - their tests.
 - **Affected docs:** `docs/features/hoster-resolvers.md` (captures), `docs/plans/captcha-solving.md` (B3's clearance cookies now with the capture state), `docs/plans/challenge-reactions.md` (R4 built), `CHANGELOG.md`.
 - **Unchanged:**

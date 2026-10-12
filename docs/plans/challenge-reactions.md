@@ -144,6 +144,13 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
 - Filemoon keeps the player host's cookies and its localStorage and IndexedDB; the creation with them costs 0.1 s.
 - Not explained: Filemoon's second process (nothing in 40.2 s before any browser step) and the third's late page (5.8 s); both lie before the context, in the resolver's HTTP step. One link per hoster; the state was restored minutes after it was kept.
 - Production (task 3.2) waits for the deploy: the first Filemoon or Dropload capture after a restart, with `capture_state_restored` in the startup's log.
+- **Deployed 2026-10-12 08:54:40 UTC (868d96c); the first capture waited for the browser.** The restart restored 0 resolutions (a quiet hour before it) and 6 open breakers. The shared browser launches at the first search's warm-up, and the first capture came before it was up:
+  - 08:55:26: the post-deploy check's first request starts the search and the launch;
+  - 08:55:27: Filemoon's breaker trial starts (aniworld's link from the stored search);
+  - 08:55:35: `shared_browser_launched` and `stealth_pool_started`, about 9 s after the launch began;
+  - 08:55:37: `hoster_resolve_timeout` at the 10 s bound, and the breaker reopens for 3600 s. Dropload's trial (08:55:39 to 08:55:52, the browser already up) and SuperVideo's failed too, both reopened for 3600 s.
+  - Until about 09:55 every Filemoon and Dropload link is refused (circuit open), so no capture can keep a state in this container before then (Mr. Normal's check, 09:04).
+  - So a kept state cannot make the first capture after a restart warm while that capture waits for the launch. The fix is backlog row 93 (`keep-capture-state` → "The Browser Starts With The App"): the browser and the stealth pool's context start once the app is ready. Task 3.2 follows it.
 
 ### R5: warm-up after a start (gap 5)
 

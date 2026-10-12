@@ -27,10 +27,21 @@
 ## 3. Live proof
 
 - [x] 3.1 Dev container: one Dropload capture through the dev server (`PYTHONPATH=src`, port 7981), then a restart, then the next Dropload capture. It must meet no Turnstile, and `capture_state_restored` must name its hosts. The same for Filemoon. The numbers go into `docs/plans/challenge-reactions.md` → R4.
-- [ ] 3.2 Production after the deploy, once a capture has passed: the first Filemoon or Dropload capture after the next restart runs warm (`capture_state_restored` in the startup's log, no challenge on the capture). Recorded in `challenge-reactions.md`.
+- [ ] 3.2 Production after the deploy, once a capture has passed: the first Filemoon or Dropload capture after the next restart runs warm (`capture_state_restored` in the startup's log, no challenge on the capture). Recorded in `challenge-reactions.md`. It needs group 5: without it the first capture after a restart waits for the browser's launch (backlog row 93).
 
 ## 4. Docs
 
 - [x] 4.1 `docs/features/hoster-resolvers.md`: what a capture keeps and when.
 - [x] 4.2 `docs/plans/captcha-solving.md`: B3's clearance cookies now with the capture state.
 - [x] 4.3 `CHANGELOG.md` under `## Unreleased (staging)`.
+
+## 5. The browser starts with the app (backlog row 93)
+
+- [ ] 5.1 Tests:
+  - the lifespan starts `StealthPool.warmup()` after `app_startup_complete`, and readiness does not wait for it;
+  - the warm-up creates the context once: a capture after it reuses the context, and one during it waits on the pool's lock;
+  - a failed warm-up logs `browser_warmup_failed` with the error type, and the next capture launches the browser;
+  - shutdown cancels a running warm-up before the pools close.
+- [ ] 5.2 Implementation: `StealthPool.warmup()`, and the task in `composition.py`'s lifespan.
+- [ ] 5.3 Live, dev server (`PYTHONPATH=src`): `shared_browser_launched` and `stealth_pool_started` come before the first request, and so does `capture_state_restored` with a kept state. Then the startup's lines go into `docs/plans/challenge-reactions.md` → R4 built.
+- [ ] 5.4 Docs: the shared browser's lifecycle in `docs/features/` (where the warm-up is described), `CHANGELOG.md`.

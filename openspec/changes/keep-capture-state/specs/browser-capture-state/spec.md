@@ -40,6 +40,21 @@ The stealth pool SHALL create each new browser context (at the start, after a re
 - **WHEN** the creation of a context with the kept state fails
 - **THEN** the context is created without it and `capture_state_restore_failed` is logged
 
+### Requirement: The Browser Starts With The App
+Once the app has reported ready, it SHALL launch the shared browser and create the stealth pool's context, with the kept state, in the background, so the first capture after a start does not wait for the launch. Readiness SHALL NOT wait for it. A failed warm-up SHALL be logged with its error type and leave the launch to the first capture. Shutdown SHALL end it.
+
+#### Scenario: A breaker trial after a restart
+- **WHEN** the app restarts and a capture hoster's breaker trial comes after the warm-up ended
+- **THEN** the trial's resolve bound runs for the capture alone, without the browser's launch
+
+#### Scenario: The kept state at the start
+- **WHEN** the app starts with a kept capture state
+- **THEN** `capture_state_restored` is logged by the warm-up, before any capture
+
+#### Scenario: A failed warm-up
+- **WHEN** the browser cannot be launched at the start
+- **THEN** `browser_warmup_failed` is logged with the error type, and the first capture launches the browser as before
+
 ### Requirement: The Kept State Is Bounded And Quiet
 A host's state larger than 512 KiB once serialized SHALL NOT be kept and SHALL be logged with its host and size; a corrupt stored entry SHALL be dropped with a warning; no log line SHALL carry a cookie's or a storage entry's value or a URL.
 

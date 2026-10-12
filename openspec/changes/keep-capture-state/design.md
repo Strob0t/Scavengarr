@@ -41,7 +41,11 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
   - A host's filtered state above 512 KiB is not kept (`capture_state_too_large`, with the host and the size).
   - A corrupt key is dropped with a warning (`capture_state_corrupt`).
   - Logs name hosts and counts (cookies, origins, bytes), never names of values or values.
-- **R5 stays out.** With a kept state, a restart's first capture runs warm while the state holds. If R7's outcomes after a deploy show a cold capture despite a kept state, R5 follows: a warm-up capture with a recent link.
+- **The warm-up at the start.**
+  - The lifespan starts one background task after `app_startup_complete`: `StealthPool.warmup()`, which runs `_ensure_context()` (the shared browser's launch through its pool, then the context with the kept state).
+  - It is the same path the first capture takes, done early. The plugin search runner's per-search warm-up stays: after a crash or a recycle it relaunches the browser.
+  - A failure is logged (`browser_warmup_failed`, the error type) and changes nothing else. The task is cancelled at shutdown before the pools close.
+- **R5's warm-up capture stays out.** With a kept state, a restart's first capture runs warm while the state holds. If R7's outcomes after a deploy show a cold capture despite a kept state, R5 follows: a warm-up capture with a recent link.
 
 ## Risks / Trade-offs
 
