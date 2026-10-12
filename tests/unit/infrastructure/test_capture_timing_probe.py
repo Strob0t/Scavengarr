@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -160,7 +160,8 @@ class TestReport:
         run.resolved = True
 
         assert _mod.report_row(1, run) == (
-            "| 1 | /d/: 0.4 s, 2.9 s | 6.4, 11.4 s | 12.2 s (example.com) | 12.6 s |"
+            "| 1 | /d/: 0.4 s, 2.9 s | 6.4, 11.4 s | 12.2 s (example.com) | none"
+            " | 12.6 s |"
         )
 
     def test_a_run_without_a_stream_and_a_cut_run(self) -> None:
@@ -169,9 +170,17 @@ class TestReport:
         cut = _mod.Run(0.0, took=90.0, cut=True)
 
         assert _mod.report_row(1, nothing) == (
-            "| 1 | /e/: 0.1 s, 10.0 s (failed) | – | none | 18.5 s (nothing) |"
+            "| 1 | /e/: 0.1 s, 10.0 s (failed) | – | none | none | 18.5 s (nothing) |"
         )
-        assert _mod.report_row(2, cut) == "| 2 | none | – | none | cut at 90 s |"
+        assert _mod.report_row(2, cut) == "| 2 | none | – | none | none | cut at 90 s |"
+
+    def test_a_relaunched_run_names_its_challenges(self) -> None:
+        run = _mod.Run(0.0, took=20.8)
+        run.challenges.extend(["captcha", "captcha/verify"])
+
+        assert _mod.report_row("control", run) == (
+            "| control | none | – | none | captcha, captcha/verify | 20.8 s (nothing) |"
+        )
 
 
 def test_the_capture_resolvers_by_name() -> None:
@@ -183,13 +192,22 @@ def test_the_capture_resolvers_by_name() -> None:
 def test_two_runs_by_default() -> None:
     args = _mod._parser().parse_args(["https://byse.example/e/abc"])
 
-    assert (args.hoster, args.runs, args.timeout, args.diagnose, args.block) == (
-        "filemoon",
-        2,
-        None,
-        False,
-        [],
-    )
+    assert (
+        args.hoster,
+        args.runs,
+        args.timeout,
+        args.diagnose,
+        args.block,
+        args.restore,
+    ) == ("filemoon", 2, None, False, [], False)
+
+
+def test_the_watchdog_covers_the_restores_two_runs() -> None:
+    plain = _mod._parser().parse_args(["https://byse.example/e/abc"])
+    restore = _mod._parser().parse_args(["https://byse.example/e/abc", "--restore"])
+
+    assert _mod.probe_limit(plain) == 2 * _mod.RUN_LIMIT_S + 60
+    assert _mod.probe_limit(restore) == 4 * _mod.RUN_LIMIT_S + 60
 
 
 def test_blocks_repeat() -> None:
@@ -435,7 +453,8 @@ class TestDiagnosedPool:
                 page, url, wait_until="domcontentloaded", timeout_ms=1000
             )
 
-        assert len(page.handlers["request"]) == 1
+        # The diagnosis's watch and the challenge's
+        assert len(page.handlers["request"]) == 2
         assert len(page.handlers["popup"]) == 1
 
     def test_the_diagnosis_of_a_run(self) -> None:
@@ -572,3 +591,123 @@ class TestBlocks:
         )
 
         assert (page.routes, context.routes) == ([], [])
+
+
+class TestChallenges:
+    def test_the_marks_of_the_players_captcha_and_the_turnstile_widget(self) -> None:
+        assert _mod.challenge_mark("https://byse.example/api/videos/x1y2/captcha") == (
+            "captcha"
+        )
+        assert _mod.challenge_mark(
+            "https://byse.example/api/videos/x1y2/captcha/verify?t=1"
+        ) == ("captcha/verify")
+        assert _mod.challenge_mark(
+            "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile"
+        ) == ("turnstile")
+        assert _mod.challenge_mark("https://byse.example/e/captchas") is None
+        assert (
+            _mod.challenge_mark("https://challenges.cloudflare.com.llvpn.com/x") is None
+        )
+
+    def test_a_run_notes_each_challenge_once_in_order(self) -> None:
+        page, run = _Page(), _mod.Run(0.0)
+        _mod.watch_challenges(page, run)
+
+        for url in (
+            "https://byse.example/e/abc",
+            "https://byse.example/api/videos/x1y2/captcha",
+            "https://byse.example/api/videos/x1y2/captcha/verify",
+            "https://byse.example/api/videos/x1y2/captcha",
+        ):
+            page.emit("request", _Request(url))
+
+        assert run.challenges == ["captcha", "captcha/verify"]
+
+    async def test_a_page_is_watched_for_challenges_without_the_diagnosis(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def navigate(*_args: object, **_kwargs: object) -> bool:
+            return True
+
+        monkeypatch.setattr(StealthPool, "_navigate", navigate)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.run = _mod.Run(time.monotonic())
+        page = _Page()
+
+        await pool._navigate(
+            page, "https://byse.example/e/abc", wait_until="commit", timeout_ms=1
+        )
+        page.emit("request", _Request("https://challenges.cloudflare.com/turnstile"))
+
+        assert pool.run.challenges == ["turnstile"]
+        assert "popup" not in page.handlers
+
+
+_STATE: dict[str, Any] = {
+    "cookies": [
+        {"name": "cf_clearance", "value": "secret-1", "domain": ".byse.example"},
+        {"name": "__cf_bm", "value": "secret-2", "domain": "byse.example"},
+        {"name": "_ga_1A2B3C4D5E", "value": "secret-3", "domain": ".byse.example"},
+        {"name": "lang", "value": "secret-4", "domain": "203.0.113.7"},
+    ],
+    "origins": [
+        {
+            "origin": "https://player.byse.example",
+            "localStorage": [
+                {"name": "volume", "value": "secret-5"},
+                {"name": "token", "value": "secret-6"},
+            ],
+            "indexedDB": [{"name": "cache", "version": 1, "stores": []}],
+        },
+        {"origin": "https://filemoon.example", "localStorage": []},
+    ],
+}
+
+
+class TestState:
+    def test_the_make_up_names_cookies_and_counts_keys_never_values(self) -> None:
+        lines = _mod.state_lines(_STATE)
+
+        assert lines == [
+            "state: 4 cookies, 2 origins",
+            "- cookies <ip>: lang",
+            "- cookies byse.example: __cf_bm, _ga_<id>, cf_clearance",
+            "- origin byse.example: 2 localStorage keys, 1 IndexedDB database",
+            "- origin filemoon.example: 0 localStorage keys, 0 IndexedDB databases",
+        ]
+        assert not any("secret" in line or "token" in line for line in lines)
+
+    def test_an_empty_state(self) -> None:
+        assert _mod.state_lines({"cookies": [], "origins": []}) == [
+            "state: 0 cookies, 0 origins"
+        ]
+
+    async def test_the_state_comes_from_the_context_with_its_indexeddb(self) -> None:
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        assert await pool.saved_state() is None
+
+        context = MagicMock()
+        context.storage_state = AsyncMock(return_value=_STATE)
+        pool._context = context
+
+        assert await pool.saved_state() is _STATE
+        context.storage_state.assert_awaited_once_with(indexed_db=True)
+
+    async def test_a_restored_context_starts_from_the_state(self) -> None:
+        context = MagicMock()
+        context.route = AsyncMock()
+        chromium = MagicMock()
+        chromium.is_connected.return_value = True
+        chromium.new_context = AsyncMock(return_value=context)
+        browser = MagicMock()
+        browser.warmup = AsyncMock(return_value=(chromium, None))
+        pool = _mod.TimedStealthPool(browser_pool=browser)
+        pool.storage = _STATE
+
+        assert await pool._ensure_context() is context
+        assert await pool._ensure_context() is context
+
+        chromium.new_context.assert_awaited_once_with(
+            service_workers="block", storage_state=_STATE
+        )
+        context.route.assert_awaited_once()

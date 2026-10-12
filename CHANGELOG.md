@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Capture Probe Restores a Context After a Relaunch
+- `scripts/probes/capture_timing.py --restore` takes the runs' context state (`storage_state(indexed_db=True)`, in memory only) and prints its make-up (cookie names per domain, ids masked; localStorage keys and IndexedDB databases per origin; no values), then resolves the link in a relaunched browser twice: in a fresh context (`control`) and in one restored from the state (`restored`). Every run now names the challenges it met: the player's `captcha` and `captcha/verify`, `turnstile` for Cloudflare's challenge host.
+- Why: row 91 measures R4's premise (`docs/plans/challenge-reactions.md`): whether a context restored after a restart skips the hoster's challenge.
+- In the dev container both hosters skip it restored: Filemoon control `captcha, captcha/verify` and stream at 5.6 s, restored no challenge at 1.7 s (the state: two Byse cookies, an IndexedDB database); Dropload control `turnstile` and two clicks at 9.5 s, restored no challenge at 0.8 s.
+
 ### Changed: The Redis Probe Is redis_cache
 - `scripts/probes/redis.py` is now `scripts/probes/redis_cache.py` (`prodctl.py probe redis_cache keys|ttl|get`): its old name shadowed the redis package for every script started from that directory, so the dev-container probes no longer need `python -P`. Their usage lines and AGENTS.md drop the flag.
 
