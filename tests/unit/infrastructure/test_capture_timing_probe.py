@@ -716,7 +716,21 @@ _STATE: dict[str, Any] = {
                 {"name": "volume", "value": "secret-5"},
                 {"name": "token", "value": "secret-6"},
             ],
-            "indexedDB": [{"name": "cache", "version": 1, "stores": []}],
+            "indexedDB": [
+                {
+                    "name": "cache",
+                    "version": 1,
+                    "stores": [
+                        {
+                            "name": "prints",
+                            "records": [
+                                {"key": "a", "value": {"hash": "secret-7"}},
+                                {"key": "b", "valueEncoded": {"d": "secret-8"}},
+                            ],
+                        }
+                    ],
+                }
+            ],
         },
         {"origin": "https://filemoon.example", "localStorage": []},
     ],
@@ -731,7 +745,8 @@ class TestState:
             "state: 4 cookies, 2 origins",
             "- cookies <ip>: lang",
             "- cookies byse.example: __cf_bm, _ga_<id>, cf_clearance",
-            "- origin byse.example: 2 localStorage keys, 1 IndexedDB database",
+            "- origin byse.example: 2 localStorage keys, 1 IndexedDB database"
+            " (2 records, 1 encoded)",
             "- origin filemoon.example: 0 localStorage keys, 0 IndexedDB databases",
         ]
         assert not any("secret" in line or "token" in line for line in lines)

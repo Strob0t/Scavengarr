@@ -226,6 +226,15 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       | filemoon.to, run 2 (warm) | `/e/` 0.8 s, 1.1 s | 5.1 s | – | – | 6.5 s (owphbf24.com) | 6.5 s |
 
       On an idle Pi the first click comes at 5.2 to 5.8 s, about 1.5 s later than in the dev container. The captcha follows it 0.8 to 2.0 s later (dev: 0.1 to 0.5 s), at 5.5 to 7.2 s. The cold filemoon.to capture found its stream at 9.2 s, 0.8 s inside the 10 s bound. The cold Byse capture marked its captcha at 7.2 s, but its verify never came: it clicked twice more and found nothing by 21.1 s. In production its mark would come before the bound, so it would end as `challenge`, not as an unmarked timeout. Its second run met the captcha again, because the first had earned no pass, and passed it (stream at 8.0 s). **Does a late click explain production's 9 s?** Only in part: an idle Pi marks the captcha by about 7 s, and a 9 s mark needs the click about 2 s later still. That fits a busier Pi; the 15:13 captures above waited up to 28 s for a page on a busy CPU. In every run, here and in the dev container, the captcha came after the first click and never before it, so the first click is the earliest sign of Filemoon's captcha in a capture. Limits: two cold captures on an idle Pi, one per host, minutes apart; the busy Pi was not measured.
+    - **What a kept state holds, its IndexedDB records counted (row 97, dev container, 16:24 to 16:25 UTC):** `capture_timing.py --runs 1 --restore`, one link per hoster, the state taken with `storage_state(indexed_db=True)` as the app took it then:
+
+      | Hoster | Kept state | Run 1 | Control | Restored |
+      |---|---|---|---|---|
+      | Filemoon | n1mwq.org: cookies `byse_device_id` and `byse_viewer_id`, 7 localStorage keys, 1 IndexedDB database (2 records, 0 encoded); moflix-stream.link: 3 localStorage keys | captcha 4.1 s, stream 5.0 s | captcha 3.7 s, stream 9.3 s | no challenge, stream 1.6 s |
+      | Dropload | dr0pstream.com: cookies `aff`, `file_id` and one with an id-like name; cloudflare.com: 1 localStorage key | turnstile 0.6 s, stream 4.5 s | turnstile 0.5 s, stream 4.5 s | no challenge, stream 0.8 s |
+      | Vixeo | vixeo.io: 1 localStorage key | no challenge, stream 3.8 s | no challenge, stream 4.7 s | no challenge, stream 3.8 s |
+
+      No kept record needed an encoding: plain JSON holds every value the three players keep, so a keep that leaves out the records plain JSON cannot hold (the File values and invalid dates of the code review's finding 8) loses nothing measured here. Limits: one link per hoster, a fresh profile each, the restore seconds after the keep.
 
 ### R5: warm-up after a start (gap 5)
 

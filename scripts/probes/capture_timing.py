@@ -644,20 +644,31 @@ def _counted(count: int, noun: str) -> str:
 
 def state_lines(state: Mapping[str, Any]) -> list[str]:
     """The make-up of a context's *state*: its cookies' names per domain
-    and its local storage keys and IndexedDB databases counted per origin;
-    no values."""
+    and its local storage keys and IndexedDB databases counted per origin,
+    with the databases' records and how many of them are encoded (a value
+    or key no plain JSON holds: a date, a typed array, a file); no
+    values."""
     cookies, origins = state.get("cookies", []), state.get("origins", [])
     names: dict[str, set[str]] = {}
     for cookie in cookies:
         where = domain(f"https://{str(cookie.get('domain', '')).lstrip('.')}")
         names.setdefault(where, set()).add(cookie_name(str(cookie.get("name", ""))))
-    stored: dict[str, tuple[int, int]] = {}
+    stored: dict[str, tuple[int, int, int, int]] = {}
     for origin in origins:
         where = domain(str(origin.get("origin", "")))
-        keys, databases = stored.get(where, (0, 0))
+        keys, databases, records, encoded = stored.get(where, (0, 0, 0, 0))
+        bases = [b for b in origin.get("indexedDB") or [] if isinstance(b, dict)]
+        rows = [
+            row
+            for base in bases
+            for store in base.get("stores") or []
+            for row in store.get("records") or []
+        ]
         stored[where] = (
             keys + len(origin.get("localStorage") or []),
-            databases + len(origin.get("indexedDB") or []),
+            databases + len(bases),
+            records + len(rows),
+            encoded + sum("valueEncoded" in r or "keyEncoded" in r for r in rows),
         )
     total = f"{_counted(len(cookies), 'cookie')}, {_counted(len(origins), 'origin')}"
     lines = [f"state: {total}"]
@@ -668,7 +679,8 @@ def state_lines(state: Mapping[str, Any]) -> list[str]:
     lines.extend(
         f"- origin {where}: {_counted(keys, 'localStorage key')},"
         f" {_counted(databases, 'IndexedDB database')}"
-        for where, (keys, databases) in sorted(stored.items())
+        + (f" ({_counted(records, 'record')}, {encoded} encoded)" if databases else "")
+        for where, (keys, databases, records, encoded) in sorted(stored.items())
     )
     return lines
 

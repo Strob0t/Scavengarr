@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Capture Probe Counts the Kept IndexedDB Records
+- `scripts/probes/capture_timing.py --restore` prints, per origin with an IndexedDB database, its records and how many of them are encoded (a value or key no plain JSON holds: a date, a typed array, a file): `1 IndexedDB database (2 records, 0 encoded)`. In the dev container on 2026-10-12 Filemoon's player host held 2 records, none encoded; Dropload and Vixeo kept no IndexedDB (`docs/plans/challenge-reactions.md` → R4, row 97).
+
 ### Fixed: One Title Set Judges A Site's Series Name
 - The use case fetches the TMDB titles for every language the stream plugins search in, not only the selected plugins' languages, and every title info carries the request's series titles in all of them (`TitleMatchInfo.series_titles`). The title matcher judges a partial match by them in every language group, and they go to the locating plugins as `EpisodeRef.titles`. The matcher normalises titles with the episode index's `normalize_title`, which decodes the entities the sites leave in their titles.
 - Why: code review 2026-10-12, finding 11. The matcher judged a site's name by its language group's titles, `locate()` by the selected plugins' titles: aniworld's "Yu-Gi-Oh!" (TMDB's English title) was a whole title for `locate()` but a partial match of the German "Yu-Gi-Oh! Duel Monsters" for the matcher, held until aniworld's end and dropped beside its other match; a scored selection without an English plugin flipped `locate()`'s verdict, and a joined request took the first request's titles.
