@@ -74,7 +74,7 @@ Each option names the gap it closes (the numbers of the list above).
 - **What:** once a capture sees a challenge, it runs on, shielded, up to a challenge budget of about 30 s, one per hoster at a time, while the request answers on time. Its stream goes to the resolution cache, and its pass warms the context.
 - **Evidence:** the plugins' shielded solve; on the Pi cold 17.1 s, warm 5.8 s.
 - **Pro:** the next request finds a warm hoster, and often the resolved stream itself.
-- **Contra:** it holds one of the browser's pages for up to 30 s (plugin pages keep their priority).
+- **Contra:** it holds one of the browser's pages for up to 30 s. The page gate ranks plugin and capture pages alike (by their due time, after `play`), so plugin pages and other captures may wait for a page meanwhile.
 - **Cost:** medium (the stealth pool, the registry, the page budget's tests).
 
 ### R3: a capture budget of its own (gaps 1 and 3)
@@ -191,7 +191,7 @@ The maintainer's decision of 07:02 UTC (AskUserQuestion in Mr. Fable's session):
   - Filemoon's `embedding from this domain is not allowed` answer, another failure.
   - The share of all streams: no count of all links exists, and R7's numbers give one.
 - **Costs.**
-  - A cold capture holds one browser page for up to 30 s; plugin pages keep their priority.
+  - A cold capture holds its browser page up to 20 s past the cut, while plugin pages and other captures may wait for one (`browser_page_wait` shows it).
   - A request that waits for Filemoon's stream waits for its warm capture, about 6 s, within the bound.
 
 After each of the three deploys, compare the following against the baseline:
