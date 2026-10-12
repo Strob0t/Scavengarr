@@ -7,6 +7,7 @@ import pytest
 
 from scavengarr.infrastructure.browser.cloudflare import is_cloudflare_challenge
 from scavengarr.infrastructure.captcha.detect import (
+    challenge_frame,
     detect_challenge,
     detect_challenge_headers,
 )
@@ -70,6 +71,47 @@ class TestDetectChallenge:
         # a normal page served through Cloudflare mentions cdn-cgi scripts
         html = "<script src='/cdn-cgi/scripts/rocket-loader.min.js'></script>"
         assert detect_challenge(200, html, {"server": "cloudflare"}) is None
+
+
+class TestChallengeFrame:
+    """The frames a captcha provider shows its challenge in: what a browser
+    capture meets (react-to-challenges, R7)."""
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            (
+                "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g"
+                "/turnstile/if/ov2/av0/rcv/x1/0x4AAAAAAA/auto/fbE/new/normal/auto/",
+                "turnstile",
+            ),
+            (
+                "https://newassets.hcaptcha.com/captcha/v1/a1b2/static/hcaptcha.html"
+                "#frame=checkbox&id=0x1",
+                "hcaptcha",
+            ),
+            (
+                "https://www.google.com/recaptcha/api2/anchor?ar=1&k=6Le&size=normal",
+                "recaptcha",
+            ),
+            (
+                "https://www.recaptcha.net/recaptcha/api2/bframe?hl=en&k=6Le",
+                "recaptcha",
+            ),
+            (
+                "https://www.google.com/recaptcha/enterprise/anchor?k=6Le&size=compact",
+                "recaptcha",
+            ),
+            # An invisible reCAPTCHA (v3's score) shows nothing to pass
+            ("https://www.google.com/recaptcha/api2/anchor?k=6Le&size=invisible", None),
+            ("https://www.google.com/search?q=recaptcha", None),
+            ("https://hcaptcha.com.example.org/captcha", None),
+            ("https://player.example/e/challenges.cloudflare.com", None),
+            ("https://filemoon.sx/e/abc", None),
+        ],
+    )
+    def test_kinds(self, url: str, expected: str | None) -> None:
+        assert challenge_frame(url) == expected
 
 
 class TestDetectChallengeHeaders:

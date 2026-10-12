@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -402,6 +403,28 @@ class TestBrowserCapture:
         assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("request_url", "named"),
+        [
+            ("https://n1mwq.org/api/videos/fwzwu9ny19jk/captcha", True),
+            ("https://n1mwq.org/api/videos/fwzwu9ny19jk/captcha/verify?t=1", True),
+            ("https://n1mwq.org/api/videos/fwzwu9ny19jk/embed/details", False),
+            ("https://n1mwq.org/e/captchas", False),
+        ],
+    )
+    async def test_the_players_captcha_requests_are_named(
+        self, request_url: str, named: bool
+    ) -> None:
+        """A cold context meets the player's own captcha, a warm one skips it
+        (row 91): a capture cut after it ends as ``challenge`` (R7)."""
+        resolver, pool = self._resolver(_make_html_response(self._SPA), None)
+
+        await resolver.resolve("https://filemoon.to/e/fwzwu9ny19jk")
+
+        pattern = pool.capture_media.await_args.kwargs["challenge_requests"]
+        assert bool(pattern.search(request_url)) is named
+
+    @pytest.mark.asyncio
     async def test_mp4_stream_without_referer(self) -> None:
         media = CapturedMedia(url="https://cdn.example/v/x.mp4?t=1", referer=None)
         resolver, _ = self._resolver(_make_html_response(self._SPA), media)
@@ -484,6 +507,7 @@ class _FakePool:
         timeout: float | None = None,
         player: str | None = None,
         own_scripts_only: bool = False,
+        challenge_requests: re.Pattern[str] | None = None,
     ) -> CapturedMedia | None:
         self.urls.append(url)
         self.players.append(player)

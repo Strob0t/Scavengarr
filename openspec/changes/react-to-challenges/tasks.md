@@ -1,14 +1,14 @@
 ## 1. Row 89: the challenge outcome and its numbers (R1, R7)
 
-- [ ] 1.1 Tests: a cut capture that showed a challenge ends as `challenge`; the breaker's failure count is unchanged; the link is not cached as dead.
-- [ ] 1.2 Tests: a resolver's `None` with the mark set ends as `challenge`, not `dead`.
-- [ ] 1.3 Tests: the cooldown's steps (60, 300, 900, 1800 s, staying at 1800); a stream ends it and resets the steps; a skip is logged, counted and not cached.
-- [ ] 1.4 Tests: the cooldown is checked before `breaker.allow()`, so a half-open trial's slot stays free; a half-open trial that ends as `challenge` frees its slot.
-- [ ] 1.5 Tests: a cut capture without a challenge counts as `timeout`, as before.
-- [ ] 1.6 Tests: the browser marks on an interstitial, a Turnstile widget, a captcha provider's frame and a request the resolver names (Filemoon's `captcha` and `captcha/verify`); a plain page marks nothing; outside a resolution marking is a no-op.
-- [ ] 1.7 Implementation: the mark beside `work_clock`, the marks in `capture_media()` and `turnstile.py`, Filemoon's named requests, the registry's outcome and cooldown, and the outcomes `challenge` and `challenge_cooldown`.
-- [ ] 1.8 Live proof (dev container): a capture cut at a short resolve bound after a challenge ends as `challenge`, and the breaker is unchanged.
-- [ ] 1.9 Docs:
+- [x] 1.1 Tests: a cut capture that showed a challenge ends as `challenge`; the breaker's failure count is unchanged; the link is not cached as dead.
+- [x] 1.2 Tests: a resolver's `None` with the mark set ends as `challenge`, not `dead`.
+- [x] 1.3 Tests: the cooldown's steps (60, 300, 900, 1800 s, staying at 1800); a stream ends it and resets the steps; a skip is logged, counted and not cached.
+- [x] 1.4 Tests: the cooldown is checked before `breaker.allow()`, so a half-open trial's slot stays free; a half-open trial that ends as `challenge` frees its slot.
+- [x] 1.5 Tests: a cut capture without a challenge counts as `timeout`, as before.
+- [x] 1.6 Tests: the browser marks on an interstitial, a Turnstile widget, a captcha provider's frame and a request the resolver names (Filemoon's `captcha` and `captcha/verify`); a plain page marks nothing; outside a resolution marking is a no-op.
+- [x] 1.7 Implementation: the mark beside `work_clock`, the marks in `capture_media()` and `turnstile.py`, Filemoon's named requests, the registry's outcome and cooldown, and the outcomes `challenge` and `challenge_cooldown`.
+- [x] 1.8 Live proof (dev container): a capture cut at a short resolve bound after a challenge ends as `challenge`, and the breaker is unchanged.
+- [x] 1.9 Docs:
   - `docs/features/hoster-resolvers.md`: the outcome and the cooldown;
   - `docs/features/observability.md`: the outcomes;
   - `CHANGELOG.md`.

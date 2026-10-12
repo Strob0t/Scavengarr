@@ -36,6 +36,11 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+# The Byse player's own captcha: a cold browser context requests
+# ``captcha`` and ``captcha/verify`` before the stream, a warm one neither
+# (row 91). A capture cut after them ends as ``challenge``, not ``timeout``
+_CAPTCHA_REQUESTS = re.compile(r"/captcha(?:/verify)?/?(?:[?#]|$)")
+
 
 # Mirror domains (JD2 FilemoonSxCrawler.java): filemoon.*, the rotating Byse
 # player domains and a few odd aliases
@@ -153,6 +158,7 @@ class FilemoonResolver:
             "filemoon",
             player=player,
             own_scripts_only=True,
+            challenge_requests=_CAPTCHA_REQUESTS,
         )
 
     async def _byse_page(self, embed_url: str) -> tuple[str, str | None] | None:

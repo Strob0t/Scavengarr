@@ -187,6 +187,23 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
 - **Contra:** none.
 - **Cost:** small.
 
+#### R1 and R7 built (row 89, 2026-10-12)
+
+OpenSpec `react-to-challenges`, tasks group 1. The registry gives each attempt a `ChallengeMark` (the context variable `challenge_mark` beside `work_clock`). `solve_cloudflare()` marks an interstitial, `pass_turnstile_widget()` a widget, and `capture_media()`'s request listener a captcha provider's frame (`challenge_frame()`: Cloudflare's challenge platform, hCaptcha, reCAPTCHA but not an invisible one) or a request the resolver names (`challenge_requests`; Filemoon's `captcha` and `captcha/verify`). A cut or empty resolution with a mark ends as `challenge`: not cached, not counted by the breaker, and the hoster's links wait out 1, 5, 15, then 30 minutes (ended by a stream; checked before the breaker). R7's numbers: the `hoster_resolve` outcomes `challenge` and `challenge_cooldown`, the stage's time per outcome as before, and per stream whether the capture passed a challenge (`hoster_resolve_success` → `challenge`, `None` when warm), a log field and no label, so the `stream` outcome stays one series.
+
+Dev proof with the app's registry and resolvers (a fresh context per attempt, one current link per hoster, 2026-10-12 09:29 to 09:34 UTC):
+
+| Hoster | Bound | Mark (into the capture) | Outcome | Breaker | Next link |
+|---|---|---|---|---|---|
+| Filemoon | 6 s (6 runs) and 25 s (1 run) | `hoster_captcha` at 3.6 to 4.5 s (the first request; 6 of the 7 runs printed it) | `stream` at 4.3 to 5.4 s | untouched | - |
+| Filemoon | 4.1 s | `hoster_captcha` at 3.7 s | `challenge`, cooldown 60 s | untouched | `challenge_cooldown`, 60 s left |
+| Filemoon | 4.2 s | none before the cut | `timeout` | opened | `breaker_open` |
+| Dropload | 25 s, 6 runs | `turnstile` at 0.5 to 0.6 s | `stream` at 4.4 to 9.5 s | untouched | - |
+| Dropload | 2 s | `turnstile` at 0.6 s | `challenge`, cooldown 60 s | untouched | `challenge_cooldown`, 60 s left |
+| Filemoon | 0.3 s | none (no page yet) | `timeout` | opened | - |
+
+One more Filemoon run with a 20 s bound met no captcha and found no stream in 18.7 s: `dead`, cached for 15 minutes, as before (no mark, nothing for R1 to tell). The 4.2 s run is the design's known limit: a captcha requested after the cut leaves the attempt a `timeout`. The 0.3 s control is production's case after a restart (08:55, 2026-10-12): a trial cut while the browser launches has shown nothing and stays a `timeout`. Limits: the dev container, one link per hoster. Production's outcomes over a day after the deploy are task 1.10.
+
 ### R8: plugin-side fixes (gap 6)
 
 - **What:**

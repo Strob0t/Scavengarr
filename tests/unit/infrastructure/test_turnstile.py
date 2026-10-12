@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from scavengarr.infrastructure.browser import turnstile
+from scavengarr.infrastructure.browser.page_gate import ChallengeMark, challenge_mark
 from scavengarr.infrastructure.browser.turnstile import (
     is_challenge_page,
     pass_turnstile_widget,
@@ -315,3 +316,64 @@ class TestPassTurnstileWidget:
 
         assert await pass_turnstile_widget(page, timeout_ms=10_000) is False
         form.evaluate.assert_not_awaited()
+
+
+def _in_resolution() -> ChallengeMark:
+    """Run the calling task as a hoster resolution; returns its mark."""
+    mark = ChallengeMark()
+    challenge_mark.set(mark)
+    return mark
+
+
+class TestChallengeMarks:
+    """A challenge a page shows marks the resolution that runs
+    (react-to-challenges, R7), whether or not it is passed."""
+
+    async def test_an_interstitial_marks(self) -> None:
+        mark = _in_resolution()
+
+        assert await solve_cloudflare(
+            _page(["Just a moment...", "Player"]), timeout_ms=10_000
+        )
+
+        assert mark.kind == "cloudflare_page"
+
+    async def test_an_unsolved_interstitial_marks(self) -> None:
+        mark = _in_resolution()
+
+        assert not await solve_cloudflare(
+            _page(["Just a moment..."]), timeout_ms=10_000
+        )
+
+        assert mark.kind == "cloudflare_page"
+
+    async def test_a_normal_page_marks_nothing(self) -> None:
+        mark = _in_resolution()
+
+        assert await solve_cloudflare(_page(["Player"]), timeout_ms=10_000)
+
+        assert mark.kind is None
+
+    async def test_a_widget_marks(self) -> None:
+        mark = _in_resolution()
+        page, _ = _widget_page(["", "token"])
+
+        assert await pass_turnstile_widget(page, timeout_ms=10_000)
+
+        assert mark.kind == "turnstile"
+
+    async def test_no_widget_marks_nothing(self) -> None:
+        mark = _in_resolution()
+        page, _ = _widget_page([""], shown=False)
+
+        assert not await pass_turnstile_widget(page, timeout_ms=10_000)
+
+        assert mark.kind is None
+
+    async def test_outside_a_resolution_nothing_is_marked(self) -> None:
+        """A plugin's page passes its challenge as before."""
+        assert await solve_cloudflare(
+            _page(["Just a moment...", "Player"]), timeout_ms=10_000
+        )
+
+        assert challenge_mark.get() is None

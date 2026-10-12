@@ -24,12 +24,21 @@ from scavengarr.domain.ports.hoster_resolver import (
     HosterResolverPort,
 )
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
-from scavengarr.infrastructure.browser.page_gate import PageBusy, work_clock
+from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
+    PageBusy,
+    ResolutionChallenge,
+    challenge_mark,
+    work_clock,
+)
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import (
     PlaybackCheck,
     check_playable,
+)
+from scavengarr.infrastructure.hoster_resolvers.challenge_cooldown import (
+    ChallengeCooldown,
 )
 
 log = structlog.get_logger(__name__)
@@ -120,8 +129,11 @@ class HosterResolverRegistry:
     Caches resolution outcomes and redirect mappings in-memory. With a
     *circuit_breaker*, a resolver whose resolutions keep running into the
     timeout or giving unplayable streams is skipped for a while (keyed by
-    resolver name, so a hoster's mirror domains share it). Every resolution
-    is recorded in *telemetry* by resolver name (``direct`` for a probe).
+    resolver name, so a hoster's mirror domains share it). A resolution
+    whose capture met a challenge ends as ``challenge`` instead: the
+    resolver's links wait out a challenge cooldown (``ChallengeCooldown``),
+    and the breaker does not count it. Every resolution is recorded in
+    *telemetry* by resolver name (``direct`` for a probe).
     """
 
     def __init__(
@@ -149,6 +161,7 @@ class HosterResolverRegistry:
         self._resolve_count = 0
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
+        self._challenges = ChallengeCooldown()
         # Probes of links no resolver claims, by hoster (unresolved_hosts)
         self._unresolved: Counter[str] = Counter()
         for resolver in resolvers or []:
@@ -442,10 +455,13 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         result: ResolvedStream | None,
+        challenge: ResolutionChallenge | None = None,
     ) -> tuple[str, ResolvedStream | None, bool]:
         """Classify a resolver's answer: ``dead`` link, ``unplayable``,
         ``check_error`` or a ``stream``; the stream only for the last, and
-        whether the outcome may be cached.
+        whether the outcome may be cached. The success log names the
+        *challenge* the capture passed on its way (a cold capture), ``None``
+        for a warm one.
 
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
@@ -473,14 +489,22 @@ class HosterResolverRegistry:
                 self._record(resolver, failed=True)
                 return "unplayable", None, True
             result = _measured(result, check)
-        log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
+        log.info(
+            "hoster_resolve_success",
+            hoster=hoster_name,
+            is_hls=result.is_hls,
+            challenge=challenge,
+        )
         self._record(resolver, failed=False)
         if getattr(resolver, "address_bound", False) is True:
             result = replace(result, address_bound=True)
         return "stream", _stamped(result), True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
-        """Report a resolution's outcome to the circuit breaker."""
+        """Report a resolution's outcome to the circuit breaker; a stream
+        also ends the resolver's challenge cooldown."""
+        if not failed:
+            self._challenges.streamed(resolver.name)
         breaker = self._circuit_breaker
         if breaker is None:
             return
@@ -545,8 +569,11 @@ class HosterResolverRegistry:
         url: str,
         attempt: Callable[[], Coroutine[Any, Any, ResolvedStream | None]],
     ) -> ResolvedStream | None:
-        """Run *attempt* unless the circuit breaker skips *resolver*.
+        """Run *attempt* unless the challenge cooldown or the circuit breaker
+        skips *resolver*.
 
+        The cooldown goes first: the breaker's ``allow()`` starts a half-open
+        trial, and a link the cooldown skips must not take the trial's slot.
         A half-open probe runs to its end even when the request is cut: cut
         by the resolve grace, Filemoon's probes never reported, so the
         breaker probed again after every cooldown without doubling it
@@ -556,6 +583,17 @@ class HosterResolverRegistry:
         probe slot, so the next link probes (it held the slot for a whole
         cooldown, code review 2026-10-06).
         """
+        if left := self._challenges.left(resolver.name):
+            log.info(
+                "hoster_resolve_challenge_cooldown",
+                hoster=resolver.name,
+                url=url,
+                left_s=round(left),
+            )
+            self._telemetry.count(
+                "hoster_resolve", "challenge_cooldown", resolver=resolver.name
+            )
+            return None
         breaker = self._circuit_breaker
         if breaker is None:
             return await attempt()
@@ -617,17 +655,32 @@ class HosterResolverRegistry:
         video, and five of them opened the breakers of healthy hosters
         (code review, 2026-10-06). Neither does a capture that got no
         browser page before its request was due (``busy``).
+
+        A timeout or a resolution without a stream whose pages showed a
+        challenge (``challenge_mark``: an interstitial, a Turnstile widget,
+        a captcha provider's frame, the hoster's own captcha) ends as
+        ``challenge``: the hoster wants a warm browser context, it is not
+        broken. Neither cached nor counted; the resolver's links wait out
+        the challenge cooldown.
         """
+        mark = ChallengeMark()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
                 async with asyncio.timeout(self._resolve_timeout) as clock:
-                    token = work_clock.set(clock)
+                    clock_token = work_clock.set(clock)
+                    mark_token = challenge_mark.set(mark)
                     try:
                         result = await (resolve() if resolve else resolver.resolve(url))
                     finally:
-                        work_clock.reset(token)
+                        work_clock.reset(clock_token)
+                        challenge_mark.reset(mark_token)
+                if result is None and mark.kind is not None:
+                    stage.outcome = self._challenged(
+                        resolver, hoster_name, url, mark.kind
+                    )
+                    return None, False
                 stage.outcome, stream, cacheable = await self._judge(
-                    resolver, hoster_name, url, result
+                    resolver, hoster_name, url, result, mark.kind
                 )
                 return stream, cacheable
             except PageBusy:
@@ -635,6 +688,11 @@ class HosterResolverRegistry:
                 stage.outcome = "busy"
                 return None, False
             except (TimeoutError, httpx.TimeoutException):
+                if mark.kind is not None:
+                    stage.outcome = self._challenged(
+                        resolver, hoster_name, url, mark.kind
+                    )
+                    return None, False
                 log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
                 stage.outcome = "timeout"
@@ -660,6 +718,25 @@ class HosterResolverRegistry:
                 log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
                 stage.outcome = "error"
         return None, True
+
+    def _challenged(
+        self,
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        kind: ResolutionChallenge,
+    ) -> str:
+        """A resolution that met a challenge and found no stream: start the
+        resolver's next cooldown step; returns the outcome."""
+        cooldown = self._challenges.challenged(resolver.name)
+        log.info(
+            "hoster_resolve_challenge",
+            hoster=hoster_name,
+            url=url,
+            kind=kind,
+            cooldown_s=round(cooldown),
+        )
+        return "challenge"
 
     async def _follow_redirects(self, url: str) -> str | None:
         """Follow HTTP redirects and return final URL if domain changed.

@@ -8,9 +8,11 @@ search's plugin pages before the captures of its answer), and to
 background work only while nobody else waits; a running page is never
 taken away. Work that cannot start ``_MIN_WORK_S`` before it is due gets
 no page (``PageBusy``), and the timeout of a resolution (``work_clock``)
-stops while it waits. The wait for a page and the work on it are recorded
-by kind (``browser_page_wait``, ``browser_page``). ``PageBudget`` changes
-the limit while pages are in use. See ``docs/plans/browser-page-budget.md``.
+stops while it waits. A page that shows a challenge marks the resolution
+it works for (``challenge_mark``). The wait for a page and the work on it
+are recorded by kind (``browser_page_wait``, ``browser_page``).
+``PageBudget`` changes the limit while pages are in use. See
+``docs/plans/browser-page-budget.md``.
 """
 
 from __future__ import annotations
@@ -22,9 +24,11 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import Literal
 
 from scavengarr.domain.ports.browser_fetcher import PageClaim, PageKind, page_claim
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.captcha.detect import ChallengeKind
 
 # Who goes first: playback, then plugin pages and captures by due time,
 # background work last
@@ -37,6 +41,38 @@ _MIN_WORK_S = 3.0
 # The timeout of the work that asks for a page (the registry's resolve
 # timeout): it measures the work, so it stops while the work waits
 work_clock: ContextVar[asyncio.Timeout | None] = ContextVar("work_clock", default=None)
+
+# What a resolution's page showed: a challenge the detector knows, or a
+# request the resolver names as its hoster's own captcha
+type ResolutionChallenge = ChallengeKind | Literal["hoster_captcha"]
+
+
+@dataclass
+class ChallengeMark:
+    """The challenge a resolution's pages showed, the first one noted."""
+
+    kind: ResolutionChallenge | None = None
+
+    def note(self, kind: ResolutionChallenge) -> None:
+        """Note *kind* unless a challenge is noted already."""
+        if self.kind is None:
+            self.kind = kind
+
+
+# The mark of the resolution that runs (the registry's attempt): set by the
+# registry, marked by the browser when a page shows a challenge, so the
+# registry tells a challenged capture from a timeout (react-to-challenges)
+challenge_mark: ContextVar[ChallengeMark | None] = ContextVar(
+    "challenge_mark", default=None
+)
+
+
+def mark_resolution_challenge(kind: ResolutionChallenge) -> None:
+    """Mark the running resolution's challenge; outside one (a plugin's
+    page) nothing."""
+    mark = challenge_mark.get()
+    if mark is not None:
+        mark.note(kind)
 
 
 class PageBusy(Exception):

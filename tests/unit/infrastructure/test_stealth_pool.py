@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,7 +25,12 @@ from scavengarr.infrastructure.browser.hardening import (
     BLOCKED_RESOURCE_TYPES,
     block_heavy_resources,
 )
-from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
+from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
+    PageBusy,
+    PageGate,
+    challenge_mark,
+)
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 # ------------------------------------------------------------------
@@ -833,14 +840,17 @@ def _player_page(
     on_click: list[list[str]] | None = None,
     status: int = 200,
     media_requests: frozenset[str] = frozenset(),
+    documents: frozenset[str] = frozenset(),
 ) -> MagicMock:
     """Page whose player requests *on_load* URLs while loading and the
     i-th list of *on_click* on the i-th mouse click; URLs in
-    *media_requests* come from the video element (resource type "media")."""
+    *media_requests* come from the video element (resource type "media"),
+    those in *documents* load a frame. Playwright calls the request
+    listeners outside the capture's context, so do these."""
     page = _mock_page(title="Player")
-    listeners: list[object] = []
+    listeners: list[Callable[[MagicMock], None]] = []
 
-    def _on(event: str, callback: object) -> None:
+    def _on(event: str, callback: Callable[[MagicMock], None]) -> None:
         if event == "request":
             listeners.append(callback)
 
@@ -848,9 +858,15 @@ def _player_page(
         for url in urls:
             request = _request(url, navigation=False)
             request.headers = {"referer": "https://player.example/"}
-            request.resource_type = "media" if url in media_requests else "script"
+            request.resource_type = (
+                "media"
+                if url in media_requests
+                else "document"
+                if url in documents
+                else "script"
+            )
             for callback in listeners:
-                callback(request)  # type: ignore[operator]
+                contextvars.Context().run(callback, request)
 
     async def _goto(url: str, **_: object) -> MagicMock:
         _emit(on_load or [])
@@ -1048,6 +1064,120 @@ class TestStealthPoolCaptureMedia:
 
 # The Byse watch page and its player frame (row 78 on the Pi)
 _FRAMES = ("https://bysezejataos.com/d/abc", "https://n1mwq.org/xdk4/abc")
+
+
+_TURNSTILE_FRAME = (
+    "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g"
+    "/turnstile/if/ov2/av0/rcv/x1/0x4AAAAAAA/auto/fbE/new/normal/auto/"
+)
+_HOSTER_CAPTCHA = re.compile(r"/captcha(?:/verify)?/?(?:[?#]|$)")
+
+
+@pytest.mark.usefixtures("_fast_capture")
+class TestStealthPoolCaptureChallengeMark:
+    """A capture marks the resolution it runs in when its page shows a
+    challenge (react-to-challenges, R7): a captcha provider's frame, a
+    request the resolver names as its hoster's captcha, an interstitial."""
+
+    @staticmethod
+    async def _capture(
+        page: MagicMock, *, challenge_requests: re.Pattern[str] | None = None
+    ) -> tuple[object, ChallengeMark]:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=page)
+        mark = ChallengeMark()
+        challenge_mark.set(mark)
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://byse.example/e/abc",
+            timeout=10,
+            challenge_requests=challenge_requests,
+        )
+        return media, mark
+
+    async def test_a_captcha_providers_frame_marks(self) -> None:
+        page = _player_page(
+            on_load=[_TURNSTILE_FRAME],
+            on_click=[["https://cdn.example/hls/master.m3u8"]],
+            documents=frozenset({_TURNSTILE_FRAME}),
+        )
+
+        media, mark = await self._capture(page)
+
+        assert media is not None
+        assert mark.kind == "turnstile"
+
+    async def test_a_providers_script_alone_marks_nothing(self) -> None:
+        """Loading the widget's script shows no challenge yet."""
+        page = _player_page(
+            on_load=["https://challenges.cloudflare.com/turnstile/v0/api.js"],
+            on_click=[["https://cdn.example/hls/master.m3u8"]],
+        )
+
+        _, mark = await self._capture(page)
+
+        assert mark.kind is None
+
+    @pytest.mark.parametrize(
+        "captcha",
+        [
+            "https://byse.example/api/videos/abc/captcha",
+            "https://byse.example/api/videos/abc/captcha/verify?t=1",
+        ],
+    )
+    async def test_a_request_the_resolver_names_marks(self, captcha: str) -> None:
+        page = _player_page(on_click=[[captcha], []])
+
+        media, mark = await self._capture(page, challenge_requests=_HOSTER_CAPTCHA)
+
+        assert media is None
+        assert mark.kind == "hoster_captcha"
+
+    async def test_requests_the_resolver_does_not_name_mark_nothing(self) -> None:
+        page = _player_page(
+            on_load=["https://byse.example/e/captchas"],
+            on_click=[["https://cdn.example/hls/master.m3u8"]],
+        )
+
+        _, mark = await self._capture(page, challenge_requests=_HOSTER_CAPTCHA)
+
+        assert mark.kind is None
+
+    async def test_an_interstitial_marks(self) -> None:
+        page = _player_page(on_click=[["https://cdn.example/hls/master.m3u8"]])
+        titles = iter(["Just a moment..."])
+        page.title = AsyncMock(side_effect=lambda: next(titles, "Player"))
+
+        media, mark = await self._capture(page)
+
+        assert media is not None
+        assert mark.kind == "cloudflare_page"
+
+    async def test_a_plain_player_marks_nothing(self) -> None:
+        page = _player_page(
+            on_load=["https://player.example/assets/app.js"],
+            on_click=[["https://cdn.example/hls/master.m3u8"]],
+        )
+
+        media, mark = await self._capture(page, challenge_requests=_HOSTER_CAPTCHA)
+
+        assert media is not None
+        assert mark.kind is None
+
+    async def test_outside_a_resolution_a_frame_marks_nothing(self) -> None:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(
+            return_value=_player_page(
+                on_load=[_TURNSTILE_FRAME, "https://cdn.example/hls/master.m3u8"],
+                documents=frozenset({_TURNSTILE_FRAME}),
+            )
+        )
+
+        media = await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://byse.example/e/abc", timeout=10
+        )
+
+        assert media is not None
+        assert challenge_mark.get() is None
 
 
 class _Request:

@@ -7,6 +7,7 @@ Byse player). See ``StealthPool.capture_media``.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import structlog
@@ -27,6 +28,7 @@ async def capture_stream(
     *,
     player: str | None = None,
     own_scripts_only: bool = False,
+    challenge_requests: re.Pattern[str] | None = None,
 ) -> ResolvedStream | None:
     """Run the hoster's player in the stealth browser, take its stream request.
 
@@ -36,13 +38,18 @@ async def capture_stream(
     (``stremio.probe_stealth_timeout_seconds``). *player* names the element
     the browser clicks to start the player, the page centre without it.
     *own_scripts_only* keeps the scripts of other sites than the page's and
-    its frames' out (an ad tag that takes the clicks).
+    its frames' out (an ad tag that takes the clicks). *challenge_requests*
+    names the hoster's own captcha requests: one of them marks the
+    resolution as challenged, as a Cloudflare challenge does.
     """
     if stealth_pool is None:
         log.info(f"{hoster}_no_browser", url=embed_url)
         return None
     media = await stealth_pool.capture_media(
-        embed_url, player=player, own_scripts_only=own_scripts_only
+        embed_url,
+        player=player,
+        own_scripts_only=own_scripts_only,
+        challenge_requests=challenge_requests,
     )
     if media is None:
         log.info(f"{hoster}_browser_no_stream", url=embed_url)

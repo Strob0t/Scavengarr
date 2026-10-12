@@ -23,7 +23,13 @@ from patchright.async_api import Error as PlaywrightError
 
 from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
-from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
+from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
+    PageBusy,
+    PageGate,
+    ResolutionChallenge,
+    challenge_mark,
+)
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
     is_challenge_page,
@@ -31,6 +37,7 @@ from scavengarr.infrastructure.browser.turnstile import (
     read_when_settled,
     solve_cloudflare,
 )
+from scavengarr.infrastructure.captcha.detect import challenge_frame
 
 if TYPE_CHECKING:
     from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
@@ -148,6 +155,42 @@ def _foreign_script(resource_type: str, url: str, frame_urls: Iterable[str]) -> 
     if (urlparse(url).hostname or "").lower() == _CHALLENGE_HOST:
         return False
     return _site(url) not in {_site(frame_url) for frame_url in frame_urls}
+
+
+def _challenge_of(
+    request: Request, named: re.Pattern[str] | None
+) -> ResolutionChallenge | None:
+    """The challenge *request* shows: a captcha provider's frame, or a
+    request the resolver names as its hoster's own captcha (*named*)."""
+    if request.resource_type == "document" and (kind := challenge_frame(request.url)):
+        return kind
+    if named is not None and named.search(request.url):
+        return "hoster_captcha"
+    return None
+
+
+def _capture_listener(
+    found: asyncio.Future[CapturedMedia],
+    mark: ChallengeMark | None,
+    named: re.Pattern[str] | None,
+) -> Callable[[Request], None]:
+    """A capture's request listener: the first stream request settles
+    *found*, a challenge (``_challenge_of``) marks the hoster resolution's
+    *mark*."""
+
+    def _on_request(request: Request) -> None:
+        if mark is not None and (kind := _challenge_of(request, named)):
+            mark.note(kind)
+        # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
+        # ``…~abc?token=``) by the video element's request type
+        if (
+            not found.done()
+            and not _NOT_MEDIA_RE.search(request.url)
+            and (request.resource_type == "media" or _MEDIA_URL_RE.search(request.url))
+        ):
+            found.set_result(CapturedMedia(request.url, request.headers.get("referer")))
+
+    return _on_request
 
 
 async def _allow_own_player_resources(route: Route) -> None:
@@ -502,6 +545,7 @@ class StealthPool:
         timeout: float | None = None,
         player: str | None = None,
         own_scripts_only: bool = False,
+        challenge_requests: re.Pattern[str] | None = None,
     ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
@@ -518,11 +562,16 @@ class StealthPool:
         the resolvers' capture). The player clicks after it are bounded by
         the pool's own waits. *own_scripts_only* aborts the scripts of other
         sites than the page's and its frames' (``_allow_own_player_resources``):
-        an ad tag that takes the clicks.
+        an ad tag that takes the clicks. A captcha provider's frame and a
+        request that *challenge_requests* matches (the hoster's own captcha)
+        mark the hoster resolution the capture runs in (``challenge_mark``),
+        as an interstitial does.
         """
         if timeout is None:
             timeout = self._timeout_ms / 1000
         timeout_ms = int(timeout * 1000)
+        # Playwright calls the request listener outside this task's context
+        mark = challenge_mark.get()
         async with (
             self._pages.page("capture", timeout=timeout),
             self._browser_pool.lease(),
@@ -533,23 +582,7 @@ class StealthPool:
                 found: asyncio.Future[CapturedMedia] = (
                     asyncio.get_running_loop().create_future()
                 )
-
-                def _on_request(request: Request) -> None:
-                    # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
-                    # ``…~abc?token=``) by the video element's request type
-                    if (
-                        not found.done()
-                        and not _NOT_MEDIA_RE.search(request.url)
-                        and (
-                            request.resource_type == "media"
-                            or _MEDIA_URL_RE.search(request.url)
-                        )
-                    ):
-                        found.set_result(
-                            CapturedMedia(request.url, request.headers.get("referer"))
-                        )
-
-                page.on("request", _on_request)
+                page.on("request", _capture_listener(found, mark, challenge_requests))
                 page.on("popup", _close_popup)
                 await page.route(
                     "**/*",

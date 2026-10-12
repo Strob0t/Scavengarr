@@ -4,13 +4,15 @@ One classification for every plugin, resolver and prober, so logs and
 scoring speak the same language (docs/plans/captcha-solving.md, requirement 1).
 
 Page blocks (the whole response is a challenge) win over embedded widgets
-(a normal page that contains a captcha form).
+(a normal page that contains a captcha form). In a browser, the frames a
+captcha provider shows its challenge in name the kind (``challenge_frame``).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Literal
+from urllib.parse import parse_qs, urlsplit
 
 ChallengeKind = Literal[
     "cloudflare_page",
@@ -43,6 +45,16 @@ _WIDGET_MARKERS: tuple[tuple[ChallengeKind, tuple[str, ...]], ...] = (
     ("recaptcha", ("g-recaptcha", "google.com/recaptcha", "recaptcha.net/recaptcha")),
     ("altcha", ("<altcha-widget",)),
 )
+# The hosts of the providers' challenge frames: Cloudflare's challenge
+# platform (the Turnstile widget, the interstitial's check) and hCaptcha's;
+# reCAPTCHA's frames live under /recaptcha/ on these hosts
+_FRAME_HOSTS: tuple[tuple[ChallengeKind, str], ...] = (
+    ("turnstile", "challenges.cloudflare.com"),
+    ("hcaptcha", "hcaptcha.com"),
+)
+_RECAPTCHA_HOSTS = frozenset(
+    {"google.com", "www.google.com", "recaptcha.net", "www.recaptcha.net"}
+)
 
 
 def detect_challenge(
@@ -63,6 +75,22 @@ def detect_challenge(
     for kind, markers in _WIDGET_MARKERS:
         if any(m in lowered for m in markers):
             return kind
+    return None
+
+
+def challenge_frame(url: str) -> ChallengeKind | None:
+    """The captcha provider whose challenge frame *url* loads, ``None`` for
+    any other URL. An invisible reCAPTCHA's frame (v3's score) shows nothing
+    to pass and counts as none."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    for kind, frame_host in _FRAME_HOSTS:
+        if host == frame_host or host.endswith(f".{frame_host}"):
+            return kind
+    if host in _RECAPTCHA_HOSTS and parts.path.startswith("/recaptcha/"):
+        if parse_qs(parts.query).get("size") == ["invisible"]:
+            return None
+        return "recaptcha"
     return None
 
 
