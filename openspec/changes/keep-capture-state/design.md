@@ -25,7 +25,7 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
   - The capture states live under `browser:capture_state:v1`: one JSON object, host → `{saved_at, cookies, origins}`.
   - The key's TTL is 24 hours from the newest entry's `saved_at`, and entries older than 24 hours are dropped at load.
 - **Restore at creation.**
-  - `_ensure_context()` asks the store for one storage state: the unexpired clearance cookies, plus every kept host's unexpired cookies and origins. Cookies are de-duplicated by name, domain and path; origins by origin. The newest wins.
+  - `_ensure_context()` asks the store for one storage state: the unexpired clearance cookies, plus every kept host's unexpired cookies and origins. Cookies are de-duplicated by name, domain and path; origins by origin. The newest wins: a stored clearance cookie carries the time it was saved (`saved_at`, left out of what a context gets), weighed against the kept state's `saved_at`, so neither store beats the other by its kind (code review 2026-10-12, finding 7).
   - It creates the context with it.
   - When the creation with a state fails, the context is created without one, logged as `capture_state_restore_failed`.
   - The stealth pool no longer calls `restore()` (cookies after creation), since its cookies travel in the creation state. `restore()` stays for the Playwright plugins' own contexts (`PlaywrightPluginBase._configure_context()`), which get the clearance cookies as today and no capture state.

@@ -76,8 +76,20 @@ def _alive(cookie: dict[str, Any], now: float) -> bool:
     return isinstance(expires, (int, float)) and expires > now + _MIN_REMAINING_S
 
 
-def _key(cookie: dict[str, Any]) -> tuple[str, str, str]:
+def _key(cookie: Mapping[str, Any]) -> tuple[str, str, str]:
     return (cookie["name"], cookie["domain"], cookie.get("path", "/"))
+
+
+def _saved_at(cookie: Mapping[str, Any]) -> float:
+    """When the store saved *cookie*; 0 for one stored without its time."""
+    saved_at = cookie.get("saved_at")
+    return saved_at if isinstance(saved_at, (int, float)) else 0.0
+
+
+def _for_context(cookie: Mapping[str, Any]) -> dict[str, Any]:
+    """*cookie* without the time the store saved it at, which no browser
+    context takes."""
+    return {k: v for k, v in cookie.items() if k != "saved_at"}
 
 
 def _for_host(cookie: Mapping[str, Any], host: str) -> bool:
@@ -125,7 +137,7 @@ class ClearanceStore:
         """Add the unexpired stored clearance cookies to *context*."""
         try:
             now = time.time()
-            cookies = [c for c in await self._load() if _alive(c, now)]
+            cookies = [_for_context(c) for c in await self._load() if _alive(c, now)]
             if cookies:
                 await context.add_cookies(cookies)
                 log.info(
@@ -136,11 +148,13 @@ class ClearanceStore:
             log.warning("clearance_restore_failed", error=str(exc))
 
     async def remember(self, context: _CookieJar) -> None:
-        """Store *context*'s clearance cookies (merged with the stored ones)."""
+        """Store *context*'s clearance cookies (merged with the stored ones),
+        each with the time it was saved at: ``creation_state()`` weighs it
+        against the kept capture states' cookies."""
         try:
             now = time.time()
             fresh = [
-                {k: c[k] for k in _COOKIE_FIELDS if k in c}
+                {k: c[k] for k in _COOKIE_FIELDS if k in c} | {"saved_at": now}
                 for c in await context.cookies()
                 if _is_clearance(c) and _alive(c, now)
             ]
@@ -223,28 +237,36 @@ class ClearanceStore:
     async def creation_state(self) -> StorageState | None:
         """The storage state a new stealth context starts from: the
         unexpired clearance cookies and every kept host's cookies and
-        origins, the newest winning per cookie and per origin; None when
-        there is nothing."""
+        origins, the newest winning per cookie, whichever of the two holds
+        it, and per origin; None when there is nothing."""
         try:
             now = time.time()
-            cookies = {_key(c): c for c in await self._load() if _alive(c, now)}
+            # key -> (saved_at, cookie)
+            newest = {
+                _key(c): (_saved_at(c), c) for c in await self._load() if _alive(c, now)
+            }
             origins: dict[str, dict[str, Any]] = {}
             states = await self._load_states(now)
             # Oldest first: a newer entry's cookie or origin replaces it
             for _, entry in sorted(states.items(), key=lambda kv: kv[1]["saved_at"]):
+                saved_at = entry["saved_at"]
                 for cookie in entry.get("cookies") or []:
-                    if isinstance(cookie, dict) and _usable(cookie, now):
-                        cookies[_key(cookie)] = cookie
+                    if not isinstance(cookie, dict) or not _usable(cookie, now):
+                        continue
+                    held = newest.get(_key(cookie))
+                    if held is None or held[0] <= saved_at:
+                        newest[_key(cookie)] = (saved_at, cookie)
                 for origin in entry.get("origins") or []:
                     if isinstance(origin, dict) and origin.get("origin"):
                         origins[str(origin["origin"])] = origin
         except Exception as exc:  # noqa: BLE001  (a missing state costs a challenge)
             log.warning("capture_state_restore_failed", error=type(exc).__name__)
             return None
-        if not cookies and not origins:
+        if not newest and not origins:
             return None
         if states:
             log.info("capture_state_restored", hosts=sorted(states))
         # The entries are storage_state() output, read back from the cache
-        state = {"cookies": list(cookies.values()), "origins": list(origins.values())}
+        cookies = [_for_context(cookie) for _, cookie in newest.values()]
+        state = {"cookies": cookies, "origins": list(origins.values())}
         return cast("StorageState", state)

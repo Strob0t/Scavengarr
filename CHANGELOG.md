@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: The Newest Cookie Starts a Stealth Context
+- `ClearanceStore.creation_state()` let every kept capture state's cookie replace the clearance store's of the same name, domain and path, whatever their age. A capture that kept Dropload's `cf_clearance` A and a challenge within the host's 10-minute keep interval that stored B in the clearance store left every context created before the host's next keep (a recycle, a restart, a relaunch) with A, which Cloudflare no longer accepts (code review 2026-10-12, finding 7). Each stored clearance cookie now carries the time it was saved (`saved_at`, never handed to a browser context), and per cookie the newer of the two wins; a cookie stored before carries no time and loses to a kept one.
+
 ### Changed: The Capture Probe Counts the Kept IndexedDB Records
 - `scripts/probes/capture_timing.py --restore` prints, per origin with an IndexedDB database, its records and how many of them are encoded (a value or key no plain JSON holds: a date, a typed array, a file): `1 IndexedDB database (2 records, 0 encoded)`. In the dev container on 2026-10-12 Filemoon's player host held 2 records, none encoded; Dropload and Vixeo kept no IndexedDB (`docs/plans/challenge-reactions.md` → R4, row 97).
 

@@ -21,7 +21,7 @@ After a capture found its stream, the stealth pool SHALL keep the storage state 
 - **THEN** nothing is kept for its hosts
 
 ### Requirement: Every New Context Starts With The Kept State
-The stealth pool SHALL create each new browser context (at the start, after a recycle, after a relaunch) with the unexpired clearance cookies and every kept host's unexpired cookies, localStorage and IndexedDB, the newest winning per cookie and per origin. A kept state older than 24 hours SHALL NOT be restored. A failure to restore SHALL leave a context without the state, logged, never a failed capture.
+The stealth pool SHALL create each new browser context (at the start, after a recycle, after a relaunch) with the unexpired clearance cookies and every kept host's unexpired cookies, localStorage and IndexedDB, the newest winning per cookie, whether the clearance cookies or a kept state hold it, and per origin. A kept state older than 24 hours SHALL NOT be restored. A failure to restore SHALL leave a context without the state, logged, never a failed capture.
 
 #### Scenario: After a restart
 - **WHEN** the app restarts and a Dropload link is captured whose host's state was kept before the restart
@@ -31,6 +31,10 @@ The stealth pool SHALL create each new browser context (at the start, after a re
 #### Scenario: After a recycle
 - **WHEN** the shared browser recycles after 200 pages
 - **THEN** the next context is created with the kept states and the clearance cookies
+
+#### Scenario: A newer clearance
+- **WHEN** a capture kept Dropload's `cf_clearance` A, and a challenge within the host's 10-minute keep interval stored B among the clearance cookies
+- **THEN** the next context is created with B
 
 #### Scenario: Expired
 - **WHEN** a host's state was kept 25 hours ago

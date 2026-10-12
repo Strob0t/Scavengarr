@@ -7,8 +7,10 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 import structlog.testing
 
+from scavengarr.infrastructure.browser import clearance_store
 from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 
 _KEY = "browser:clearance_cookies"
@@ -387,6 +389,111 @@ class TestCreationState:
 
         assert state is None
         assert any(e["event"] == "capture_state_restore_failed" for e in logs)
+
+
+class _Clock:
+    """The store's wall clock, set by the test."""
+
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+
+def _clock(monkeypatch: pytest.MonkeyPatch, now: float) -> _Clock:
+    clock = _Clock(now)
+    monkeypatch.setattr(clearance_store, "time", clock)
+    return clock
+
+
+def _memory_store() -> tuple[ClearanceStore, dict[str, str]]:
+    """A store on a cache that keeps what it is given."""
+    data: dict[str, str] = {}
+    cache = AsyncMock()
+
+    async def _get(key: str) -> str | None:
+        return data.get(key)
+
+    async def _set(key: str, value: str, ttl: int | None = None) -> None:
+        data[key] = value
+
+    async def _delete(key: str) -> None:
+        data.pop(key, None)
+
+    cache.get.side_effect = _get
+    cache.set.side_effect = _set
+    cache.delete.side_effect = _delete
+    return ClearanceStore(cache), data
+
+
+class TestNewestCookieWins:
+    """Per cookie the newest of the stored clearance cookies and the kept
+    capture states' starts a new context, whichever store holds it (code
+    review 2026-10-12, finding 7)."""
+
+    async def test_a_newer_clearance_beats_an_older_kept_cookie(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The review's case: a capture kept Dropload's cf_clearance A,
+        Cloudflare challenged again within the keep interval, and
+        ``remember()`` stored B. A context created before the host's next
+        keep starts with B, not with A."""
+        clock = _clock(monkeypatch, 1_800_000_000.0)
+        store, _ = _memory_store()
+        expires = clock.now + 365 * _DAY
+        await store.keep_capture_state(
+            ["dr0pstream.com"],
+            {"cookies": [_cookie("cf_clearance", ".dr0pstream.com", expires, "A")]},
+        )
+        clock.now += 120
+        await store.remember(
+            _context([_cookie("cf_clearance", ".dr0pstream.com", expires + 120, "B")])
+        )
+
+        state = await store.creation_state()
+
+        assert state is not None
+        assert [c["value"] for c in state["cookies"]] == ["B"]
+
+    async def test_a_newer_kept_cookie_beats_an_older_clearance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = _clock(monkeypatch, 1_800_000_000.0)
+        store, _ = _memory_store()
+        expires = clock.now + 365 * _DAY
+        await store.remember(
+            _context([_cookie("cf_clearance", ".dr0pstream.com", expires, "A")])
+        )
+        clock.now += 120
+        await store.keep_capture_state(
+            ["dr0pstream.com"],
+            {"cookies": [_cookie("cf_clearance", ".dr0pstream.com", expires, "B")]},
+        )
+
+        state = await store.creation_state()
+
+        assert state is not None
+        assert [c["value"] for c in state["cookies"]] == ["B"]
+
+    async def test_no_cookie_carries_its_time_into_a_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = _clock(monkeypatch, 1_800_000_000.0)
+        store, data = _memory_store()
+        await store.remember(
+            _context([_cookie("cf_clearance", ".filmfans.org", clock.now + 365 * _DAY)])
+        )
+        context = _context([])
+
+        state = await store.creation_state()
+        await store.restore(context)
+
+        assert "saved_at" in json.loads(data[_KEY])[0]
+        assert state is not None
+        assert all("saved_at" not in c for c in state["cookies"])
+        (added,) = context.add_cookies.await_args.args
+        assert all("saved_at" not in c for c in added)
 
 
 async def test_no_log_line_carries_a_value_or_a_url() -> None:
