@@ -663,6 +663,7 @@ def _series_page(seasons: int) -> str:
 
 _LUFFY = "I'm Luffy! The Man Who Will Become the Pirate King!"
 _LABOON = "The First Line of Defense? The Giant Whale Laboon Appears!"
+_PROMISE = "A Promise Between Men! Luffy and the Whale Vow to Meet Again!"
 _STAFFEL_2 = "<html><body>" + _season_table(
     2,
     [
@@ -755,6 +756,30 @@ class TestLocatesEpisodes:
                 "located_by": "number",
             }.items()
         )
+
+    @pytest.mark.parametrize(
+        ("ref", "site_episode", "rule"),
+        [
+            (EpisodeRef(5, 2, absolute=62), 1, "number"),
+            # the site shows no 64, the title confirms its neighbour 63
+            (EpisodeRef(5, 3, _PROMISE, absolute=64), 2, "neighbour"),
+            (EpisodeRef(5, 2, _LABOON), 1, "title"),
+            (EpisodeRef(5, 2, _LABOON.replace("Defense", "Defence")), 1, "fuzzy_title"),
+        ],
+    )
+    async def test_the_located_line_names_the_rule(
+        self, ref: EpisodeRef, site_episode: int, rule: str
+    ) -> None:
+        plugin, _paths = _locating_plugin()
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=ref.season, episode=ref.episode, episode_ref=ref
+            )
+
+        assert results[0].metadata["episode_located_by"] == rule
+        located = next(e for e in logs if e["event"] == "aniworld_episode_located")
+        assert (located["site_episode"], located["located_by"]) == (site_episode, rule)
 
     async def test_the_runners_entry_reaches_the_reference(self) -> None:
         """The runner calls ``isolated_search``: the reference arrives there too

@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -31,7 +31,7 @@ from scavengarr.domain.entities.stremio import EpisodeMeta, EpisodeRef, SeriesMe
 from scavengarr.infrastructure.anime import kitsu_addon
 from scavengarr.infrastructure.anime.id_lists import LIST_URL
 from scavengarr.infrastructure.anime.kitsu_addon import ADDON_URL, Placement
-from scavengarr.infrastructure.plugins.episode_index import EpisodeRow
+from scavengarr.infrastructure.plugins.episode_index import EpisodeRow, Located
 from scavengarr.infrastructure.stremio import cinemeta
 from scavengarr.infrastructure.stremio.cinemeta import CINEMETA_URL
 
@@ -231,6 +231,14 @@ _DUB_ROWS = [
 ]
 _DUB_REF = _ref("A New Evil (Part 1 of 2)", 145, season=4, episode=1)
 
+# Naruto Shippuden's #372 as aniworld listed it on 2026-10-11: the shorter
+# title is a subset of the longer one, both score 1.00
+_HOLE_ROWS = [
+    _row(17, 10, "Hole", 371),
+    _row(17, 11, "Something to Fill the Hole", 372),
+]
+_HOLE_REF = _ref("Something to Fill the Hole", 372)
+
 
 class TestPlace:
     def test_a_title_confirms_the_exact_row(self) -> None:
@@ -252,9 +260,10 @@ class TestPlace:
         assert (verdict.kind, verdict.confirmed) == ("exact", False)
 
     def test_a_neighbour_the_title_confirms_has_its_offset(self) -> None:
+        # No row shows 1
         index = [
-            _row(1, 1, "Something Else Entirely", 1),
             _row(1, 2, "The Heart of the Cards", 2),
+            _row(1, 3, "Something Else Entirely", 3),
         ]
         verdict = _mod.place(index, _ref("The Heart of the Cards", 1))
         assert (verdict.kind, verdict.offset, verdict.confirmed) == (
@@ -262,24 +271,42 @@ class TestPlace:
             1,
             True,
         )
-        assert verdict.exact == index[0]
+        assert verdict.exact is None
 
     def test_a_title_far_from_the_number_places_by_title(self) -> None:
+        # No row shows 2, its neighbour's title is another (0.39)
         index = [
             _row(1, 1, "Something Else Entirely", 1),
             _row(2, 1, "The Heart of the Cards", 30),
         ]
-        verdict = _mod.place(index, _ref("The Heart of the Cards", 1))
-        assert (verdict.kind, verdict.row, verdict.offset) == ("title", index[1], 29)
-        assert verdict.exact == index[0]
+        verdict = _mod.place(index, _ref("The Heart of the Cards", 2))
+        assert (verdict.kind, verdict.row, verdict.offset) == ("title", index[1], 28)
+        assert verdict.exact is None
 
     def test_rows_without_numbers_place_by_title_alone(self) -> None:
         index = [_row(1, 1, "Pikachu's Goodbye")]
-        verdict = _mod.place(index, _ref("Pikachu's Goodbye", 39))
-        assert (verdict.kind, verdict.exact, verdict.offset) == ("title", None, None)
+        for title in ("Pikachu's Goodbye", "Pikachu's Goodbyes"):
+            verdict = _mod.place(index, _ref(title, 39))
+            assert (verdict.kind, verdict.exact, verdict.offset) == (
+                "title",
+                None,
+                None,
+            )
+
+    def test_the_numbers_row_with_the_dubs_title_is_exact(self) -> None:
+        # N26's case, placed by the number since row 87
+        verdict = _mod.place(_DUB_ROWS, _DUB_REF)
+        assert (verdict.kind, verdict.row, verdict.offset) == (
+            "exact",
+            _DUB_ROWS[0],
+            0,
+        )
+        assert verdict.score == pytest.approx(0.53, abs=0.01)
 
     def test_an_exact_row_with_a_dub_title_is_n26s_case(self) -> None:
-        verdict = _mod.place(_DUB_ROWS, _DUB_REF)
+        # locate() before row 87 gave nothing here
+        with patch.object(_mod, "locate", return_value=None):
+            verdict = _mod.place(_DUB_ROWS, _DUB_REF)
         assert (verdict.kind, verdict.row, verdict.exact) == (
             "unconfirmed",
             None,
@@ -290,17 +317,26 @@ class TestPlace:
         assert verdict.near is not None
         assert verdict.near[0] == _DUB_ROWS[0]
 
-    def test_a_tie_takes_the_earlier_row(self) -> None:
+    def test_the_numbers_row_wins_a_tie(self) -> None:
         # Naruto Shippuden's #372 as aniworld listed it on 2026-10-11: the
         # shorter title is a subset of the longer one, both score 1.00
-        index = [
-            _row(17, 10, "Hole", 371),
-            _row(17, 11, "Something to Fill the Hole", 372),
-        ]
-        verdict = _mod.place(index, _ref("Something to Fill the Hole", 372))
+        verdict = _mod.place(_HOLE_ROWS, _HOLE_REF)
+        assert (verdict.kind, verdict.row, verdict.offset) == (
+            "exact",
+            _HOLE_ROWS[1],
+            0,
+        )
+        assert not verdict.tie
+
+    def test_an_earlier_row_that_scores_as_high_is_a_tie(self) -> None:
+        # locate() before row 87 kept the earlier row of equal scores
+        with patch.object(
+            _mod, "locate", return_value=Located(_HOLE_ROWS[0], "neighbour")
+        ):
+            verdict = _mod.place(_HOLE_ROWS, _HOLE_REF)
         assert (verdict.kind, verdict.row, verdict.offset) == (
             "neighbour",
-            index[0],
+            _HOLE_ROWS[0],
             -1,
         )
         assert verdict.score == verdict.exact_score == 1.0
@@ -318,6 +354,8 @@ class TestPlace:
 
 
 def _tallied() -> Any:
+    """Three episodes placed as locate() before row 87 did: the exact row,
+    nothing (N26) and a neighbour while the number's row is there."""
     meta = SeriesMeta(
         name="Series",
         year=2000,
@@ -336,7 +374,13 @@ def _tallied() -> Any:
         _row(1, 3, "Something Else Entirely", 3),
         _row(1, 4, "Duel Identity", 4),
     ]
-    return _mod.tally("Series", "series", "tt1", index, meta, {(1, 2): 2})
+    placed = {
+        1: Located(index[0], "number"),
+        2: None,
+        3: Located(index[3], "neighbour"),
+    }
+    with patch.object(_mod, "locate", side_effect=lambda _, ref: placed[ref.episode]):
+        return _mod.tally("Series", "series", "tt1", index, meta, {(1, 2): 2})
 
 
 class TestTally:
@@ -376,7 +420,9 @@ class TestSiteReport:
         )
 
     def test_a_case_names_the_reference_the_rows_and_the_scores(self) -> None:
-        line = _mod.case_line(_DUB_REF, _mod.place(_DUB_ROWS, _DUB_REF))
+        with patch.object(_mod, "locate", return_value=None):
+            verdict = _mod.place(_DUB_ROWS, _DUB_REF)
+        line = _mod.case_line(_DUB_REF, verdict)
         assert line == (
             "S4E1 #145 'A New Evil (Part 1 of 2)': exact row S4E1"
             " 'Pulse of a New Darkness' / 'Deutsch 4-1' 0.53;"

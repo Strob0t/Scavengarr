@@ -71,22 +71,53 @@ _STO_ANIME = [
 ]
 
 
+# Detective Conan as aniworld lists it: the dub's English titles and the
+# Japanese count's absolute number, which the parts of a double-length
+# episode share
+_CONAN = [
+    _row(1, 8, "The Art Museum Murder Case", 8),
+    _row(1, 11, "The Moonlight Sonata Murder Case (1/2)", 11),
+    _row(1, 12, "The Moonlight Sonata Murder Case (2/2)", 11),
+    _row(1, 14, "Mystery Mastermind", 13),
+    _row(6, 22, "Metropolitan Police Detective Love Story 2 (1)", 156),
+    _row(6, 23, "Metropolitan Police Detective Love Story 2 (2)", 157),
+]
+
+
 class TestLocate:
     def test_located_by_number(self) -> None:
         ref = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62)
 
         assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[3], "number")
 
-    def test_the_title_confirms_the_neighbour_of_a_number_one_off(self) -> None:
-        # The catalog's position is 1088, the site counts 1089
-        ref = EpisodeRef(22, 4, _SABO, "2024-01-07", absolute=1088)
+    def test_the_numbers_row_wins_against_the_part_before(self) -> None:
+        # The second part's title is a word subset of both parts' (1.00 for
+        # each); the earlier row took the tie
+        ref = EpisodeRef(
+            7, 12, "Metropolitan Police Detective Love Story 2 (2)", absolute=157
+        )
 
-        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[7], "number")
+        assert locate(_CONAN, ref) == Located(_CONAN[5], "number")
 
-    def test_a_variant_translation_still_confirms_the_number(self) -> None:
-        ref = EpisodeRef(1, 1, _LUFFY_CATALOG, "1999-10-20", absolute=1)
+    def test_the_numbers_row_wins_against_a_neighbour_with_a_better_title(
+        self,
+    ) -> None:
+        # "The Art Museum Murder Case" matches 0.73, the number's row 0.38
+        ref = EpisodeRef(1, 13, "The Strange Person Hunt Murder Case", absolute=13)
 
-        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[0], "number")
+        assert locate(_CONAN, ref) == Located(_CONAN[3], "number")
+
+    def test_the_numbers_row_wins_against_an_exact_title_elsewhere(self) -> None:
+        # The number points at season 1, the title names the Laboon episode
+        ref = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=3)
+
+        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[2], "number")
+
+    def test_a_number_on_several_rows_places_the_first(self) -> None:
+        # One double-length episode, its two parts on the site
+        ref = EpisodeRef(1, 11, "Moonlight Sonata Murder Case", absolute=11)
+
+        assert locate(_CONAN, ref) == Located(_CONAN[1], "number")
 
     def test_without_a_title_the_number_alone_counts(self) -> None:
         assert locate(_ONE_PIECE, EpisodeRef(5, 2, absolute=62)) == Located(
@@ -102,9 +133,31 @@ class TestLocate:
         assert locate(_STO_ANIME, ref) == Located(_STO_ANIME[0], "number")
         assert locate(_STO_ANIME, EpisodeRef(5, 3, _PROMISE, absolute=61)) is None
 
-    def test_an_unconfirmed_number_gives_way_to_the_exact_title(self) -> None:
-        # The number points at season 1, the title names the Laboon episode
-        ref = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=3)
+    def test_the_title_confirms_the_neighbour_of_a_number_the_site_lacks(
+        self,
+    ) -> None:
+        # The catalog's position is 1088, the site counts 1089 and shows no 1088
+        index = [row for row in _ONE_PIECE if row.absolute != 1088]
+        ref = EpisodeRef(22, 4, _SABO, "2024-01-07", absolute=1088)
+
+        assert locate(index, ref) == Located(_ONE_PIECE[7], "neighbour")
+
+    def test_a_variant_translation_confirms_the_neighbour(self) -> None:
+        # The catalog counts 2, the site 1 and shows no 2; the translations
+        # differ in wording (0.82)
+        index = [row for row in _ONE_PIECE if row.absolute != 2]
+        ref = EpisodeRef(1, 2, _LUFFY_CATALOG, "1999-10-20", absolute=2)
+
+        assert locate(index, ref) == Located(_ONE_PIECE[0], "neighbour")
+
+    def test_without_the_numbers_row_the_exact_title_places_it(self) -> None:
+        # A number the site lacks, far from the episode's own
+        ref = EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=500)
+
+        assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[3], "title")
+
+    def test_without_a_number_the_title_places_it(self) -> None:
+        ref = EpisodeRef(5, 2, _LABOON, "2001-03-21")
 
         assert locate(_ONE_PIECE, ref) == Located(_ONE_PIECE[3], "title")
 
@@ -116,7 +169,7 @@ class TestLocate:
     def test_located_by_the_best_fuzzy_title(self) -> None:
         ref = EpisodeRef(4, 1, "Someone's Dreams", "2023-04-09", absolute=45)
 
-        assert locate(_DEMON_SLAYER, ref) == Located(_DEMON_SLAYER[2], "title")
+        assert locate(_DEMON_SLAYER, ref) == Located(_DEMON_SLAYER[2], "fuzzy_title")
 
     def test_a_loose_title_match_is_no_location(self) -> None:
         ref = EpisodeRef(4, 2, "Yoriichi's Dream", "2023-04-16", absolute=46)

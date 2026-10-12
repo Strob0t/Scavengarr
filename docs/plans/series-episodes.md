@@ -379,3 +379,31 @@ Title-confirmed: the placements a title confirmed (rule 1 with a title, rules 2 
 - The number first (the number's row whenever the site shows the reference's number; the title only without one): the 191 move to the number's row (right in 114 of the 115 checked; Detective Conan's #1077 wrong), and N26's 307 are placed.
 
 Limits: one run, the catalogs' and aniworld's state of 2026-10-11 (the runs at 17:07 and 17:11 UTC gave the same counts for the same pages), the dev container, nothing in production. The probe searches with Cinemeta's name; the app searches with TMDB's titles, not measured here (¹). Pokémon and Digimon show no absolute numbers, so rule 1 never applies and N26 does not arise; their title placements were not checked (Digimon places 107 episodes on 104 rows, so at least three rows take two episodes). The 4554 placements a title confirmed at the number's row were not checked by eye: title and number agree there. Of the ties, 25 of 101 were checked. Duel Monsters, Boruto and Black Clover have no Kitsu number (row 76): their references use the position. aniworld's English titles of Detective Conan keep " [JP" of "[JP Episode N]" (the index cuts "Episode N]" only, so "jp" is a word of every Conan title), and Naruto: Shippuden's #53 is "Title".
+
+### Row 87: the number first, before and after (2026-10-12, dev container, `handoff-87` on `staging` e149f55)
+
+The maintainer chose the number first (2026-10-12 06:36 UTC): `locate()` takes the row that shows the reference's absolute number, whatever its title, and the title rules decide only without that row or without a number. The command above, read-only against the same sites: before on `staging`'s `locate()` (06:51 UTC), after with the number first (07:02 UTC). The before run gave row 82's table to the count; per series, before → after:
+
+| Series | Exact | Neighbour | Title | N26 | Nothing | At another row |
+|---|---:|---:|---:|---:|---:|---:|
+| Yu-Gi-Oh! Duel Monsters | 40 → 224 | 33 → 0 | 4 → 0 | 147 → 0 | 0 | 37 → 0 |
+| Pokémon | 0 | 0 | 1211 | 0 | 164 | 0 |
+| Digimon Adventure | 0 | 0 | 107 | 0 | 146 | 0 |
+| Dragon Ball Z | 291 | 0 | 0 | 0 | 0 | 0 |
+| One Piece | 1125 → 1176 | 7 → 0 | 3 | 44 → 0 | 0 | 7 → 0 |
+| Detective Conan | 1002 → 1216 | 129 → 0 | 2 → 0 | 83 → 0 | 1 | 131 → 0 |
+| Naruto: Shippuden | 488 → 500 | 4 → 0 | 0 | 8 → 0 | 0 | 4 → 0 |
+| Naruto | 198 → 220 | 2 → 0 | 0 | 20 → 0 | 0 | 2 → 0 |
+| Bleach | 360 → 363 | 1 → 0 | 2 | 2 → 0 | 1 | 1 → 0 |
+| Boruto: Naruto Next Generations | 289 → 292 | 1 → 0 | 2 → 1 | 1 → 0 | 0 | 2 → 0 |
+| Black Clover | 161 → 168 | 4 → 0 | 12 → 11 | 2 → 0 | 4 | 5 → 0 |
+| Fairy Tail | 326 → 328 | 2 → 0 | 0 | 0 | 0 | 2 → 0 |
+| Hunter x Hunter | 148 | 0 | 0 | 0 | 0 | 0 |
+| Dragon Ball Super | 131 | 0 | 0 | 0 | 0 | 0 |
+| **All** (6708 episodes) | 4559 → 5057 | 183 → 0 | 1343 → 1335 | 307 → 0 | 316 | 191 → 0 |
+
+- **What changed.** An offline diff of the same rows against a copy of `staging`'s `locate()`: 498 placements change, exactly N26's 307 and the 191 at another row. Of the 191, 181 were neighbours, 8 far title placements (Duel Monsters 4, Detective Conan 2, Boruto 1, Black Clover 1) and 2 a later part of a split double-length Detective Conan episode that keeps one number (#219 and #345, now on the first part). No placement without the number's row changed. The check by eye above covers 69 of the 307 and 115 of the 191: the number's row is the episode in all of them but Detective Conan #1077, which now takes aniworld's #1077, the Rei Furuya episode: the change's known limit, a site numbering shifted against Kitsu's.
+- **sto** (`series_episodes.py --plugins sto`, two requests per series: the regular episode a third in and the last one, 28 requests, 06:51 and 07:02 UTC): 19 requests have results. 17 are the same, Yu-Gi-Oh! S2E26 keeps its page with the rule now named `fuzzy_title`, and Naruto Shippuden S8E16 gains a second result, from the series Naruto (sto's #167). The same requests with `--plugins aniworld,sto` (07:06 before, staging's code imported from the main checkout, and 07:07 after): aniworld places three episodes it gave nothing for (Duel Monsters S2E26, Naruto S5E41, Black Clover S1E62) and gives Naruto's #167 for Shippuden S8E16 too.
+- **The parent series' episodes** (a finding beyond `locate()`): TMDB's German title "Naruto: Shippūden" adds the base query "Naruto" (`build_search_queries()`), aniworld's and sto's searches then locate the reference on the series Naruto too, and the title matcher keeps "Naruto" for "Naruto: Shippūden" (a result that only drops words keeps 1.00). On the indices, Shippuden's 500 references land on Naruto's: aniworld 42 before (by title) and 235 after; sto 201 before (its anime rows show no English title, so the number placed them already) and 210 after (9 of its Naruto rows carry text in the English column, "Episode 166 +"). Live, Shippuden S1E6, S2E9, S3E1 and S9E10 (07:11 and 07:12 UTC): sto gives a Naruto result for all four before and after, aniworld for two before and all four after. Every "Parent: Subtitle" title whose parent is another numbered series on these sites is exposed; the cause lies in the base query's hits and the matcher (KNOWN_ISSUES).
+
+Limits: one run each, the sites' state of 2026-10-12 morning, nothing in production. The sto comparison covers two requests per series, not the long-runners' full lists. The parent-series counts come from the indices for Shippuden on Naruto only, the live check from four requests; other parent and sub-series pairs were not measured.

@@ -1,19 +1,19 @@
 ## 1. Tests first (`tests/unit/infrastructure/`, the episode index's tests)
 
-- [ ] 1.1 The number's row wins against a neighbour whose title matches better: the second part of a two-part case, whose title is a word subset of the first part's (1.00), lands on its own number's row, not the earlier one.
-- [ ] 1.2 The number's row wins against a far title match, rules 2 and 3 not consulted.
-- [ ] 1.3 A row that shows the number in place of a title is located by the number, as before.
-- [ ] 1.4 Without a row that shows the number, the neighbour rule (within 5, at least 0.6), the exact title and the best title (at least 0.85) place the episode, as before; without any match nothing is located.
-- [ ] 1.5 A reference without an absolute number uses the title rules, as before.
-- [ ] 1.6 The `aniworld_episode_located` line names the rule that placed the episode.
+- [x] 1.1 The number's row wins against a neighbour whose title matches better: the second part of a two-part case, whose title is a word subset of the first part's (1.00), lands on its own number's row, not the earlier one.
+- [x] 1.2 The number's row wins against a far title match, rules 2 and 3 not consulted.
+- [x] 1.3 A row that shows the number in place of a title is located by the number, as before.
+- [x] 1.4 Without a row that shows the number, the neighbour rule (within 5, at least 0.6), the exact title and the best title (at least 0.85) place the episode, as before; without any match nothing is located.
+- [x] 1.5 A reference without an absolute number uses the title rules, as before.
+- [x] 1.6 The `aniworld_episode_located` line names the rule that placed the episode.
 
 ## 2. Implementation
 
-- [ ] 2.1 `locate()` in `src/scavengarr/infrastructure/plugins/episode_index.py`: the row with the reference's absolute number first, whatever its title; the title rules only without it or without a number.
+- [x] 2.1 `locate()` in `src/scavengarr/infrastructure/plugins/episode_index.py`: the row with the reference's absolute number first, whatever its title; the title rules only without it or without a number.
 
 ## 3. Live proof (dev container)
 
-- [ ] 3.1 Row 82's probe again (`PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py --aniworld`, the same fourteen series and `--slug` pages):
+- [x] 3.1 Row 82's probe again (`PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py --aniworld`, the same fourteen series and `--slug` pages):
   - N26's case and the placements at another row go to 0 for the series with numbers;
   - Pokémon's and Digimon's title placements stay as they were;
   - the table before and after in `docs/plans/series-episodes.md` → Row 82.
@@ -21,8 +21,8 @@
 
 ## 4. Docs
 
-- [ ] 4.1 `docs/features/python-plugins.md`: the rules of `locate()`, and the reference's absolute number, which the Kitsu number now gives for IMDb anime requests too (rows 76 and 77).
-- [ ] 4.2 `CHANGELOG.md` under `## Unreleased (staging)`.
+- [x] 4.1 `docs/features/python-plugins.md`: the rules of `locate()`, and the reference's absolute number, which the Kitsu number now gives for IMDb anime requests too (rows 76 and 77).
+- [x] 4.2 `CHANGELOG.md` under `## Unreleased (staging)`.
 
 ## 5. The wrong-series leak and the parent series (row 92)
 

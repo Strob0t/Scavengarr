@@ -77,6 +77,7 @@ from scavengarr.infrastructure.plugins.dom import parse_page
 from scavengarr.infrastructure.plugins.episode_index import (
     _NUMBER_SLACK,
     EpisodeRow,
+    LocatedBy,
     _best,
     episode_index,
     locate,
@@ -309,6 +310,15 @@ async def series_offsets(
 
 Placed = Literal["exact", "neighbour", "title", "unconfirmed", "nothing"]
 
+# The kind of each rule of ``locate``: the number's row is the exact one,
+# the two title rules are one kind
+_KINDS: dict[LocatedBy, Placed] = {
+    "number": "exact",
+    "neighbour": "neighbour",
+    "title": "title",
+    "fuzzy_title": "title",
+}
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -368,10 +378,7 @@ def place(index: list[EpisodeRow], ref: EpisodeRef) -> Verdict:
         kind: Placed = "unconfirmed" if exact_score is not None else "nothing"
         return Verdict(kind, exact=exact, exact_score=exact_score, near=near)
     row = located.row
-    if located.by == "title":
-        kind = "title"
-    else:
-        kind = "exact" if row == exact else "neighbour"
+    kind = _KINDS[located.by]
     offset = None
     if row.absolute is not None and ref.absolute is not None:
         offset = row.absolute - ref.absolute
