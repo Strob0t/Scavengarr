@@ -93,6 +93,21 @@ Limits: the dev container, one link per hoster, one run each; the short bounds s
 
 **Deployed 2026-10-12 10:39:09 UTC (7c23863).** The first production completion came with the post-deploy check's movie request: hdfilme's Dropload link fell back to the browser at 10:39:43 (`dropload_captcha_browser_fallback`), was marked `turnstile` and cut at the bound at 10:39:52 (`challenge`, cooldown 60 s). The capture ran on and ended at 10:40:05 without a stream (`dropload_browser_no_stream`), 22 s after its start and 13 s after the cut, before the 20 s deadline: its own waits (the autoplay wait, then 3 clicks with 5 s each, `_start_player`) ran out. So `hoster_challenge_unsolved` with a 300 s cooldown, `hoster_challenge_completion_total{outcome="none",resolver="dropload"}` 1, and the breaker untouched; the next Dropload link (10:40:10) waited out the cooldown (`left_s=295`). One sample. In dev the same capture streamed 4.4 to 9.5 s after its start in 6 of 6 runs, so on the Pi either the Turnstile pass or the player after it differs; the day's outcomes (task 2.7 with 1.10) tell which.
 
+**Filemoon's trial, 10:58 UTC (Mr. Normal's two requests for `series/kitsu:12:1089`, checked against production's log): the first stream from a completion.** Filemoon's breaker came back open from the restart, due at about 10:57:20.
+
+| Time (UTC) | Line |
+|---|---|
+| 10:58:09 | request 1: HTTP 200 in 0.1 s, `X-Cache: HIT`, 4 streams (VOE, Vidmoly), no Filemoon yet |
+| 10:58:12 | aniworld's Byse link (bysezejataos.com) takes the half-open trial |
+| 10:58:22 | `hoster_resolve_challenge kind=hoster_captcha cooldown_s=60`: the cut at the 10 s bound |
+| 10:58:23 | `hoster_resolve_success challenge=hoster_captcha duration_ms=10789`: the completion's stream, 0.785 s after the cut, cached |
+| 10:58:26 | `capture_state_saved hosts=['bysezejataos.com', 'n1mwq.org'] cookies=2 origins=2 bytes=2547` |
+| 10:59:04 | request 2: HTTP 200 in 0.1 s, 9 streams, "1080p \| FILEMOON · aniworld (German Dub)" among them (`outcome=cached`) |
+| 10:59:13 | two filemoon.to links of request 2's background resolution: `hoster_resolve_success challenge=None`, 9003 and 9503 ms, within the bound |
+| 10:59:16 | `capture_state_saved hosts=['filemoon.to']` |
+
+The completion's stream closed the half-open breaker: the two filemoon.to attempts ran instead of being refused (`breaker_open` stayed at 30: 28 from before the trial and 2 filemoon.to links at 10:58:12, while the trial held the half-open slot), though the breaker logs no line for closing. The warm captures took 9.0 and 9.5 s, side by side, against 5.8 and 6.7 s for single warm runs on 2026-10-11, and met no captcha. `hoster_challenge_completion_total` reads `stream` 1 for Filemoon (0.785 s) and `none` 1 for Dropload (13.2 s). Task 2.7 holds for Filemoon: its first challenged capture after the restart finished in the background, and the next ones ran warm within 10 s. For Dropload it is open. One trial; the day's numbers are task 1.10.
+
 ### R3: a capture budget of its own (gaps 1 and 3)
 
 - **What:** a separate time bound for captures, or simply production's resolve bound raised: `http.timeout_resolve_seconds` 25 in the Pi's YAML, against the default of 15.
@@ -180,6 +195,7 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
   - The launch took 0.3 s in the dev container (about 9 s on the Pi). A run with an empty cache logged the launch and `stealth_pool_started` 0.7 s after `app_startup_complete` and no restore line; a run whose port was taken shut down during the warm-up without an error.
   - **Production (10d43f4, deployed 2026-10-12 10:11:59 UTC):** `app_startup_complete` 10:11:59, `shared_browser_launched` and `stealth_pool_started` 10:12:06 (7 s on the Pi), the first Stremio request 10:12:25 (the post-deploy check), so no capture waited for the launch. No `capture_state_restored`: no capture has kept a state yet. The restore brought Filemoon's breaker back open (`hoster_resolve_circuit_open` from 10:12:26, due at about 10:57:20), so its next trial is the first with the browser up since the start.
   - **The first kept state across a restart (7c23863, 10:39:16 UTC):** `capture_state_restored hosts=['vixeo.io']` right after `shared_browser_launched`, before `stealth_pool_started`. It is Vidsonic's player (the Vixeo resolver); its capture streamed at 10:12:57 in 10d43f4 (`hoster_resolve_success hoster=vidsonic`, 1768 ms), most likely the save (that container's log went with it), and the start of 10:11:59 had restored none. So the save and the restore work in production. Task 3.2 still needs a Filemoon or Dropload capture that keeps a state, and the restart after it.
+  - **Filemoon's state kept (10:58:26 UTC, 7c23863):** R2's completion found the stream after the cut, and the pool kept bysezejataos.com's and n1mwq.org's state (2 cookies, 2 origins, 2547 bytes; filemoon.to's at 10:59:16). Two filemoon.to captures at 10:59:13 ran warm, without a captcha, in 9.0 and 9.5 s (R2 built → Filemoon's trial). The kept state lives 24 hours, so the next restart before about 10:58 UTC on 2026-10-13 is task 3.2's proof: `capture_state_restored` with these hosts, then a Filemoon capture without `hoster_captcha` within the bound.
 
 ### R5: warm-up after a start (gap 5)
 
