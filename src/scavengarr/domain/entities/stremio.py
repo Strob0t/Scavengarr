@@ -207,9 +207,20 @@ class TitleMatches:
 # A year names a title's edition ("One Piece (2023)"), no word of it
 _YEAR_WORD_RE = re.compile(r"(?:19|20)\d{2}")
 
+# Sites drop a title's article ("Walking Dead") and write "&" for "and",
+# which the normalising drops: neither shortens the title (code review
+# 2026-10-12, finding 10)
+_FILLER_WORDS = frozenset(
+    {"the", "a", "an", "and", "der", "die", "das", "ein", "eine", "und"}
+)
+
 
 def _title_words(title: str) -> frozenset[str]:
-    return frozenset(w for w in title.split() if not _YEAR_WORD_RE.fullmatch(w))
+    return frozenset(
+        w
+        for w in title.split()
+        if w not in _FILLER_WORDS and not _YEAR_WORD_RE.fullmatch(w)
+    )
 
 
 def is_partial_title(titles: Iterable[str], request_titles: Iterable[str]) -> bool:
@@ -223,8 +234,9 @@ def is_partial_title(titles: Iterable[str], request_titles: Iterable[str]) -> bo
     no word with changes nothing.
 
     The titles come normalised (lower-case ASCII words separated by spaces,
-    as the title matcher and the episode index normalise them); a year is
-    no word.
+    as the title matcher and the episode index normalise them); a year, an
+    article and "and" are no words: "Walking Dead" and "Rick & Morty" name
+    "The Walking Dead" and "Rick and Morty" whole.
     """
     wanted = [words for words in map(_title_words, request_titles) if words]
     named = [words for words in map(_title_words, titles) if words]

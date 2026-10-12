@@ -218,6 +218,19 @@ class TestPartialTitle:
     def test_a_year_is_no_word(self) -> None:
         assert is_partial_title(["naruto 2002"], ["naruto shippuden"])
 
+    def test_an_article_or_and_is_no_word(self) -> None:
+        """A site name that drops the article or writes "&" for "and" (the
+        normalising drops it) is the request's series, not its parent (code
+        review 2026-10-12, finding 10)."""
+        assert not is_partial_title(["walking dead"], ["the walking dead"])
+        assert not is_partial_title(["rick morty"], ["rick and morty"])
+        assert not is_partial_title(["simpsons"], ["die simpsons"])
+        assert not is_partial_title(["bergdoktor"], ["der bergdoktor"])
+
+    def test_the_parent_without_its_article_stays_partial(self) -> None:
+        assert is_partial_title(["walking dead"], ["the walking dead world beyond"])
+        assert is_partial_title(["rick morty"], ["rick and morty the anime"])
+
     def test_without_titles_nothing_is_partial(self) -> None:
         assert not is_partial_title(["naruto"], [])
         assert not is_partial_title([], ["naruto shippuden"])

@@ -436,6 +436,26 @@ class TestPartialMatches:
         assert matches.matching == [tybw]
         assert matches.partial == [bleach]
 
+    def test_a_name_without_its_article_is_the_series(self) -> None:
+        """The review's case (code review 2026-10-12, finding 10): the site
+        names the series without its article, its spin-off with every word
+        of the request's title. Neither is partial, so the spin-off cannot
+        drop the series."""
+        ref = TitleMatchInfo(title="The Walking Dead", year=2010, content_type="series")
+        series = _sr("Walking Dead - S01E01", category=5000)
+        spin_off = _sr("The Walking Dead: World Beyond - S01E01", category=5000)
+
+        matches = filter_by_title_match([series, spin_off], ref)
+
+        assert series in matches.matching
+        assert matches.partial == []
+
+    def test_an_ampersand_names_the_series(self) -> None:
+        ref = TitleMatchInfo(title="Rick and Morty", year=2013, content_type="series")
+        series = _sr("Rick & Morty - S01E01", category=5000)
+
+        assert not score_title(series, ref).partial
+
     def test_movies_have_no_partial_matches(self) -> None:
         """Scene names drop subtitles: "Dune.2021" is "Dune: Part One"."""
         ref = TitleMatchInfo(title="Dune: Part One", year=2021, content_type="movie")

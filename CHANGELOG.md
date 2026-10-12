@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Site Name Without Its Article Is No Parent Series
+- `is_partial_title` (`domain/entities/stremio.py`) counts no article (the, a, an, der, die, das, ein, eine) and no "and"/"und" as a title word: "Walking Dead" and "Rick & Morty" ("&" falls away when normalising) name "The Walking Dead" and "Rick and Morty" whole.
+- Why: code review 2026-10-12, finding 10 (plausible: no captured page shows such a pair). The site's name for the requested series counted as its parent, so a spin-off beside it ("The Walking Dead: World Beyond", "Rick and Morty: The Anime") dropped the series in every arrival order. The matcher's partial flag and `locate()`'s `is_partial_series` share the rule.
+
 ### Fixed: A Mirror Standby's Partial Matches Go With Its Member's Search
 - The search runner marks a standby's results with the member it stood in for (`standby_for`); `SearchProgress` holds and drops partial matches, and the search cache merges results, by the plugin whose search gave them (`asked_plugin()` in `application/stremio/search_cache.py`).
 - Why: code review 2026-10-12, finding 4. A standby's run ends under the member's name, while its results carried only its own: hdfilme's "Naruto Shippuden" did not drop streamcloud's "Naruto" (found standing in for hdfilme's base-title query), so the parent series was served and cached, and a standby's lone partial match ("Bleach" for "Bleach: Thousand-Year Blood War") waited for the search's end and missed the answer at the budget.
