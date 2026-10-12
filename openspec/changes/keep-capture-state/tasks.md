@@ -27,7 +27,7 @@
 ## 3. Live proof
 
 - [x] 3.1 Dev container: one Dropload capture through the dev server (`PYTHONPATH=src`, port 7981), then a restart, then the next Dropload capture. It must meet no Turnstile, and `capture_state_restored` must name its hosts. The same for Filemoon. The numbers go into `docs/plans/challenge-reactions.md` → R4.
-- [ ] 3.2 Production after the deploy, once a capture has passed: the first Filemoon or Dropload capture after the next restart runs warm (`capture_state_restored` in the startup's log, no challenge on the capture). Recorded in `challenge-reactions.md`. It needs group 5: without it the first capture after a restart waits for the browser's launch (backlog row 93).
+- [x] 3.2 Production after the deploy, once a capture has passed: the first Filemoon or Dropload capture after the next restart runs warm (`capture_state_restored` in the startup's log, no challenge on the capture). Recorded in `challenge-reactions.md`. It needs group 5: without it the first capture after a restart waits for the browser's launch (backlog row 93). Proven 2026-10-12 at the restart of 17:42:29 UTC (503a0eb): all six Filemoon streams by 17:51 without a captcha, the restored state at most about 14 min old, while two cold production captures without a restore met it (`docs/plans/challenge-reactions.md` → R4).
 
 ## 4. Docs
 
