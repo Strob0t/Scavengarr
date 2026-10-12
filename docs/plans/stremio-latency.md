@@ -837,6 +837,7 @@ The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose o
 | 2446f89, 10-11 14:48:57 | not read | | | its counter and logs went with the container at 16:31 |
 | 3a257fe, 10-11 16:31:37 | 10-11 16:43 and 17:34 | 6 | 0 | none to fill (the same at both readings) |
 | 39f4790, 10-12 06:30:51 | not read | | | its counter and logs went with the container at 07:01:55 (the maintainer's rebuild came before a reading) |
+| 2d13f91, 10-12 07:01:55 | 10-12 08:02 | 4 | 0 | none to fill |
 
 ## AIOStreams
 
