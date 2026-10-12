@@ -859,6 +859,7 @@ The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose o
 | 10d43f4, 10-12 10:11:59 | 10-12 10:34 | 3 | 0 | none to fill |
 | 7c23863, 10-12 10:39:09 | 10-12 13:13 | 4 | 0 | none to fill; first read at 11:06 (2, 0) on the maintainer's question whether to rebuild, again at 13:00 before row 94's rebuild signal and at 13:13 before the rebuild of 13:16 |
 | 8a1f1db, 10-12 13:16:26 | 10-12 14:26 | 4 | 0 | none to fill; read before row 95's rebuild signal |
+| 1d79ec7, 10-12 15:11:28 | 10-12 15:38 | 4 | 0 | none to fill; read before row 96's rebuild signal |
 
 ## AIOStreams
 
