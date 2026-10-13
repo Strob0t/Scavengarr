@@ -54,4 +54,4 @@
 - [x] 6.3a Mr. Fable's review: a refused state of origins alone drops them too; a frame whose read fails or runs past 0.4 s costs its own host only.
 - [x] 6.4 V15: the recycle launches the new browser, bounded to 30 s, and an operation waits for it with its resolve bound stopped.
 - [x] 6.5 Live, dev container: `capture_timing.py --runs 2 --restore` (Filemoon and Dropload restored warm), the relaunch against staging's pool (`docs/plans/challenge-reactions.md` → R4).
-- [ ] 6.6 Production after the deploy: task 3.2, and the first `shared_browser_recycled` followed by its `shared_browser_launched` before the next operation.
+- [ ] 6.6 Production after the deploy: task 3.2, and the first `shared_browser_recycled` followed by its `shared_browser_launched` before the next operation. Deployed 2026-10-13 07:10:03 UTC (4357d6a): the restore and its log line read (six hosts at 07:10:13, after the context's creation; an old state, so the first Filemoon capture met the captcha, `docs/plans/challenge-reactions.md` → R4); the recycle not yet.
