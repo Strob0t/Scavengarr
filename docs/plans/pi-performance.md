@@ -397,6 +397,21 @@ The 3 s calls are row 101's (`docs/plans/challenge-reactions.md` → R4, product
 
 **Limits (Pi).** One link per hoster and one call each, a few minutes after the maintainer's playback. The 3 s calls are other calls, 2 hours earlier for Filemoon and 13 hours earlier for Vixeo, perhaps with other links (the earlier links are not recorded), at other loads of the Pi and the sites, as Byse's page times show. Vixeo's run 2 overlapped an app request.
 
+**Production proof (4429aff, the change deployed with 41d6958).** One `capture_timing.py` call on the Pi with the resolver's own wait (no `--autoplay-wait`), through `scripts/prodctl.py probe`, `--runs 2 --diagnose`, with the deployed probe (9466e3f) and the Vixeo link of the runs above. It waited for a quiet Pi: the container up for 2 hours, its CPU at 0.00 of 4 cores, no `/play`, `/proxy` or HLS line in the last 2 minutes. The call took 18 s, 5.6 s of it the browser's launch, and its report named `autoplay wait: 0.5 s (the resolver's)`. Times are seconds after the resolution's start, a page as its start and its load:
+
+| Run | Page | Click | Stream | At 3 s (row 83's call, production 39f4790) |
+|---|---|---|---|---|
+| 1 (cold) | `/e/` 0.9 s, 1.1 s | 2.7 s | 2.9 s (vidsonic.net) | click 5.3 s, stream 5.5 s |
+| 2 (warm) | `/e/` 0.5 s, 1.2 s | 2.4 s | 2.6 s | click 4.8 s, stream 5.0 s |
+
+No challenge, no popup, no leftover process, and no app line in the call's window.
+
+**The app's Vixeo resolutions.** The registry's `duration_ms` covers the resolver and the playback check (`check_playable` runs before `hoster_resolve_success`), so it does not compare with the probe's stream times. The capture's own part is the `capture_state_saved` line's time less its read, against the resolution's start. One resolution on 4429aff, during a playback: its state's read (143 ms) was saved 3.36 s after the resolution began, so its stream came within 3.22 s (an upper bound: the store's write and any wait for a page are inside it), and `hoster_resolve_success` followed 3.11 s later (6472 ms, `challenge=None`). A missed first click could not have streamed before 5.5 s after the player's start. An earlier one on 41d6958 took 5075 ms in total (`challenge=None`); its container's log is gone, so its capture part is unknown.
+
+**Reading (production).** Vixeo's player takes the first click at 0.5 s on the Pi, cold and warm: the stream followed the click by 0.2 s, 2.6 and 2.4 s sooner than with the 3 s wait. No capture missed its first click: 2 of 2 probe runs, and the app's one capture with a save line.
+
+**Limits (production).** One call of two runs on one link, and one app capture with a save line, during a playback and as an upper bound. The 3 s numbers come from another call, a day earlier, perhaps with another link.
+
 ## How to re-measure
 
 `scripts/stremio_profile.py` measures the baseline titles, or the ids given, against a running container. Per request it reports:
