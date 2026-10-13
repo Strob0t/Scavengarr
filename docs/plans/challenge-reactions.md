@@ -271,6 +271,18 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       | row 97 | after the restart | 0.07 s | 0.07 s |
 
       The 0.33 s between the staging rows' 0.40 s and row 97's 0.07 s is the dev container's launch; on the Pi the launch is the 6 to 11 s above. Limits: no network, an empty profile, the dev container's launch time. A crash's relaunch still falls to the next operation.
+    - **The read after the stream's hand-over (row 107; dev container, 2026-10-13 09:34:20 to 09:36:55 UTC):** the stream goes out first, and the state's read, the page's close and the store's write follow in a task of their own, the page counted at the gate and holding the browser's lease until it closes. `capture_timing.py --restore --runs 1` (run 1, then a control and a context restored from the kept state, each in a relaunched browser), the probe of this change over staging's code (9466e3f, whose browser and resolver code a1a3f34 has unchanged) and over this change in turn, one link per capture resolver (the links of row 103, collected 2026-10-12 18:42):
+
+      | Hoster | Run 1's stream (staging, this change) | Read, staging | Read, this change | Restored (staging, this change) |
+      |---|---|---|---|---|
+      | Filemoon (Byse) | 5.0 s, 4.9 s | 9 ms, begun 15 ms before the stream went out | 9 ms, begun 0 ms after it | 2.0 s, 1.8 s |
+      | Filemoon (filemoon.to) | 5.5 s, 5.4 s | 11 ms, 17 ms before | 13 ms, 0 ms after | 2.2 s, 3.3 s |
+      | Dropload | 4.6 s, 4.8 s | 5 ms, 9 ms before | 6 ms, 0 ms after | 0.7 s, 0.7 s |
+      | SuperVideo | 0.8 s, 1.1 s | 47 ms, 51 ms before | 8 ms, 0 ms after | 0.6 s, 0.7 s |
+      | Vixeo | 1.3 s, 1.3 s | 5 ms, 8 ms before | 5 ms, 0 ms after | none: the store held no state after either |
+      | DoodStream | none: the page did not load (17.6 and 17.8 s, failed) | – | – | – |
+
+      Every restored run streamed without a click or a challenge. Reading: the read now begins after the hand-over, so a stream found near the bound goes out without it, and the state is still kept in a form the next context takes back. In the dev container the read is 5 to 47 ms, so the streams here come no sooner; on the Pi it took 274 ms at 07:25:23 and its 0.5 s bound at 07:26:14. Limits: one call per hoster and code, one link each, the dev container's CPU; DoodStream's capture was not reached. The production proof is the count of `capture_state_save_failed` with a `hoster_resolve_timeout` of the same request within a second, before and after the rebuild.
 
 ### R5: warm-up after a start (gap 5)
 

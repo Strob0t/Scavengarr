@@ -363,9 +363,9 @@ class Run:
     popups: int = 0
     # challenge_mark()s, each with when it was first met
     challenges: list[tuple[str, float]] = field(default_factory=list)
-    # --restore: the hosts whose state the capture kept, and how long it
-    # took to read it
-    keep: tuple[int, float] | None = None
+    # --restore: the hosts whose state the capture kept, how long it took
+    # to read it, and when the read began
+    keep: tuple[int, float, float] | None = None
     # The wait before the first click its capture used; none without one
     autoplay_wait: float | None = None
 
@@ -604,9 +604,9 @@ def note_clicks(pool: TimedStealthPool) -> None:
 
 
 def note_keeps(pool: TimedStealthPool) -> None:
-    """Note in ``pool.run`` how long the capture took to read the state
-    it keeps (the capture looks ``collect_capture_state`` up in its
-    module)."""
+    """Note in ``pool.run`` when the capture began to read the state it
+    keeps and how long that took (the capture looks
+    ``collect_capture_state`` up in its module)."""
     collect = stealth.collect_capture_state
 
     async def noted(
@@ -615,7 +615,11 @@ def note_keeps(pool: TimedStealthPool) -> None:
         started = time.monotonic()
         read = await collect(page, hosts)
         if pool.run is not None:
-            pool.run.keep = (len(hosts), time.monotonic() - started)
+            pool.run.keep = (
+                len(hosts),
+                time.monotonic() - started,
+                started - pool.run.started,
+            )
         return read
 
     stealth.collect_capture_state = noted
@@ -798,7 +802,9 @@ _TABLE = (
 async def timed_run(
     pool: TimedStealthPool, resolver: HosterResolverPort, url: str
 ) -> Run:
-    """One resolution of *url*, cut after ``RUN_LIMIT_S``."""
+    """One resolution of *url*, cut after ``RUN_LIMIT_S``; it ends once its
+    capture's page has closed (its state is read after the stream went
+    out), so the next run's page is the only one."""
     run = Run(time.monotonic())
     pool.run = run
     try:
@@ -807,6 +813,7 @@ async def timed_run(
     except TimeoutError:
         run.cut = True
     run.took = time.monotonic() - run.started
+    await asyncio.gather(*pool._keep_tasks)
     return run
 
 
@@ -820,13 +827,22 @@ async def capture_store() -> AsyncIterator[ClearanceStore]:
 
 
 def keep_lines(runs: Iterable[tuple[int | str, Run]]) -> list[str]:
-    """How long each run's capture took to read the state it kept."""
-    lines = [
-        f"state read by run {label}: {_counted(run.keep[0], 'host')}"
-        f" in {run.keep[1] * 1000:.0f} ms"
-        for label, run in runs
-        if run.keep is not None
-    ]
+    """How long each run's capture took to read the state it kept, and when
+    the read began against its stream's hand-over."""
+    lines: list[str] = []
+    for label, run in runs:
+        if run.keep is None:
+            continue
+        hosts, took, began = run.keep
+        line = (
+            f"state read by run {label}: {_counted(hosts, 'host')}"
+            f" in {took * 1000:.0f} ms"
+        )
+        if run.stream_at is not None:
+            gap = (began - run.stream_at) * 1000
+            side = "after" if gap >= 0 else "before"
+            line += f", begun {abs(gap):.0f} ms {side} the stream went out"
+        lines.append(line)
     return lines or ["state read by no run"]
 
 

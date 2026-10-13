@@ -117,6 +117,49 @@ class TestCancellation:
         assert gate.in_use == 0
 
 
+class TestHandOn:
+    """A page whose work outlives its block (a capture's page that keeps
+    its state after the stream went out, row 107) stays taken until that
+    work ends it."""
+
+    async def test_a_page_handed_on_stays_taken_past_its_block(self) -> None:
+        gate = PageGate(limit=1)
+
+        async with gate.page("capture", timeout=30) as hold:
+            hold.hand_on()
+
+        assert gate.in_use == 1
+        hold.end()
+        assert gate.in_use == 0
+
+    async def test_the_next_waiter_gets_the_page_when_it_ends(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        release.set()
+        order: list[str] = []
+        async with gate.page("capture", timeout=30) as hold:
+            hold.hand_on()
+        waiter = asyncio.create_task(_hold(gate, release, order, "next"))
+        await _settle()
+        assert order == []
+
+        hold.end()
+        await waiter
+
+        assert order == ["next"]
+        assert gate.in_use == 0
+
+    async def test_a_hold_ends_once(self) -> None:
+        gate = PageGate(limit=2)
+
+        async with gate.page("capture", timeout=30) as hold:
+            hold.end()
+            assert gate.in_use == 0
+        hold.end()
+
+        assert gate.in_use == 0
+
+
 class TestMetrics:
     async def test_wait_and_work_are_recorded_by_kind(self) -> None:
         telemetry = Telemetry()

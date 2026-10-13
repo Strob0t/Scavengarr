@@ -1910,6 +1910,25 @@ class TestSharedBrowserRecycle:
         pw.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_a_lease_handed_on_holds_the_restart_until_it_ends(
+        self,
+    ) -> None:
+        """A capture's page that keeps its state after the stream went out
+        holds the browser until it closes (row 107)."""
+        pool, browser, _ = self._pool(pages=-1, open_pages=0)
+
+        async with pool.lease() as hold:
+            hold.hand_on()
+        await _settle()
+        browser.close.assert_not_awaited()
+
+        hold.end()
+        hold.end()
+        await _settle()
+
+        browser.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_the_restart_launches_the_new_browser(
         self, relaunched: AsyncMock
     ) -> None:

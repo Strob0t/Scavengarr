@@ -3,6 +3,7 @@ of scripts/probes/capture_timing.py."""
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import signal
@@ -151,6 +152,33 @@ class TestTimedPool:
 
         assert point == (1.0, 2.0)
         assert len(pool.run.clicks) == 1
+
+    async def test_a_run_ends_after_its_captures_keep(self) -> None:
+        """The state's read and the page's close follow the stream (row
+        107): the next run starts after them, on a context of its own
+        timings."""
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        release = asyncio.Event()
+        kept: list[str] = []
+
+        async def keep() -> None:
+            await release.wait()
+            kept.append("kept")
+
+        async def resolve(_url: str) -> object:
+            task = asyncio.create_task(keep())
+            pool._keep_tasks.add(task)
+            task.add_done_callback(pool._keep_tasks.discard)
+            asyncio.get_running_loop().call_soon(release.set)
+            return object()
+
+        resolver = MagicMock()
+        resolver.resolve = resolve
+
+        run = await _mod.timed_run(pool, resolver, "https://byse.example/d/abc")
+
+        assert run.resolved
+        assert kept == ["kept"]
 
 
 class TestReport:
@@ -860,12 +888,19 @@ class TestState:
         assert read == ({"cookies": [], "origins": []}, {})
         assert pool.run.keep is not None
         assert pool.run.keep[0] == 2
+        assert pool.run.keep[2] >= 0  # when the read began
 
     def test_the_keep_lines_name_the_runs_that_read(self) -> None:
-        kept = _mod.Run(0.0, keep=(2, 0.0123))
+        """With the read's start against its stream's hand-over, which it
+        follows since row 107."""
+        after = _mod.Run(0.0, stream_at=4.304, keep=(2, 0.0123, 4.312))
+        before = _mod.Run(0.0, stream_at=4.304, keep=(1, 0.004, 4.29))
 
-        assert _mod.keep_lines([(1, kept), (2, _mod.Run(0.0))]) == [
-            "state read by run 1: 2 hosts in 12 ms"
+        assert _mod.keep_lines([(1, after), (2, _mod.Run(0.0)), (3, before)]) == [
+            "state read by run 1: 2 hosts in 12 ms,"
+            " begun 8 ms after the stream went out",
+            "state read by run 3: 1 host in 4 ms,"
+            " begun 14 ms before the stream went out",
         ]
         assert _mod.keep_lines([(1, _mod.Run(0.0))]) == ["state read by no run"]
 

@@ -10,10 +10,10 @@ taken away. Work that cannot start ``_MIN_WORK_S`` before it is due gets
 no page (``PageBusy``), and the timeout of a resolution (``work_clock``)
 stops while it waits. A page that shows a challenge marks the resolution
 it works for (``challenge_mark``), and passes it once it got past. The
-wait for a page and the work on it
-are recorded by kind (``browser_page_wait``, ``browser_page``).
-``PageBudget`` changes the limit while pages are in use. See
-``docs/plans/browser-page-budget.md``.
+wait for a page and the work on it are recorded by kind
+(``browser_page_wait``, ``browser_page``). A page handed on past its
+work's block (``Hold``) counts until it is ended. ``PageBudget`` changes
+the limit while pages are in use. See ``docs/plans/browser-page-budget.md``.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -98,6 +98,36 @@ class PageBusy(Exception):
     """No page came free in time for the work's claim."""
 
 
+class Hold:
+    """What an ``async with`` holds of the stealth browser: one of the
+    gate's pages (``PageGate.page()``) or the browser's lease
+    (``SharedBrowserPool.lease()``). It ends with the block, unless the
+    block hands it on (``hand_on()``) to work that outlives the block and
+    ends it there (``end()``): a capture's page that stays open after its
+    stream went out, to keep its state, counts until it closes (row 107)."""
+
+    def __init__(self, end: Callable[[], None]) -> None:
+        self._end: Callable[[], None] | None = end
+        self._handed_on = False
+
+    def __enter__(self) -> Hold:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if not self._handed_on:
+            self.end()
+
+    def hand_on(self) -> None:
+        """Hold on past the block, until ``end()``."""
+        self._handed_on = True
+
+    def end(self) -> None:
+        """End the hold; once, a second call does nothing."""
+        end, self._end = self._end, None
+        if end is not None:
+            end()
+
+
 @dataclass(order=True)
 class _Waiter:
     """A page request that waits; the smallest key is served first."""
@@ -164,8 +194,10 @@ class PageGate:
         return longest
 
     @asynccontextmanager
-    async def page(self, kind: PageKind, *, timeout: float) -> AsyncIterator[None]:
-        """Hold one page for the work of the current claim.
+    async def page(self, kind: PageKind, *, timeout: float) -> AsyncIterator[Hold]:
+        """Hold one page for the work of the current claim, until the block
+        ends or, handed on, its ``Hold`` (the work on the page is recorded
+        until the block ends).
 
         Raises ``PageBusy`` when no page comes free ``_MIN_WORK_S`` before
         the claim is due. Without a claim (Torznab searches, the scoring
@@ -183,11 +215,11 @@ class PageGate:
             except PageBusy:
                 wait.outcome = "busy"
                 raise
-        try:
-            with self._telemetry.stage("browser_page", kind=claim.kind):
-                yield
-        finally:
-            self._release()
+        with (
+            Hold(self._release) as hold,
+            self._telemetry.stage("browser_page", kind=claim.kind),
+        ):
+            yield hold
 
     async def _acquire(self, claim: PageClaim, latest: float | None) -> None:
         """Take a page for *claim*, waiting until *latest* at most."""

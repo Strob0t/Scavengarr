@@ -7,7 +7,7 @@ import contextvars
 import re
 import time
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -29,6 +29,7 @@ from scavengarr.infrastructure.browser.hardening import (
 )
 from scavengarr.infrastructure.browser.page_gate import (
     ChallengeMark,
+    Hold,
     PageBusy,
     PageGate,
     challenge_mark,
@@ -54,8 +55,20 @@ def _mock_pool_stack() -> tuple[MagicMock, AsyncMock, AsyncMock]:
 
     shared_pool = MagicMock()
     shared_pool.warmup = AsyncMock(return_value=(browser, MagicMock()))
+    shared_pool.lease = _noted_lease([])
 
     return shared_pool, browser, context
+
+
+def _noted_lease(ended: list[str]) -> Callable[[], AbstractAsyncContextManager[Hold]]:
+    """The shared browser's lease, noting in *ended* when it ends."""
+
+    @asynccontextmanager
+    async def _lease() -> AsyncIterator[Hold]:
+        with Hold(lambda: ended.append("lease")) as hold:
+            yield hold
+
+    return _lease
 
 
 def _mock_page(
@@ -1777,6 +1790,19 @@ _PLAYER = _origin("https://dr0pstream.com", "player")
 _WIDGET = _origin("https://challenges.cloudflare.com", "widget")
 
 
+def _waiting_frame(read: asyncio.Event) -> MagicMock:
+    """The player's frame, whose storage the collector reads once *read*
+    is set."""
+    frame = _frame("https://dr0pstream.com/e/abc")
+
+    async def _evaluate(*_: object) -> dict[str, object]:
+        await read.wait()
+        return _PLAYER
+
+    frame.evaluate = AsyncMock(side_effect=_evaluate)
+    return frame
+
+
 async def _expired_clock() -> asyncio.Timeout:
     """A resolve bound that cut its work (a completion runs on past it)."""
     clock = asyncio.timeout(0)
@@ -1790,7 +1816,9 @@ async def _expired_clock() -> asyncio.Timeout:
 class TestCaptureKeepsItsState:
     """After a stream the capture reads its hosts' state from its own page
     before the page closes, so no other origin is visited (code review
-    2026-10-12, finding 6); the store writes it in the background."""
+    2026-10-12, finding 6). The stream goes out first: the read, the
+    page's close and the store's write follow in the background (row
+    107)."""
 
     @staticmethod
     def _setup(
@@ -1859,6 +1887,7 @@ class TestCaptureKeepsItsState:
         context.new_page = AsyncMock(side_effect=_page)
 
         await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
 
         assert read_when_closed == [[1, 1, 0]]
         context.storage_state.assert_not_awaited()  # no page of its own
@@ -1922,17 +1951,19 @@ class TestCaptureKeepsItsState:
 
         hanging = _frame("https://dr0pstream.com/e/abc")
         hanging.evaluate = AsyncMock(side_effect=_never)
-        pool, _, store, _ = self._setup(frames=lambda: [hanging])
+        pool, _, store, pages = self._setup(frames=lambda: [hanging])
 
         with structlog.testing.capture_logs() as logs:
             media = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
-        await self._settle(pool)
+            await self._settle(pool)
 
         assert media is not None
         (failed,) = [e for e in logs if e["event"] == "capture_state_save_failed"]
         assert failed["error"] == "TimeoutError"
         store.keep_capture_state.assert_not_awaited()
         assert not pool._kept  # the next stream tries again
+        pages[0].close.assert_awaited_once()
+        assert pool._pages.in_use == 0
 
     async def test_a_frame_that_fails_costs_its_own_host_only(self) -> None:
         """A frame that navigates or detaches during the read (an ad's)
@@ -2030,10 +2061,15 @@ class TestCaptureKeepsItsState:
         store.keep_capture_state.assert_not_awaited()
         assert not pool._kept
 
-    async def test_nothing_is_read_when_the_bound_ends_sooner(self) -> None:
-        """A stream found within ``_KEEP_BOUND_S`` of the resolve bound goes
-        out as found: the read could cost it."""
-        pool, _, store, pages = self._setup()
+    async def test_a_stream_near_its_bound_goes_out_at_once_and_is_kept(
+        self,
+    ) -> None:
+        """A stream found with less than ``_KEEP_BOUND_S`` of its resolve
+        bound left goes out before its state is read, and the state is kept
+        all the same: a read inside the bound cost a stream found near its
+        end, and the guard against that kept nothing (row 107)."""
+        read = asyncio.Event()
+        pool, _, store, _ = self._setup(frames=lambda: [_waiting_frame(read)])
 
         async with asyncio.timeout(0.3) as clock:
             token = work_clock.set(clock)
@@ -2043,12 +2079,76 @@ class TestCaptureKeepsItsState:
                 )
             finally:
                 work_clock.reset(token)
-        await self._settle(pool)
 
         assert media is not None
-        assert all(f.evaluate.await_count == 0 for f in pages[0].frames)
         store.keep_capture_state.assert_not_awaited()
+        read.set()
+        await self._settle(pool)
+        store.keep_capture_state.assert_awaited_once()
+        assert pool._kept
+
+    async def test_the_page_stays_open_and_taken_until_its_read_ends(self) -> None:
+        """Until it closes, the page counts against the browser's page limit
+        and holds the browser's lease (no restart under it)."""
+        read = asyncio.Event()
+        pool, _, _, pages = self._setup(frames=lambda: [_waiting_frame(read)])
+        ended: list[str] = []
+        pool._browser_pool.lease = _noted_lease(ended)
+
+        media = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await asyncio.sleep(0)
+
+        assert media is not None
+        pages[0].close.assert_not_awaited()
+        assert pool._pages.in_use == 1
+        assert ended == []
+        read.set()
+        await self._settle(pool)
+        pages[0].close.assert_awaited_once()
+        assert pool._pages.in_use == 0
+        assert ended == ["lease"]
+
+    async def test_a_second_stream_during_the_read_keeps_nothing(self) -> None:
+        """One read per host at a time: a stream of the host whose state is
+        being read closes its page before it goes out."""
+        read = asyncio.Event()
+        pool, _, store, pages = self._setup(frames=lambda: [_waiting_frame(read)])
+
+        first = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        second = await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+
+        assert first is not None
+        assert second is not None
+        pages[0].close.assert_not_awaited()
+        pages[1].close.assert_awaited_once()
+        read.set()
+        await self._settle(pool)
+        store.keep_capture_state.assert_awaited_once()
+
+    async def test_a_page_that_fails_to_close_still_ends_its_hold(self) -> None:
+        pool, _, store, pages = self._setup()
+
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        pages[0].close = AsyncMock(side_effect=PlaywrightError("Target closed"))
+        await self._settle(pool)
+
+        assert pool._pages.in_use == 0
+        store.keep_capture_state.assert_awaited_once()
+
+    async def test_the_pools_cleanup_closes_a_page_being_read(self) -> None:
+        pool, _, store, pages = self._setup(
+            frames=lambda: [_waiting_frame(asyncio.Event())]
+        )
+
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await asyncio.sleep(0)
+        await pool.cleanup()
+
+        pages[0].close.assert_awaited_once()
+        assert pool._pages.in_use == 0
+        assert not pool._keep_tasks
         assert not pool._kept
+        store.keep_capture_state.assert_not_awaited()
 
     async def test_a_bound_with_time_left_reads(self) -> None:
         pool, _, store, _ = self._setup()

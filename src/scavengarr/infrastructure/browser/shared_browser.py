@@ -23,7 +23,7 @@ from patchright.async_api import Browser, Playwright, async_playwright
 
 from scavengarr.infrastructure.browser.display import resolve_headless
 from scavengarr.infrastructure.browser.hardening import CHROMIUM_ARGS
-from scavengarr.infrastructure.browser.page_gate import clock_stopped
+from scavengarr.infrastructure.browser.page_gate import Hold, clock_stopped
 
 log = structlog.get_logger(__name__)
 
@@ -115,8 +115,9 @@ class SharedBrowserPool:
         self._pages += 1
 
     @asynccontextmanager
-    async def lease(self) -> AsyncIterator[None]:
-        """Hold the browser for one operation: it does not restart meanwhile.
+    async def lease(self) -> AsyncIterator[Hold]:
+        """Hold the browser for one operation: it does not restart meanwhile,
+        until the block ends or, handed on, its ``Hold``.
 
         Waits while a restart runs, with the waiting work's resolve bound
         (``work_clock``) stopped: the wait is the browser's, as a page's is
@@ -131,13 +132,14 @@ class SharedBrowserPool:
                 while not self._ready.is_set():
                     await self._ready.wait()
         self._active += 1
-        try:
-            yield
-        finally:
-            self._active -= 1
-            if self._active == 0 and self._pages >= _RECYCLE_AFTER_PAGES:
-                self._ready.clear()
-                self._restart = asyncio.get_running_loop().create_task(self._recycle())
+        with Hold(self._end_lease) as hold:
+            yield hold
+
+    def _end_lease(self) -> None:
+        self._active -= 1
+        if self._active == 0 and self._pages >= _RECYCLE_AFTER_PAGES:
+            self._ready.clear()
+            self._restart = asyncio.get_running_loop().create_task(self._recycle())
 
     async def _recycle(self) -> None:
         """Restart Chromium unless a page is open (one opened without a lease).

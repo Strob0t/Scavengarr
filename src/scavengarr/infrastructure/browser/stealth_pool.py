@@ -10,7 +10,6 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
-import math
 import re
 import time
 from collections.abc import Callable, Collection, Iterable
@@ -30,12 +29,12 @@ from scavengarr.domain.ports.browser_fetcher import (
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
 from scavengarr.infrastructure.browser.page_gate import (
     ChallengeMark,
+    Hold,
     PageBusy,
     PageGate,
     ResolutionChallenge,
     challenge_mark,
     mark_resolution_passed,
-    work_clock,
 )
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
@@ -102,9 +101,10 @@ _MEDIA_AUTOPLAY_WAIT_S = 3.0
 # A capture with a stream keeps its hosts' state (ClearanceStore), at most
 # once per host in this interval
 _KEEP_INTERVAL_S = 600.0
-# It reads that state from its own page before the page closes, so its
-# resolution waits for the read: at most this long, and not at all when
-# its resolve bound has less left (code review 2026-10-12, finding 6)
+# It reads that state from its own page before the page closes (code
+# review 2026-10-12, finding 6), after the stream went out, so the page
+# stays open for the read: at most this long. Inside the resolution, the
+# read cost a stream found near its bound (row 107)
 _KEEP_BOUND_S = 0.5
 # A frame's read ends sooner, so that a frame that navigates, detaches or
 # dawdles meanwhile (an ad's) costs its own host only (row 97's review)
@@ -462,16 +462,6 @@ async def _created(browser: Browser, state: StorageState) -> BrowserContext | No
         return None
 
 
-def _time_left() -> float:
-    """How long the running work's resolve bound (``work_clock``) has
-    left; unbounded outside one or past it (a capture cut after its
-    challenge runs on past its bound)."""
-    clock = work_clock.get()
-    if clock is None or clock.expired() or (when := clock.when()) is None:
-        return math.inf
-    return when - asyncio.get_running_loop().time()
-
-
 class StealthPool:
     """Lazy-init Patchright browser pool for Cloudflare bypass probing.
 
@@ -764,7 +754,9 @@ class StealthPool:
         as an interstitial does; *passive_widget* says the player's widget
         does not gate its stream, so its frame marks nothing (DoodStream). A
         page that says the file is gone passes the mark: its verdict on the
-        link, whatever challenge came before.
+        link, whatever challenge came before. The stream goes out as soon
+        as the player requests it; a page whose hosts' state is due to be
+        kept stays open for its read, in the background (``_keep_state()``).
         """
         if timeout is None:
             timeout = self._timeout_ms / 1000
@@ -772,8 +764,8 @@ class StealthPool:
         # Playwright calls the request listener outside this task's context
         mark = challenge_mark.get()
         async with (
-            self._pages.page("capture", timeout=timeout),
-            self._browser_pool.lease(),
+            self._pages.page("capture", timeout=timeout) as slot,
+            self._browser_pool.lease() as lease,
         ):
             page: Page | None = None
             try:
@@ -814,8 +806,8 @@ class StealthPool:
                     page, found, player, autoplay_wait=autoplay_wait
                 )
                 log.debug("stealth_capture", url=url, found=media is not None)
-                if media is not None:
-                    await self._keep_state(page)
+                if media is not None and self._keep_state(page, lease, slot):
+                    page = None  # closed after the state's read
                 return media
             except Exception:  # noqa: BLE001
                 log.debug("stealth_capture_error", url=url, exc_info=True)
@@ -823,15 +815,15 @@ class StealthPool:
             finally:
                 await self._close(page)
 
-    async def _keep_state(self, page: Page) -> None:
+    def _keep_state(self, page: Page, *holds: Hold) -> bool:
         """Keep the state of *page*'s host and its frames' hosts, each at
-        most once per ``_KEEP_INTERVAL_S``: read from the page before it
-        closes (``collect_capture_state()``, at most ``_KEEP_BOUND_S``; not
-        when the resolve bound has less left, so the read never costs the
-        stream), written by the store in the background. A host whose read
-        failed is tried again at the next stream."""
-        if self._clearance_store is None or _time_left() < _KEEP_BOUND_S:
-            return
+        most once per ``_KEEP_INTERVAL_S``, after the stream went out: the
+        page and *holds* (the browser's lease, the page's place at the
+        gate) go on to a task that reads the state (``_read_state()``), so
+        the page counts until it closes. False when there is nothing to
+        keep: the caller closes the page."""
+        if self._clearance_store is None:
+            return False
         now = time.monotonic()
         hosts = sorted(
             {
@@ -842,11 +834,28 @@ class StealthPool:
             }
         )
         if not hosts:
-            return
+            return False
+        # Taken now: a stream of these hosts during the read keeps nothing
         self._kept.update(dict.fromkeys(hosts, now))
+        task = asyncio.create_task(self._read_state(page, hosts, holds))
+        for hold in holds:
+            hold.hand_on()
+        self._keep_tasks.add(task)
+        task.add_done_callback(self._keep_tasks.discard)
+        return True
+
+    async def _read_state(
+        self, page: Page, hosts: list[str], holds: tuple[Hold, ...]
+    ) -> None:
+        """Read *hosts*' state from *page* (``collect_capture_state()``, at
+        most ``_KEEP_BOUND_S``), close the page, end *holds*, and have the
+        store write the state. A host whose read or write failed is tried
+        again at its next stream."""
+        started = time.monotonic()
         try:
             async with asyncio.timeout(_KEEP_BOUND_S):
                 state, missed = await collect_capture_state(page, hosts)
+            duration_ms = int((time.monotonic() - started) * 1000)
         except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001  (costs a challenge after a restart)
             self._forget(hosts)
             if isinstance(exc, asyncio.CancelledError):
@@ -855,16 +864,25 @@ class StealthPool:
                 "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
             )
             return
+        finally:
+            await self._close_read(page, holds)
         for host, error in sorted(missed.items()):
             log.warning("capture_state_save_failed", hosts=[host], error=error)
         self._forget(missed)
         hosts = [host for host in hosts if host not in missed]
-        if not hosts:
-            return
-        duration_ms = int((time.monotonic() - now) * 1000)
-        task = asyncio.create_task(self._save_state(hosts, state, duration_ms))
-        self._keep_tasks.add(task)
-        task.add_done_callback(self._keep_tasks.discard)
+        if hosts:
+            await self._save_state(hosts, state, duration_ms)
+
+    async def _close_read(self, page: Page, holds: tuple[Hold, ...]) -> None:
+        """Close *page* after its state's read and end *holds*, whatever
+        the close raises (a browser gone meanwhile)."""
+        try:
+            await self._close(page)
+        except Exception:  # noqa: BLE001  (the page went with its browser)
+            log.debug("stealth_page_close_error", exc_info=True)
+        finally:
+            for hold in holds:
+                hold.end()
 
     async def _save_state(
         self, hosts: list[str], state: dict[str, Any], duration_ms: int
