@@ -1313,7 +1313,9 @@ class TestSegmentStall:
     async def test_a_silent_cdn_is_resumed_after_the_stall_bound(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(hls_proxy, "_SEGMENT_READ_TIMEOUT_S", 0.3)
+        # the bound covers the wait for the headers too: 1 s keeps a loaded
+        # runner's stalled loop from failing the test, and stays far from 30 s
+        monkeypatch.setattr(hls_proxy, "_SEGMENT_READ_TIMEOUT_S", 1.0)
         whole = bytes(range(256)) * 400
         ranges: list[str] = []
         tasks: set[asyncio.Task[object]] = set()
