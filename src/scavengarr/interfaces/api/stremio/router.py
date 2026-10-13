@@ -442,6 +442,7 @@ def _cdn_error_response(
         "hls_proxy_network_error",
         stream_id=stream_id,
         cdn=extract_domain(target_url),
+        error=type(exc).__name__,
     )
     return _error_json(502, "CDN request failed")
 

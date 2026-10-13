@@ -4,7 +4,7 @@ player asks for, fetched into memory (``SegmentReadAhead``)."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
@@ -34,6 +34,9 @@ class _Cdn:
 
     *statuses* answers the n-th request for a URL with a status other than
     200 (``{"seg-2.ts": [429]}``: the first request for seg-2 gets 429).
+    *broken* cuts the body of the first n requests for a URL after half
+    its bytes with a transport error (``{"seg-2.ts": 1}``), calling
+    *on_break* first.
     """
 
     def __init__(
@@ -41,11 +44,15 @@ class _Cdn:
         *,
         size: int = 4096,
         statuses: dict[str, list[int]] | None = None,
+        broken: dict[str, int] | None = None,
         declare_length: bool = True,
     ) -> None:
         self.requests: list[str] = []
+        self.read_timeouts: list[float | None] = []
         self.size = size
         self.statuses = statuses or {}
+        self.broken = broken or {}
+        self.on_break: Callable[[], None] | None = None
         self.declare_length = declare_length
         self.block: asyncio.Event | None = None
 
@@ -60,6 +67,7 @@ class _Cdn:
     async def _answer(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         self.requests.append(url)
+        self.read_timeouts.append(request.extensions["timeout"]["read"])
         if self.block is not None:
             await self.block.wait()
         name = request.url.path.rsplit("/", 1)[-1]
@@ -67,6 +75,13 @@ class _Cdn:
         if queued:
             return httpx.Response(queued.pop(0))
         body = _segment_body(url, self.size)
+        if self.broken.get(name):
+            self.broken[name] -= 1
+            return httpx.Response(
+                200,
+                stream=_Broken([body[: len(body) // 2]], self.on_break),
+                headers={"content-type": "video/mp2t"},
+            )
         if self.declare_length:
             return httpx.Response(
                 200, content=body, headers={"content-type": "video/mp2t"}
@@ -83,6 +98,24 @@ class _Chunks(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self._chunks:
             yield chunk
+
+
+class _Broken(_Chunks):
+    """The given chunks, then the CDN drops the connection mid-body
+    (production's acek-cdn: ``RemoteProtocolError``)."""
+
+    def __init__(
+        self, chunks: list[bytes], on_break: Callable[[], None] | None
+    ) -> None:
+        super().__init__(chunks)
+        self._on_break = on_break
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+        if self._on_break is not None:
+            self._on_break()
+        raise httpx.RemoteProtocolError("peer closed connection")
 
 
 class _Clock:
@@ -479,6 +512,91 @@ class TestBounds:
         assert _count(telemetry, "miss") == 2
         failed = next(e for e in logs if e["event"] == "hls_readahead_failed")
         assert failed["cdn"] == "cdn" and failed["error"] == "HTTPStatusError"
+        # a status error is not tried again: seg-2 once ahead, once on demand
+        assert failed["attempts"] == 1
+        assert cdn.requested("seg-2.ts") == 2
+
+    async def test_a_fetch_ahead_broken_once_is_tried_again(self) -> None:
+        """Production 2026-10-12: 10 fetches ahead failed mid-body (97bf1
+        and acek-cdn, ``ReadTimeout`` and ``RemoteProtocolError``), each a
+        miss when the player came."""
+        cdn = _Cdn(broken={"seg-2.ts": 1})
+        telemetry = Telemetry()
+        read_ahead = SegmentReadAhead(telemetry=telemetry)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            with capture_logs() as logs:
+                await _segment(client, read_ahead, _SEGMENTS[0])
+                await _settle(read_ahead)
+            body, _ = await _segment(client, read_ahead, _SEGMENTS[1])
+            await _settle(read_ahead)
+
+        assert body == _segment_body(_SEGMENTS[1])
+        assert cdn.requested("seg-2.ts") == 2
+        assert _count(telemetry, "hit") == 1
+        assert _count(telemetry, "failed") == 0
+        retried = [e for e in logs if e["event"] == "hls_readahead_retried"]
+        assert len(retried) == 1
+        assert retried[0]["cdn"] == "cdn"
+        assert retried[0]["error"] == "RemoteProtocolError"
+
+    async def test_a_fetch_ahead_broken_twice_fails(self) -> None:
+        cdn = _Cdn(broken={"seg-2.ts": 2})
+        telemetry = Telemetry()
+        read_ahead = SegmentReadAhead(telemetry=telemetry)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            with capture_logs() as logs:
+                await _segment(client, read_ahead, _SEGMENTS[0])
+                await _settle(read_ahead)
+            body, _ = await _segment(client, read_ahead, _SEGMENTS[1])
+            await _settle(read_ahead)
+
+        assert body == _segment_body(_SEGMENTS[1])
+        # twice ahead, then once on demand for the player
+        assert cdn.requested("seg-2.ts") == 3
+        assert _count(telemetry, "failed") == 1
+        assert _count(telemetry, "miss") == 2
+        failed = next(e for e in logs if e["event"] == "hls_readahead_failed")
+        assert failed["error"] == "RemoteProtocolError"
+        assert failed["attempts"] == 2
+
+    @pytest.mark.parametrize("throttled", [True, False], ids=["throttled", "stopped"])
+    async def test_no_second_try_once_the_playback_may_not_fetch_ahead(
+        self, throttled: bool
+    ) -> None:
+        """A 429 of another segment or the byte cap reached meanwhile: the
+        broken fetch is not tried again."""
+        cdn = _Cdn(broken={"seg-2.ts": 1})
+        read_ahead = SegmentReadAhead()
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+
+        def meanwhile() -> None:
+            if throttled:
+                read_ahead._throttled["cdn.test"] = float("inf")
+            else:
+                read_ahead._playbacks[_PLAYLIST].stopped = True
+
+        cdn.on_break = meanwhile
+        async with cdn.client() as client:
+            with capture_logs() as logs:
+                await _segment(client, read_ahead, _SEGMENTS[0])
+                await _settle(read_ahead)
+
+        assert cdn.requested("seg-2.ts") == 1
+        failed = next(e for e in logs if e["event"] == "hls_readahead_failed")
+        assert failed["attempts"] == 1
+
+    async def test_a_fetch_ahead_reads_with_the_segment_stall_bound(self) -> None:
+        cdn = _Cdn()
+        read_ahead = SegmentReadAhead()
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+
+        assert len(cdn.read_timeouts) == 4
+        assert set(cdn.read_timeouts) == {hls_proxy._SEGMENT_READ_TIMEOUT_S}
 
     async def test_aclose_cancels_the_fetches_in_flight(self) -> None:
         cdn = _Cdn()

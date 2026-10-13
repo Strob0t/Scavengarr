@@ -312,6 +312,30 @@ The paragraph that waited for this (the read-ahead metrics and the player's answ
 
 **Reading (Mr. Fable).** A cut segment is a jump, not a stall: the player does not ask again. Row 102 (deployed 2026-10-13 07:10) resumes such a body once with a `Range` request when its answer promised a length, row 104 (07:24) keeps the read-ahead this playback had lost, and row 105 bounds a stall and restarts a segment that cannot be resumed with a range.
 
+**The segments' stall bound (row 105, 2026-10-13, Mr. Normal).** A segment's request read with the shared client's 30 s (`http_timeout_seconds`): a CDN that fell silent held the player's segment, or a fetch ahead, 30 s before anything happened. httpx's read timeout is the wait for each read, the response's headers and the body's first byte included, so the bound to pick lies above the longest wait of a healthy CDN. Measurement from the dev container, 08:08 to 08:28 UTC: the links the dev server resolved for 13 titles, 25 consecutive segments per CDN and run fetched straight from the CDN one after another, as a player does; per segment the wait for the headers, for the body's first byte and the largest gap between two network reads (`aiter_raw()`), 474 segments on 11 CDNs (two runs; a CDN in both counts 50):
+
+| CDN (hoster) | Segments | Headers, median / max | First byte, max | Largest gap, max |
+|---|---|---|---|---|
+| cloudwindow-route (VOE) | 50 | 0.04–0.05 / 0.25 s | 0.00 s | 0.30 s |
+| gxplayer (GXPlayer) | 50 | 0.04–0.05 / 2.30 s | 0.02 s | 0.05 s |
+| dramiyos-cdn (VidHide) | 25 | 0.16 / 0.33 s | 0.00 s | 0.14 s |
+| acek-cdn (VidHide) | 24 of 25 (one 502) | 0.47 / 1.01 s | 0.00 s | 1.82 s |
+| owphbf24 (Filemoon) | 50 | 0.04–0.07 / 0.63 s | 0.00 s | 0.19 s |
+| r66nv9ed (Filemoon) | 50 | 0.04–0.05 / 0.36 s | 0.01 s | **16.51 s** (one segment), else 0.68 s |
+| s1q2105 (Strmup) | 50 | 0.07 / 0.63 s | 0.00 s | 0.12 s |
+| 97bf1 (Strmup) | 25 | 0.09 / 0.40 s | 0.00 s | 0.10 s |
+| firestream (FireStream) | 50 | 0.32–2.23 / 6.83 s | 0.00 s | 0.06 s |
+| vidsonic (Vidsonic) | 50 | 0.06 / 6.31 s | 0.00 s | 0.08 s |
+| plauymito (Playmate) | 50 | 0.06–0.11 / 1.33 s | 0.00 s | 1.13 s |
+
+Production beside it (41d6958, from 07:24:15 to about 08:10 UTC, `prodctl.py metrics --grep hls`): of 611 segment answers 598 started within 4 s and 13 later (the histogram ends at 4 s, so their maximum is not known); all 626 fetches ahead of whole segments ended within 15 s, 567 within 7 s.
+
+**Reading.** A flowing body leaves at most 1.82 s between two reads, and the first byte follows the headers at once; the long waits are the headers, up to 6.83 s at FireStream. The one exception is a stall: r66nv9ed fell silent for 16.51 s in one segment's body and then finished it. The bound is 15 s (`_SEGMENT_READ_TIMEOUT_S`; Mr. Fable's pick against 20 s): 8 times the longest gap of a flowing body, 2.2 times the longest wait for headers, and it catches the 16.51 s silence, which a resume with a `Range` request ends about when it would have ended by itself. Files keep 60 s (`_FILE_READ_TIMEOUT_S`). Open: a segment whose headers take longer than 15 s now fails (`hls_proxy_network_error` with `error=ReadTimeout`) and the player asks again; production's 13 answers above 4 s show after the deploy whether that happens.
+
+Live proof (dev server, 2026-10-13 08:30 to 08:41 UTC): two real HLS playbacks of 11 minutes each in parallel, each segment asked for at its playing time with 30 s of buffer, FireStream's Inception in 1080p (175 segments) and VOE's Dune: Part Two (58 segments): all 233 answered 200, read-ahead 231 hits and 2 misses (each playback's first segment), no resume, cut, retry or failed fetch ahead; FireStream's slowest answer, 14.15 s, was a hit awaiting a fetch ahead of a whole segment that flowed slowly and was not cut. FireStream's playback ran out of its 30 s buffer 3 times (when is not recorded; the first segments come from the CDN on demand, with FireStream's headers taking up to 6.83 s); VOE's never.
+
+**Limits.** One morning, from the dev container's network (not the Pi's VPN); 25 consecutive segments per link, one link per CDN; the gaps are those of `aiter_raw()`, which hands over what one socket read brought (at most 64 KiB).
+
 ## The capture's autoplay wait (2026-10-12, row 103)
 
 **Question.** Every browser capture first waits `_MEDIA_AUTOPLAY_WAIT_S` (3 s, `_start_player` in `src/scavengarr/infrastructure/browser/stealth_pool.py`) for a player that starts itself, then clicks the player. A click the player does not take costs the next wait, `_MEDIA_CLICK_WAIT_S` (5 s). Row 96's production round (`docs/plans/challenge-reactions.md` → R7) had 10 Filemoon captures end at the 10 s bound without a mark, and 6 of its 7 streams at 5.9 to 10.3 s. Per hoster: does a shorter wait bring the stream sooner, without more clicks, popups or missed clicks?

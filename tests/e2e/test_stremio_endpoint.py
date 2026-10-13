@@ -1748,6 +1748,22 @@ class TestProxyHlsEndpoint:
         assert "CDN" in resp.json()["error"]
 
     @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_a_network_error_names_its_type(self, mock_stream: AsyncMock) -> None:
+        """A CDN whose headers take longer than the segment's stall bound
+        (``ReadTimeout`` before the body) shows as such."""
+        mock_stream.side_effect = httpx.ReadTimeout("no headers")
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=_make_hls_link())
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        with structlog.testing.capture_logs() as logs:
+            resp = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")
+
+        assert resp.status_code == 502
+        errors = [e for e in logs if e["event"] == "hls_proxy_network_error"]
+        assert len(errors) == 1 and errors[0]["error"] == "ReadTimeout"
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
     def test_a_cdn_error_logs_no_url(self, mock_stream: AsyncMock) -> None:
         """CDN URLs carry tokens and the client's address (``i=``) in path
         and query (code review, 2026-10-06): the log names the CDN only."""
