@@ -282,7 +282,7 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
       | Vixeo | 1.3 s, 1.3 s | 5 ms, 8 ms before | 5 ms, 0 ms after | none: the store held no state after either |
       | DoodStream | none: the page did not load (17.6 and 17.8 s, failed) | – | – | – |
 
-      Every restored run streamed without a click or a challenge. Reading: the read now begins after the hand-over, so a stream found near the bound goes out without it, and the state is still kept in a form the next context takes back. In the dev container the read is 5 to 47 ms, so the streams here come no sooner; on the Pi it took 274 ms at 07:25:23 and its 0.5 s bound at 07:26:14. Limits: one call per hoster and code, one link each, the dev container's CPU; DoodStream's capture was not reached. The production proof is the count of `capture_state_save_failed` with a `hoster_resolve_timeout` of the same request within a second, before and after the rebuild.
+      Every restored run streamed without a click or a challenge. Reading: the read now begins after the hand-over, so a stream found near the bound goes out without it, and the state is still kept in a form the next context takes back. In the dev container the read is 5 to 47 ms, so the streams here come no sooner; on the Pi one read took 274 ms and another ran into its 0.5 s bound. Limits: one call per hoster and code, one link each, the dev container's CPU; DoodStream's capture was not reached. The production proof is the count of `capture_state_save_failed` with a `hoster_resolve_timeout` of the same request within a second, before and after the rebuild.
 
 ### R5: warm-up after a start (gap 5)
 
