@@ -47,12 +47,33 @@ fi
 # installed skill description costs context tokens in every session. Left out:
 # the Caveman Cloud skills (discover, evidence-review, learn, manage, optimize,
 # setup) and caveman-commit, which collides with the project `commit` skill.
+SKILLS_CLI="skills@1.7.2"
 CAVEMAN_SKILLS=(caveman cavecrew caveman-explore caveman-review caveman-compress caveman-help caveman-stats)
 echo "[devcontainer] Installing caveman CLI + skills..."
 npm install -g @caveman-ai/cli \
   || echo "WARN: caveman CLI install failed (optional)"
-npx -y skills add JuliusBrussee/caveman -g -a claude-code -s "${CAVEMAN_SKILLS[@]}" -y </dev/null \
+npx -y "$SKILLS_CLI" add JuliusBrussee/caveman -g -a claude-code -s "${CAVEMAN_SKILLS[@]}" -y </dev/null \
   || echo "WARN: caveman skills install failed (optional)"
+
+# The skill set of docs/agents/skills.md: one `skills add` per source repository,
+# non-interactive, with the pinned CLI. Optional tooling, so failures only warn.
+SKILL_SOURCES=(
+  "obra/superpowers brainstorming writing-plans test-driven-development executing-plans subagent-driven-development dispatching-parallel-agents systematic-debugging verification-before-completion requesting-code-review receiving-code-review"
+  "mattpocock/skills handoff writing-for-agents grill-me domain-modeling research codebase-design code-review"
+  "pwguler/skills recall reflect rubric"
+  "DietrichGebert/ponytail ponytail ponytail-review ponytail-audit ponytail-debt"
+  "blader/humanizer humanizer"
+  "addyosmani/agent-skills spec-driven-development documentation-and-adrs api-and-interface-design incremental-implementation code-simplification observability-and-instrumentation performance-optimization ci-cd-and-automation"
+  "pbakaus/impeccable impeccable"
+  "cathrynlavery/diagram-design diagram-design"
+  "cloudflare/security-audit-skill security-audit"
+)
+echo "[devcontainer] Installing the skill set of docs/agents/skills.md..."
+for source in "${SKILL_SOURCES[@]}"; do
+  read -r -a parts <<< "$source"
+  npx -y "$SKILLS_CLI" add "${parts[0]}" -g -y -a claude-code -s "${parts[@]:1}" </dev/null \
+    || echo "WARN: skills install from ${parts[0]} failed (optional)"
+done
 
 # Claude: native install bevorzugt
 if ! command -v claude >/dev/null 2>&1; then
@@ -70,6 +91,16 @@ if ! command -v poetry >/dev/null 2>&1; then
 fi
 
 export PATH="$HOME/.local/bin:$PATH"
+
+# graphify (Graphify-Labs/graphify) ships its own installer: the `/graphify` skill plus
+# a three-line user-level ~/.claude/CLAUDE.md (docs/agents/skills.md). Optional, warns only.
+echo "[devcontainer] Installing graphify..."
+pipx install graphifyy >/dev/null 2>&1 \
+  || echo "WARN: graphify install failed (optional)"
+if command -v graphify >/dev/null 2>&1; then
+  graphify install --platform claude </dev/null \
+    || echo "WARN: graphify install failed (optional)"
+fi
 
 echo "[devcontainer] Configuring Poetry..."
 poetry config virtualenvs.in-project true
