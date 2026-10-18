@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Integration Test Suite
+
+> **Status:** archived
+> **Superseded by:** none (history)
 
 **Status:** Partially implemented (2026-09-28) — config, CrawlJob and link-validation integration tests plus Torznab/Stremio E2E tests exist; plugin-pipeline tests, HTTP download-endpoint and TTL-expiry tests are open; CI runs the suite since 2026-09-30
 **Priority:** High

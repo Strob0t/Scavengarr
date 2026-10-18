@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Fixes from the Full Code Review of `staging`
+
+> **Status:** archived
+> **Superseded by:** none (history)
 
 **Status:** Done (2026-09-29): waves 1–4 fixed in 62 commits on `staging` (`23ed07d` … `2495d3a`); results, deviations and open points below.
 **Priority:** High (security and "does not start" findings in wave 1)

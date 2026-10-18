@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Search Result Caching
+
+> **Status:** archived
+> **Superseded by:** `docs/current/stremio-addon.md` (row 113)
 
 **Status:** Core implemented (2026-09-28); Stremio search cache with stale-while-revalidate and single-flight implemented (2026-10-04); its late plugins and early answer were replaced on 2026-10-05 by a search that runs to its end ([round5-measures.md](round5-measures.md) §9). Open for Torznab: cache invalidation endpoint, stale-while-revalidate, cache metrics, a TTL-expiry test
 **Priority:** Medium
@@ -31,7 +32,7 @@ Key files:
 **Problem:**
 - Stremio requests were not cached. Production served the same title twice within 17–18 s (Movie P: Endgame, Series H), each time a full fan-out of ~15 s and 50–270 outbound requests.
 - A plugin cut by the request deadline lost all its results, even when its search finished seconds later (kinoking, kinoger or moflix while solving a challenge).
-- The answer waited for the slowest plugin up to the 10 s search budget (`docs/plans/pi-performance.md`).
+- The answer waited for the slowest plugin up to the 10 s search budget (`docs/archive/plans/pi-performance.md`).
 
 **Design**, decided by the maintainer: cache with stale-while-revalidate and single-flight, partial results, and an early answer with the cache.
 

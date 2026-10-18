@@ -54,7 +54,7 @@ Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source
 | Form-based auth (vBulletin) | [x] Implemented | MD5 password hashing, session cookies (e.g. `boerse`, `mygully`) |
 | Form-based auth (XenForo) | [x] Implemented | `XenForoPluginBase` login with the page's CSRF token (`dataload`, `myboerse`) |
 | Cloudflare | [x] Implemented | Headful browser with a Turnstile solver, clearance cookies kept across restarts, browser fallback for httpx plugins, optional Byparr/FlareSolverr sidecar |
-| Captchas | [x] Implemented | Built-in ALTCHA proof-of-work and image captcha solvers (see [Captcha Solving](../plans/captcha-solving.md)) |
+| Captchas | [x] Implemented | Built-in ALTCHA proof-of-work and image captcha solvers (see [Captcha Solving](../archive/plans/captcha-solving.md)) |
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel detail-page scraping |
 | Custom HTML parsing | [x] Implemented | selectolax (lexbor) parsers with CSS selectors; pages through `parse_page()`, big ones in a worker thread |
 | Environment variable credentials | [x] Implemented | `SCAVENGARR_<PLUGIN>_USERNAME` / `_PASSWORD` (see [Configuration](./configuration.md#plugin-credentials)) |

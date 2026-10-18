@@ -33,7 +33,7 @@ searches' durations and the event-loop lag; the quantiles are histogram
 bucket bounds (upper bounds). ``--portainer`` samples the container's CPU
 (``docker stats`` through Portainer about every 5 s; ``PORTAINER_URL`` and
 ``PORTAINER_API_KEY`` as in ``portainer.py``). Prints the two Markdown rows
-of ``docs/plans/pi-performance.md`` → "Playback under search load" (the
+of ``docs/archive/plans/pi-performance.md`` → "Playback under search load" (the
 player's view, the server's view); ``--out`` appends them. Prints no URLs.
 """
 

@@ -1,5 +1,8 @@
 # Performance on the Raspberry Pi: Baseline
 
+> **Status:** archived
+> **Superseded by:** `docs/how-to/performance-measurement.md` (row 117)
+
 Status: baseline measured 2026-10-04 (v0.2.3). The decided measures are implemented and were measured again the same day (staging cfb4c6e, see [After the measures](#after-the-measures-2026-10-04-staging-cfb4c6e)). Purpose: a baseline to judge optimization proposals against (for example from a literature review), the candidate measures the numbers point to, and their effect.
 
 ## Setup
@@ -386,7 +389,7 @@ No popup in the 88 runs with `--diagnose` (the 12 `--restore` runs ran without i
 | Vixeo, 0.5 s | 1 (cold) | `/e/` 0.7 s, 1.2 s | 2.6 s | – | 3.0 s |  click 5.3 s, stream 5.5 s |
 | | 2 (warm) | `/e/` 0.8 s, 2.3 s | 4.1 s | – | 5.9 s |  click 4.8 s, stream 5.0 s |
 
-The 3 s calls are row 101's (`docs/plans/challenge-reactions.md` → R4, production 503a0eb) and row 83's (`docs/plans/header-bound-hosters.md` → Vixeo with the own-scripts rule, production 39f4790). No popup in the eight runs. The Filemoon and DoodStream calls overlapped no app request. Vixeo's call overlapped a real Stremio request on (two stream requests, a kinoger search page in the app's browser, then Dropload's open breaker and six VOE resolutions over HTTP), most likely in its run 2. No app capture line fell into the calls' windows; the request's Byse capture timed out, after them.
+The 3 s calls are row 101's (`docs/plans/challenge-reactions.md` → R4, production 503a0eb) and row 83's (`docs/archive/plans/header-bound-hosters.md` → Vixeo with the own-scripts rule, production 39f4790). No popup in the eight runs. The Filemoon and DoodStream calls overlapped no app request. Vixeo's call overlapped a real Stremio request on (two stream requests, a kinoger search page in the app's browser, then Dropload's open breaker and six VOE resolutions over HTTP), most likely in its run 2. No app capture line fell into the calls' windows; the request's Byse capture timed out, after them.
 
 **Reading (production).**
 - **Filemoon keeps 3 s.** At 1.5 s the player left the first click unanswered in 3 of 4 runs: no captcha and no stream before the next click, 5 s later. At 3 s, row 101's four runs answered it with the captcha or the stream. filemoon.to's pages loaded as (1.8 and 1.2 s against 1.4 and 1.1 s). Its cold capture's missed click put the stream at 13.3 s instead of 9.2 s, past production's 10 s resolve bound. Its warm capture's click was answered 1.7 s sooner, but the stream came only 0.3 s sooner (6.2 s against 6.5 s). Byse's pages started 1.4 to 2.2 s later and loaded 1.1 to 2.7 s slower than, and its warm run left its second click unanswered too, 6.7 s after its page: its two runs also measure a slower site or host. Unlike in the dev container, Filemoon's warm player did not start itself on the production host, at 1.5 s here or at 3 s, so production's warm captures need their click.

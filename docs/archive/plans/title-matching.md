@@ -1,5 +1,8 @@
 # Title matching for short and German series titles
 
+> **Status:** archived
+> **Superseded by:** `docs/current/plugins.md` (row 114)
+
 Finding 13 of `ideas-backlog.md` (N10): in the seventh production round (`stremio-latency.md`, 2026-10-07) *Series C* S01E01 answered with no stream after the title filter dropped all 4 results (`stremio_all_filtered`), and *Series E* S01E01 answered with no stream either. The suspicion was the queries (a one-word title, a German title of a Spanish series) or the title matcher. This file holds the evidence; the fix is assigned from it.
 
 Measured with `scripts/probes/title_match.py`: it starts the app's composition and runs every stream plugin's search directly, once per query its language group gets (`application/stremio/queries.py`), with the request's category, season and episode, under the plugin timeout (30 s, but no search deadline) and the runner's plugin concurrency. Every raw result gets the matcher's score (`score_title_match`, configured weights) and its verdict at the threshold 0.7. Mirror groups are not collapsed; the episode filter is not applied.

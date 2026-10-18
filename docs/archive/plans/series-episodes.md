@@ -1,5 +1,8 @@
 # Series episodes per plugin
 
+> **Status:** archived
+> **Superseded by:** `docs/current/plugins.md` (row 114)
+
 What the Stremio episode filter (`infrastructure/stremio/episode_filter.py`) does with each plugin's series results, measured before and after its change in step 21 (OpenSpec `continue-cut-searches`, decisions 6 and 7). Acceptance: no leaks after the change, and no plugin keeps fewer results of the right episode than before.
 
 Measured with `scripts/probes/series_episodes.py`: it starts the app's composition (plugins, browser fallback, title lookup) and runs every stream plugin's search directly, with the queries, category, season and episode of a Stremio request, under the plugin timeout (30 s) and the plugin concurrency of the runner; mirror groups are not collapsed. Requests: the series of `.cache/live/round-titles.txt` (Series D S01E01 and S01E02, Series C, Series F S04E01, Series E, Series G, Anime A, Anime G, Anime H, Anime I) plus Series H S01E05 and S02E05, 12 requests.

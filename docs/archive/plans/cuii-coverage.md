@@ -1,5 +1,8 @@
 # CUII Block List vs. Plugins and Hosters (2026-10-01)
 
+> **Status:** archived
+> **Superseded by:** `docs/how-to/deploy.md` (row 116)
+
 The CUII (Clearingstelle Urheberrecht im Internet) list of domains that German ISPs block, compared with Scavengarr's plugins and hoster resolvers. Question: which streaming sites on the list lack a plugin, and which hosters do the listed sites use that no resolver handles?
 
 ## Method

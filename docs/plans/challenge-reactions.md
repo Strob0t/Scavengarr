@@ -7,10 +7,10 @@
 **Request:** the maintainer's: after the release v0.4.0, research reactive approaches to Cloudflare challenges and captchas and document them.
 
 **Related:**
-- [captcha-solving.md](captcha-solving.md): round 1, done 2026-09-29. One detector, the chain httpx → own browser → optional sidecar, and clearance cookies that survive a restart.
-- [antibot-patchright.md](antibot-patchright.md), [cloudflare-solvers.md](cloudflare-solvers.md), [browser-page-budget.md](browser-page-budget.md).
-- [filmo-plugin.md](filmo-plugin.md): Filemoon on the production host.
-- [header-bound-hosters.md](header-bound-hosters.md): Dropload and Vixeo on the production host.
+- [captcha-solving.md](../archive/plans/captcha-solving.md): round 1, done 2026-09-29. One detector, the chain httpx → own browser → optional sidecar, and clearance cookies that survive a restart.
+- [antibot-patchright.md](../archive/plans/antibot-patchright.md), [cloudflare-solvers.md](../archive/plans/cloudflare-solvers.md), [browser-page-budget.md](../archive/plans/browser-page-budget.md).
+- [filmo-plugin.md](../archive/plans/filmo-plugin.md): Filemoon on the production host.
+- [header-bound-hosters.md](../archive/plans/header-bound-hosters.md): Dropload and Vixeo on the production host.
 
 Reactive means what Scavengarr does once a page shows a challenge or a captcha, not how it avoids one; round 1 and the Patchright work cover avoiding.
 

@@ -1,5 +1,8 @@
 # sto link-outs from production
 
+> **Status:** archived
+> **Superseded by:** `docs/current/plugins.md` (row 114)
+
 Finding 16 of `ideas-backlog.md`: in production sto's episode links reach the serienstream resolver as sto's own link-outs (`/r?t=<token>`) and fail there (`serienstream_invalid_url`, 13 times in the three hours around the seventh round); *Series E* S01E01 lost its only matching result to it ([title-matching.md](title-matching.md)). The question: is the link-out gate unsolved on the production host only, always, or does the resolver reject a link the plugin could have resolved? This file holds the evidence; the fix (plugin, resolver, or the gate solving) is assigned from it.
 
 ## How sto resolves a link-out

@@ -1,5 +1,8 @@
 # The filmo plugin (2026-10-11)
 
+> **Status:** archived
+> **Superseded by:** `docs/current/plugin-domains.md` (row 114)
+
 **Question.** The maintainer asked for a plugin for filmo.to and all its alternative domains (2026-10-11). The site analysis below was done by the advisor with playwright-mcp and httpx from the dev container, 18 min; backlog row 63 implements it.
 
 ## Domains

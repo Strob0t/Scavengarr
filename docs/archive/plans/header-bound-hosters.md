@@ -1,5 +1,8 @@
 # Header-Bound Hosters (Row 59)
 
+> **Status:** archived
+> **Superseded by:** `docs/current/hoster-resolvers.md` (row 115)
+
 Status: step 1 measured 2026-10-11 with `scripts/probes/header_binding.py` (21600e2; its byte-range reading 05ea203). No hoster needs a change. The one hoster bound on the `play` route is VEEV, and `/play` already resolves VEEV per player. The row ends with the tables and the next hypotheses (step 3 of row 59 in `docs/plans/ideas-backlog.md`).
 
 ## Question

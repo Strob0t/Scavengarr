@@ -4,7 +4,7 @@ Stremio keeps a stream object: autoplay plays the next episode's stream
 about an hour after it was fetched, "Continue Watching" days later. The
 answers therefore point every stream at Scavengarr, and the link behind it
 resolves the hoster URL again when its video URL is stale or the CDN
-refused it (measure 10 of ``docs/plans/round5-measures.md``).
+refused it (measure 10 of ``docs/archive/plans/round5-measures.md``).
 """
 
 from __future__ import annotations

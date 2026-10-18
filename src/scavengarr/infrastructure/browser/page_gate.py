@@ -13,7 +13,7 @@ it works for (``challenge_mark``), and passes it once it got past. The
 wait for a page and the work on it are recorded by kind
 (``browser_page_wait``, ``browser_page``). A page handed on past its
 work's block (``Hold``) counts until it is ended. ``PageBudget`` changes
-the limit while pages are in use. See ``docs/plans/browser-page-budget.md``.
+the limit while pages are in use. See ``docs/archive/plans/browser-page-budget.md``.
 """
 
 from __future__ import annotations

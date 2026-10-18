@@ -18,7 +18,7 @@ reachability check (``_verify_domain``) and the health monitor's probe
 ask it, not the site. The site's own domain (``_SITE_URL``; cineby.gd and
 cineby.app redirect there, the other former mirrors are parked pages)
 only names the result links. Reading of 2026-10-10:
-``docs/plans/plugin-domains.md`` → cineby.
+``docs/archive/plans/plugin-domains.md`` → cineby.
 """
 
 from __future__ import annotations

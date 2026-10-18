@@ -82,31 +82,6 @@ Open plans stay in `docs/plans/`; a closed plan moves to the archive with its ou
 | [`plans/ideas-backlog.md`](plans/ideas-backlog.md) | plan (open) | The backlog: findings, ideas, decisions, the working rules and the order of the work. |
 | [`plans/challenge-reactions.md`](plans/challenge-reactions.md) | plan (open) | What Scavengarr does once a page shows a challenge or a captcha. |
 | [`plans/stremio-latency.md`](plans/stremio-latency.md) | plan (open) | The Stremio response time and playable streams, with its open investigation. |
-| [`plans/anime-ids-spike.md`](plans/anime-ids-spike.md) | plan (closed) | Where the anime ids of a `kitsu:` request come from. |
-| [`plans/antibot-patchright.md`](plans/antibot-patchright.md) | plan (closed) | Patchright, the Turnstile solver and the browser fallback of httpx plugins. |
-| [`plans/browser-page-budget.md`](plans/browser-page-budget.md) | plan (closed) | Which request gets a stealth browser page, and how many pages there are. |
-| [`plans/captcha-solving.md`](plans/captcha-solving.md) | plan (closed) | The challenge detector, grab-time links and the clearance cookies. |
-| [`plans/cloudflare-solvers.md`](plans/cloudflare-solvers.md) | plan (closed) | FlareSolverr and other Cloudflare solvers against Scavengarr's own stack. |
-| [`plans/code-review-2026-10-12.md`](plans/code-review-2026-10-12.md) | plan (closed) | A code review of the commits since a release, with its owners. |
-| [`plans/code-review-fixes.md`](plans/code-review-fixes.md) | plan (closed) | The fixes of the first full code review, in four waves. |
-| [`plans/cuii-coverage.md`](plans/cuii-coverage.md) | plan (closed) | The CUII block list against the plugins and hoster resolvers. |
-| [`plans/filmo-plugin.md`](plans/filmo-plugin.md) | plan (closed) | The filmo plugin and its official domain list. |
-| [`plans/header-bound-hosters.md`](plans/header-bound-hosters.md) | plan (closed) | Hosters whose CDN binds a video URL to the player's headers. |
-| [`plans/integration-tests.md`](plans/integration-tests.md) | plan (closed) | The integration, E2E and live smoke tests. |
-| [`plans/more-plugins.md`](plans/more-plugins.md) | plan (closed) | The plugin inventory and the remaining candidates. |
-| [`plans/next-steps.md`](plans/next-steps.md) | plan (closed) | An early project status and its prioritised next steps. |
-| [`plans/optimization-options.md`](plans/optimization-options.md) | plan (closed) | Where a stream request's time went, and the options to cut it. |
-| [`plans/pi-performance.md`](plans/pi-performance.md) | plan (closed) | The performance baseline of the production host, the measures and their effect. |
-| [`plans/playwright-engine.md`](plans/playwright-engine.md) | plan (closed) | The browser pool and its resource management. |
-| [`plans/plugin-domains.md`](plans/plugin-domains.md) | plan (closed) | The domains of the megakino_to and movie4k plugins. |
-| [`plans/plugin-repair.md`](plans/plugin-repair.md) | plan (closed) | The repair of broken plugins. |
-| [`plans/round5-measures.md`](plans/round5-measures.md) | plan (closed) | The measures after the fifth end-to-end Stremio check. |
-| [`plans/search-caching.md`](plans/search-caching.md) | plan (closed) | The search result cache and its `X-Cache` header. |
-| [`plans/series-episodes.md`](plans/series-episodes.md) | plan (closed) | What the episode filter does with each plugin's series results. |
-| [`plans/sto-linkout.md`](plans/sto-linkout.md) | plan (closed) | How sto's link-outs reach the resolvers, and how the plugin opens them. |
-| [`plans/stremio-stream-split.md`](plans/stremio-stream-split.md) | plan (closed) | The split of the Stremio stream use case along its phases. |
-| [`plans/title-matching.md`](plans/title-matching.md) | plan (closed) | Title matching for short and German series titles. |
-| [`plans/vidhide-segments.md`](plans/vidhide-segments.md) | plan (closed) | VidHide's HLS segments behind the proxy. |
 
 ## Archive
 
@@ -116,6 +91,31 @@ Open plans stay in `docs/plans/`; a closed plan moves to the archive with its ou
 | [`archive/refactor/clean-architecture-migration.md`](archive/refactor/clean-architecture-migration.md) | archived | The migration from a flat codebase to the four layers. |
 | [`archive/refactor/pydantic-domain-removal.md`](archive/refactor/pydantic-domain-removal.md) | archived | The removal of Pydantic from the domain layer. |
 | [`archive/refactor/german-english-translation.md`](archive/refactor/german-english-translation.md) | archived | The translation of the codebase from German to English. |
+| [`archive/plans/anime-ids-spike.md`](archive/plans/anime-ids-spike.md) | archived | Where the anime ids of a `kitsu:` request come from. |
+| [`archive/plans/antibot-patchright.md`](archive/plans/antibot-patchright.md) | archived | Patchright, the Turnstile solver and the browser fallback of httpx plugins. |
+| [`archive/plans/browser-page-budget.md`](archive/plans/browser-page-budget.md) | archived | Which request gets a stealth browser page, and how many pages there are. |
+| [`archive/plans/captcha-solving.md`](archive/plans/captcha-solving.md) | archived | The challenge detector, grab-time links and the clearance cookies. |
+| [`archive/plans/cloudflare-solvers.md`](archive/plans/cloudflare-solvers.md) | archived | FlareSolverr and other Cloudflare solvers against Scavengarr's own stack. |
+| [`archive/plans/code-review-2026-10-12.md`](archive/plans/code-review-2026-10-12.md) | archived | A code review of the commits since a release, with its owners. |
+| [`archive/plans/code-review-fixes.md`](archive/plans/code-review-fixes.md) | archived | The fixes of the first full code review, in four waves. |
+| [`archive/plans/cuii-coverage.md`](archive/plans/cuii-coverage.md) | archived | The CUII block list against the plugins and hoster resolvers. |
+| [`archive/plans/filmo-plugin.md`](archive/plans/filmo-plugin.md) | archived | The filmo plugin and its official domain list. |
+| [`archive/plans/header-bound-hosters.md`](archive/plans/header-bound-hosters.md) | archived | Hosters whose CDN binds a video URL to the player's headers. |
+| [`archive/plans/integration-tests.md`](archive/plans/integration-tests.md) | archived | The integration, E2E and live smoke tests. |
+| [`archive/plans/more-plugins.md`](archive/plans/more-plugins.md) | archived | The plugin inventory and the remaining candidates. |
+| [`archive/plans/next-steps.md`](archive/plans/next-steps.md) | archived | An early project status and its prioritised next steps. |
+| [`archive/plans/optimization-options.md`](archive/plans/optimization-options.md) | archived | Where a stream request's time went, and the options to cut it. |
+| [`archive/plans/pi-performance.md`](archive/plans/pi-performance.md) | archived | The performance baseline of the production host, the measures and their effect. |
+| [`archive/plans/playwright-engine.md`](archive/plans/playwright-engine.md) | archived | The browser pool and its resource management. |
+| [`archive/plans/plugin-domains.md`](archive/plans/plugin-domains.md) | archived | The domains of the megakino_to and movie4k plugins. |
+| [`archive/plans/plugin-repair.md`](archive/plans/plugin-repair.md) | archived | The repair of broken plugins. |
+| [`archive/plans/round5-measures.md`](archive/plans/round5-measures.md) | archived | The measures after the fifth end-to-end Stremio check. |
+| [`archive/plans/search-caching.md`](archive/plans/search-caching.md) | archived | The search result cache and its `X-Cache` header. |
+| [`archive/plans/series-episodes.md`](archive/plans/series-episodes.md) | archived | What the episode filter does with each plugin's series results. |
+| [`archive/plans/sto-linkout.md`](archive/plans/sto-linkout.md) | archived | How sto's link-outs reach the resolvers, and how the plugin opens them. |
+| [`archive/plans/stremio-stream-split.md`](archive/plans/stremio-stream-split.md) | archived | The split of the Stremio stream use case along its phases. |
+| [`archive/plans/title-matching.md`](archive/plans/title-matching.md) | archived | Title matching for short and German series titles. |
+| [`archive/plans/vidhide-segments.md`](archive/plans/vidhide-segments.md) | archived | VidHide's HLS segments behind the proxy. |
 
 ## Documentation rules
 

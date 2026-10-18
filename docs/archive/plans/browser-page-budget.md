@@ -1,10 +1,11 @@
-[← Back to Index](../README.md)
-
 # Plan: Browser Page Budget (Who Gets a Stealth Page, and How Many There Are)
+
+> **Status:** archived
+> **Superseded by:** `docs/current/browser-and-challenges.md` (row 113)
 
 **Status:** Implemented on staging (2026-10-06), to be measured in the seventh round. Decided by the maintainer: options 2 and 1 for the order of the pages, option 3 fully adaptive ("up and down"), bounded by the container's CPUs and RAM; a `browser_page` metric first; measured in a seventh round.
 **Priority:** High (titles with few streams wait 30 s for kinoger, which no longer finishes in production)
-**Related:** `src/scavengarr/infrastructure/browser/stealth_pool.py`, `infrastructure/hoster_resolvers/registry.py`, `application/stremio/plugin_search.py`, `application/stremio/resolution.py`, `application/use_cases/stremio_links.py`, [Stremio latency, sixth round](stremio-latency.md#sixth-round-2026-10-06-production-on-staging-f0b9d18)
+**Related:** `src/scavengarr/infrastructure/browser/stealth_pool.py`, `infrastructure/hoster_resolvers/registry.py`, `application/stremio/plugin_search.py`, `application/stremio/resolution.py`, `application/use_cases/stremio_links.py`, [Stremio latency, sixth round](../../plans/stremio-latency.md#sixth-round-2026-10-06-production-on-staging-f0b9d18)
 
 ## Problem
 

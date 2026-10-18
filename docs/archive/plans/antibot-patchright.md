@@ -1,10 +1,11 @@
-[← Back to Index](../README.md)
-
 # Plan: Anti-Bot Hardening (Patchright + Browser Fallback)
+
+> **Status:** archived
+> **Superseded by:** `docs/current/browser-and-challenges.md` (row 113)
 
 **Status:** Phase 0–2 done (2026-09-28): all six Cloudflare-blocked plugins return results again. Phase 3 (FlareSolverr/Byparr) built as an option in v0.2.0 (`SolverFetcher`, `playwright.solver_url`), not verified against a running sidecar. Phase 4 done (2026-10-04). Captcha hosters settled: veev and vinovo work via their player APIs (`VeevResolver`, `VinovoResolver`); wolfstream stays disabled (captcha per request)
 **Priority:** High (blocks 6 plugins and 3 hoster resolvers)
-**Related:** `docs/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,httpx_base}.py`, `src/scavengarr/infrastructure/browser/{shared_browser,stealth_pool,cloudflare,turnstile,solver_fetcher}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{supervideo,xfs}.py`, `src/scavengarr/interfaces/composition.py`
+**Related:** `docs/archive/plans/plugin-repair.md`, `CHANGELOG.md` → `KNOWN_ISSUES`, `src/scavengarr/infrastructure/plugins/{playwright_base,httpx_base}.py`, `src/scavengarr/infrastructure/browser/{shared_browser,stealth_pool,cloudflare,turnstile,solver_fetcher}.py`, `src/scavengarr/infrastructure/hoster_resolvers/{supervideo,xfs}.py`, `src/scavengarr/interfaces/composition.py`
 
 ## Problem
 
@@ -36,7 +37,7 @@ Goals:
 Non-goals:
 - Paid scraping APIs, residential proxies, CAPTCHA-solving services.
 - Rewriting plugins to nodriver/SeleniumBase/Camoufox (only reconsidered if the Phase 0 gate fails).
-- Fixing the non-Cloudflare plugin breakages (scnlog, hdfilme, fireani, nox, dataload, kinoking, streamcloud, streamkiste) — tracked in `docs/plans/plugin-repair.md`.
+- Fixing the non-Cloudflare plugin breakages (scnlog, hdfilme, fireani, nox, dataload, kinoking, streamcloud, streamkiste) — tracked in `docs/archive/plans/plugin-repair.md`.
 
 ## Phase 0 — Measure first (spike, no production code)
 
@@ -258,7 +259,7 @@ Papers (each checked on a fetched page by the research):
 - `docs/features/configuration.md` (new config keys), `docs/features/hoster-resolvers.md` (StealthPool location, captcha hosters), `docs/features/FEATURES.md`, `docs/architecture/codeplan.md` (browser package).
 - `docs/features/python-plugins.md`: base class notes (`_fetch_text`, no forced browser UA, no console events under Patchright).
 - `CLAUDE.md`: overview line (Patchright instead of Playwright) and the dev container note on the Chromium install.
-- `docs/plans/plugin-repair.md`: mark the three Cloudflare plugins as covered here.
+- `docs/archive/plans/plugin-repair.md`: mark the three Cloudflare plugins as covered here.
 
 ## Commit sequence
 

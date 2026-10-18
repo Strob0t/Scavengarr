@@ -43,7 +43,7 @@ A kept state cannot help a capture that has 2 s left. The browser is never close
   - `src/scavengarr/infrastructure/browser/stealth_pool.py` (`_ensure_context()`, the capture's stream path, a public `warmup()`);
   - `src/scavengarr/interfaces/composition.py` (the lifespan starts the warm-up after `app_startup_complete` and ends it at shutdown);
   - their tests.
-- **Affected docs:** `docs/features/hoster-resolvers.md` (captures), `docs/plans/captcha-solving.md` (B3's clearance cookies now with the capture state), `docs/plans/challenge-reactions.md` (R4 built), `CHANGELOG.md`.
+- **Affected docs:** `docs/features/hoster-resolvers.md` (captures), `docs/archive/plans/captcha-solving.md` (B3's clearance cookies now with the capture state), `docs/plans/challenge-reactions.md` (R4 built), `CHANGELOG.md`.
 - **Unchanged:**
   - No setting: the 10 minutes, the 24 hours and the 512 KiB are constants.
   - The clearance cookies' key `browser:clearance_cookies` and its rules stay.

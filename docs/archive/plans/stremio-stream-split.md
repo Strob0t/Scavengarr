@@ -1,5 +1,8 @@
 # Plan: Split `stremio_stream.py` Along Its Phases
 
+> **Status:** archived
+> **Superseded by:** `docs/current/architecture.md` (row 112)
+
 Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: done (outcome and deviations at the end). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
 
 ## Problem

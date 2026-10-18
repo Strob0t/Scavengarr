@@ -88,7 +88,7 @@ Both base classes live in `src/scavengarr/infrastructure/plugins/` and share the
 | `mode` | `"httpx"` / `"playwright"` | Reported by `registry.get_mode()` |
 | `languages` | `["de"]` | Content languages; `default_language` property returns `languages[0]` |
 | `_domains` | `[]` | Domains in fallback order (must be set) |
-| `domain_list_url` | `None` | httpx only: the site's official list of its addresses (`https://filmo.domains/`). When no `_domains` entry answers, the domain check reads it (cached 24 h as `<plugin>:domain_list:v1`, a failed read 1 h) and pins the first listed host beyond `_domains` that shows `domain_marker`, logged as `plugin_domain_list_host` and named in the digest. `infrastructure/plugins/domain_list.py`; `docs/plans/plugin-domains.md` → Official domain lists |
+| `domain_list_url` | `None` | httpx only: the site's official list of its addresses (`https://filmo.domains/`). When no `_domains` entry answers, the domain check reads it (cached 24 h as `<plugin>:domain_list:v1`, a failed read 1 h) and pins the first listed host beyond `_domains` that shows `domain_marker`, logged as `plugin_domain_list_host` and named in the digest. `infrastructure/plugins/domain_list.py`; `docs/archive/plans/plugin-domains.md` → Official domain lists |
 | `domain_marker` | `None` | CSS selector of an element only the site's own landing page shows, such as its link to the list (`a[href*="filmo.domains"]`): parked and for-sale domains answer below 400 too. Required with `domain_list_url` |
 | `_max_concurrent` | `5` | Semaphore size for `_new_semaphore()` |
 | `_max_results` | `1000` | Upper bound for pagination |

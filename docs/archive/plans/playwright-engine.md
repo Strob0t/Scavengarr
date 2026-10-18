@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Playwright Engine — Browser Pool & Resource Management
+
+> **Status:** archived
+> **Superseded by:** `docs/current/browser-and-challenges.md` (row 113)
 
 **Status:** Implemented (verified 2026-09-28)
 **Priority:** Medium

@@ -298,7 +298,7 @@ Every stream passed a playback check when it was listed, and Scavengarr resolves
 <details>
 <summary><b>A site is behind Cloudflare or a captcha</b></summary>
 
-The built-in headful browser passes most Cloudflare challenges; in Docker it runs on a virtual display automatically. For sites it cannot pass, start the Byparr sidecar (`--profile solver`) and set `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`. See [Captcha solving](docs/plans/captcha-solving.md).
+The built-in headful browser passes most Cloudflare challenges; in Docker it runs on a virtual display automatically. For sites it cannot pass, start the Byparr sidecar (`--profile solver`) and set `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`. See [Captcha solving](docs/archive/plans/captcha-solving.md).
 
 </details>
 

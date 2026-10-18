@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Project Status and Next Steps
+
+> **Status:** archived
+> **Superseded by:** `docs/backlog.md` (row 118)
 
 **Status:** In progress. Proposed 2026-09-30. Done: items 1 and 4, the CI part of item 2, items 3.1, 3.3 and 3.4, the dependency updates. Open: monitoring and the scheduled live run (maintainer's host), items 3.5 and 3.6 (3.2 to confirm), the DLE base (deferred until the next DLE search fix), the decisions of item 6 (OpenSpec decided 2026-10-06).
 **Priority:** High for 1–3 (the work since February does not reach the Stremio setup, nothing guards `staging`, a quarter of the tested plugins return nothing), medium for 4–5.
@@ -56,16 +57,16 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 ## 2. Safety net
 
 - **CI** (agent) — **Done 2026-09-30:** `.github/workflows/ci.yml` runs `poetry install --with dev`, `pre-commit run --all-files` and `pytest` without live tests on every push to `staging`, on pull requests to `staging` (where CONTRIBUTING.md sends contributors) and `main`, and on demand. Free for public repositories. No non-live test needs a real browser: in a clean clone with an empty `PLAYWRIGHT_BROWSERS_PATH`, a fresh `HOME` and no `SCAVENGARR_*` variables, install took 25 s, pre-commit 40 s and the 4547 tests 62 s, all green.
-- **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away. `/metrics` serves Prometheus metrics (dashboard: `docker/grafana-dashboard.json`); open: the Prometheus scrape job on the host (maintainer) and the alert rules ([ideas-backlog.md](ideas-backlog.md) I8).
+- **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away. `/metrics` serves Prometheus metrics (dashboard: `docker/grafana-dashboard.json`); open: the Prometheus scrape job on the host (maintainer) and the alert rules ([ideas-backlog.md](../../plans/ideas-backlog.md) I8).
 - **Scheduled live run** (maintainer's host): `pytest -m live` once a week from a residential network (about 13 min), with the result as a notification. Not on GitHub-hosted runners: they use datacenter IPs, which Cloudflare-protected sites challenge harder, so the results would not show what a residential network sees. No self-hosted runner either, since pull requests from forks of a public repository could run code on it.
 
 ## 3. Plugin round for Stremio
 
-In order of value for the Stremio use case (German films and series, new releases, anime; answer budget in [stremio-latency.md](stremio-latency.md)). Each fix follows [plugin-repair.md](plugin-repair.md): site analysis with `playwright-mcp` first, then test-first.
+In order of value for the Stremio use case (German films and series, new releases, anime; answer budget in [stremio-latency.md](../../plans/stremio-latency.md)). Each fix follows [plugin-repair.md](plugin-repair.md): site analysis with `playwright-mcp` first, then test-first.
 
 **2026-10-01, CUII block list:** every film/series site on the list has a plugin except kinogo (Russian only, skipped). Four player hosters of covered sites lack a resolver (gxplayer, kinoger.pw, p2pplay, fsst streams). Details in [cuii-coverage.md](cuii-coverage.md). 2026-10-02: gxplayer, kinoger.pw and fsst resolve; p2pplay is no longer linked; rubyvidhub (new, kinoger) was down. Two kinoger parser bugs fixed on the way (films labelled as series, single-player pages without links).
 
-**2026-10-03, end-to-end test with Stremio Web:** install, search and stream lists work; playback is blocked by stremio.example.lan's streaming server (nginx 400 "Request Header Or Cookie Too Large" on its server routes). Following every stream to its media bytes found four bugs, fixed on `staging` (Vidsonic through the HLS proxy, moflix's paid player, kinoger's new WAF page, kinox on episode requests), and one deployment constraint: DoodStream and Vinovo stream URLs only play from the IP that resolved them, and production resolves through a VPN. Details in [stremio-latency.md](stremio-latency.md#end-to-end-test-with-stremio-web-2026-10-03).
+**2026-10-03, end-to-end test with Stremio Web:** install, search and stream lists work; playback is blocked by stremio.example.lan's streaming server (nginx 400 "Request Header Or Cookie Too Large" on its server routes). Following every stream to its media bytes found four bugs, fixed on `staging` (Vidsonic through the HLS proxy, moflix's paid player, kinoger's new WAF page, kinox on episode requests), and one deployment constraint: DoodStream and Vinovo stream URLs only play from the IP that resolved them, and production resolves through a VPN. Details in [stremio-latency.md](../../plans/stremio-latency.md#end-to-end-test-with-stremio-web-2026-10-03).
 
 1. **cine**: find out why the link lookup is empty for every title (site change or a new request format). **2026-10-01:** the links API now needs the language (`lang=1` German, `2` English); fixed. Every `/out/` link opens a reCAPTCHA gateway, so cine serves downloads only.
 2. **Turnstile group** (kinoger, serienfans, ddlspot, ddlvalley, scnsrc, filmfans): run their smoke tests headful (`xvfb-run -a`, `playwright.headless: false`, `playwright.browser_fallback: true`) and fix what still fails.
@@ -88,7 +89,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 
 ## 5. Structure and maintenance
 
-- **DataLife Engine base**: hdfilme, kinoger, megakino, streamcloud and streamkiste all use the DLE search (`do=search`, `subaction=search`). One `DlePluginBase` in `infrastructure/plugins/`, like `DataApiPluginBase` and `XenForoPluginBase`, so a fix lands once. **2026-10-01:** hdfilme, streamcloud and streamkiste turned out to be one database in three themes (same news ids, titles, order and links). Decision: they stay three plugins (three Torznab indexers) in one `mirror_group`, and a Stremio request asks one of them ([Mirror Groups](../features/stremio-addon.md#mirror-groups)). The base would share the search request and paging; the parsers stay per theme. Assessment: that shared part is about 40 lines per plugin in four variants (GET for page 1 and POST for later pages, GET for every page because kinoger's Cloudflare fallback only replays GETs, POST for every page, page 1 only for hdfilme), and the real-page tests now catch theme changes; build the base when the next fix touches the DLE search request.
+- **DataLife Engine base**: hdfilme, kinoger, megakino, streamcloud and streamkiste all use the DLE search (`do=search`, `subaction=search`). One `DlePluginBase` in `infrastructure/plugins/`, like `DataApiPluginBase` and `XenForoPluginBase`, so a fix lands once. **2026-10-01:** hdfilme, streamcloud and streamkiste turned out to be one database in three themes (same news ids, titles, order and links). Decision: they stay three plugins (three Torznab indexers) in one `mirror_group`, and a Stremio request asks one of them ([Mirror Groups](../../features/stremio-addon.md#mirror-groups)). The base would share the search request and paging; the parsers stay per theme. Assessment: that shared part is about 40 lines per plugin in four variants (GET for page 1 and POST for later pages, GET for every page because kinoger's Cloudflare fallback only replays GETs, POST for every page, page 1 only for hdfilme), and the real-page tests now catch theme changes; build the base when the next fix touches the DLE search request.
 - **Parser tests on real pages** (**2026-10-01:** started with the five DLE sites, `tests/unit/infrastructure/test_real_pages.py`, captured with `scripts/capture_pages.py`; see [integration-tests.md](integration-tests.md#fixture-strategy)): the code review found crawli (base64-encoded pages), myboerse (missing CSRF token) and the XenForo node filter broken live while every unit test passed, because the fixtures reflect what the parser expects. Store the pages of a live run as fixtures and test the parsers against them (see the open fixture items in [integration-tests.md](integration-tests.md)).
 - **Dependencies**: patch and minor updates in one batch; guessit 4 on its own (release-name parsing feeds titles, seasons and categories), redis 8 and cryptography 50 on their own. Each with the full suite and the live Stremio end-to-end test. **2026-10-01:** the batch is in (fastapi 0.142, uvicorn 0.54, respx 0.23, starlette 1.7, rebulk 6, pytest-asyncio 1.4; suite and live Stremio probe green). Since then structlog 26, cryptography 50, redis 8, ruff 0.16, pydantic-settings 2.15 and python-dotenv 1.2. guessit 4 followed (7 of 249 live titles parse differently, all better; title-match decisions unchanged). No major update is open.
 - Open items that stay in their plans: [search-caching.md](search-caching.md) (invalidation endpoint, metrics, TTL test), [integration-tests.md](integration-tests.md) (pipeline, CrawlJob HTTP and TTL tests).
@@ -98,7 +99,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 | Question | Recommendation |
 |---|---|
 | Keep the repository public? | Private, if it is for personal use: nobody follows it (0 stars, 0 forks), and a takedown notice against the sites named in `docs/plugins.md` would hit the whole repository. |
-| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](ideas-backlog.md) I16, **done** 2026-10-06); new changes use it (`add-observability` and the advisor review's changes). |
+| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](../../plans/ideas-backlog.md) I16, **done** 2026-10-06); new changes use it (`add-observability` and the advisor review's changes). |
 | Torznab `cat=` with several ids | Pass all ids to the plugins (a port change); today `cat=5070,5000` becomes a strict 5070 request ([open observations](code-review-fixes.md#open-observations)). |
 | DDL hosters in Stremio | Decide whether validate-only DDL hosters may appear as Stremio streams; today the playback check drops them all. |
 | Forum credentials | Provide them as `SCAVENGARR_*` variables if the forum plugins should be checked live. |
@@ -106,12 +107,12 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 
 ## Live tests with stremio.example.lan (done 2026-10-03)
 
-Done on 2026-10-03 (item 3, end-to-end test with Stremio Web); the later rounds, up to the sixth, are in [stremio-latency.md](stremio-latency.md). The setup notes below still apply.
+Done on 2026-10-03 (item 3, end-to-end test with Stremio Web); the later rounds, up to the sixth, are in [stremio-latency.md](../../plans/stremio-latency.md). The setup notes below still apply.
 
 Goal: run the Stremio use case against the maintainer's Stremio Web instance (`https://stremio.example.lan`) with a Scavengarr started in the dev container.
 
 - The dev container publishes port 7979 on all host interfaces (AGENTS.md §9); start the server with `--host 0.0.0.0 --port 7979`. The manifest is at `/api/v1/stremio/manifest.json`.
 - `https://stremio.example.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a reverse-proxy site on the host that proxies to `<workstation>:7979`.
 - Stream and proxy URLs are built from `request.base_url`. uvicorn trusts `X-Forwarded-*` headers only from `127.0.0.1` by default, so behind the reverse proxy on another host start the server with `FORWARDED_ALLOW_IPS=<proxy-ip>`; otherwise the URLs come out as `http://`.
-- Measure against the budget in [stremio-latency.md](stremio-latency.md): time until the streams show and the share of streams that play, for German films, series, new releases and anime.
+- Measure against the budget in [stremio-latency.md](../../plans/stremio-latency.md): time until the streams show and the share of streams that play, for German films, series, new releases and anime.
 - Claude Code's memory is not part of the repository: after the rebuild restore it from the gitignored copy with `mkdir -p ~/.claude/projects/-workspaces-scavengarr/memory && cp .claude/memory-backup/* ~/.claude/projects/-workspaces-scavengarr/memory/`.

@@ -1,5 +1,8 @@
 # Code review of 2026-10-12
 
+> **Status:** archived
+> **Superseded by:** none (history)
+
 The maintainer's `/code-review` at maximum effort over `origin/main...HEAD`: the 39 staging commits since v0.4.0, rows 87 to 93 (row 94 came later). Ten finder angles, one verifier per candidate and a final sweep gave 15 findings. 13 were confirmed by a reproduction with the real code (only pages, sites or times faked), 2 are plausible: the mechanism is real, but no real trigger was shown (findings 8 and 10). Findings 1 and 3 were also checked against the live sites. The review measured no production frequency. Its reproduction scripts stayed in the reviewer's `/tmp` and are not kept.
 
 ## Rows

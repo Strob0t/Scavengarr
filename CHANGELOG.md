@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Closed Plans Are Archived
+- The 25 closed plans and measurement logs moved unchanged under their names from `docs/plans/` to `docs/archive/plans/`, each with an archived status block that names its successor document (or the row that will write it) and with one row in `docs/archive/README.md` (what it was, outcome, successor). `docs/plans/` keeps the open plans only: the backlog, the challenge decision, the Stremio latency plan and the docs overhaul.
+- Every citation of a moved plan in the code, the scripts, the tests, the specs, the open OpenSpec changes and the docs names its new path; the CHANGELOG and the archived OpenSpec changes keep theirs as history. The open items of the archived plans are listed under "Carried over" in the backlog's Ideas section.
+
 ### Changed: The Docs Have One Index, a Document Contract and an Archive
 - `docs/README.md` replaces `docs/features/README.md` as the one index: one line per document with its status (current, target, how-to, reference, plan, archived), a "start here" for agents, and the document contract of `docs/plans/docs-overhaul.md` word for word as its "Documentation rules". It carries no hand-kept counts; the back-links of the docs, the README and AGENTS.md point to it.
 - `docs/archive/` holds the history with its own index (file, what it was, outcome, successor); the three refactor records moved there from `docs/refactor/COMPLETED/` with an archived status block. `docs/target/decisions/_template.md` is the template of the decision records, and the two docs under `docs/agents/` carry their status block.

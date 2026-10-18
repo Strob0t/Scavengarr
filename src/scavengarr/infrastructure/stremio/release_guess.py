@@ -1,7 +1,7 @@
 """guessit's parse of a release name, once per name.
 
 guessit was the biggest Python CPU cost of a stream request on a Raspberry
-Pi: 25-33% (docs/plans/pi-performance.md). The title matcher, the release
+Pi: 25-33% (docs/archive/plans/pi-performance.md). The title matcher, the release
 parser and the episode filter each parsed the same names, and the next
 request for the same title parsed them all again. The parse depends on the
 name alone, so the result is cached; it is shared and therefore read-only.

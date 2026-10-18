@@ -4,7 +4,7 @@ Managed challenges show a "Verify you are human" checkbox inside a
 ``challenges.cloudflare.com`` iframe (closed shadow root). It does not clear
 on its own; a click is required. Patchright locators reach into the closed
 shadow root, and only a headful browser passes the check
-(docs/plans/antibot-patchright.md, Phase 0).
+(docs/archive/plans/antibot-patchright.md, Phase 0).
 """
 
 from __future__ import annotations

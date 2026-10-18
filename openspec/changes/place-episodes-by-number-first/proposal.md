@@ -1,6 +1,6 @@
 ## Why
 
-Row 82 of `docs/plans/ideas-backlog.md` measured on 2026-10-11 where `locate()` puts each Cinemeta episode on aniworld's index: fourteen series and 6708 episodes, with the reference the app builds for an IMDb request (`docs/plans/series-episodes.md` → Row 82).
+Row 82 of `docs/plans/ideas-backlog.md` measured on 2026-10-11 where `locate()` puts each Cinemeta episode on aniworld's index: fourteen series and 6708 episodes, with the reference the app builds for an IMDb request (`docs/archive/plans/series-episodes.md` → Row 82).
 
 **Where aniworld shows absolute numbers, the number's row is the episode, and the title rules mislead.**
 - **Nothing despite the number's row.** 307 episodes get nothing although the row with their number is there (N26). That row was the episode in all 69 cases checked by eye.
@@ -27,6 +27,6 @@ The maintainer's decision: the number first.
 
 - Affected specs: `stremio-anime-episodes`, `stremio-series-identity`.
 - Affected code: `src/scavengarr/infrastructure/plugins/episode_index.py` (`locate()`) and its tests; the partial test (a domain function), the title matcher and the search progress in `src/scavengarr/application/stremio/`, `EpisodeRef` and its builder, aniworld and sto.
-- Affected docs: `docs/features/python-plugins.md` (the rules of `locate()`), `docs/plans/series-episodes.md` (the numbers before and after), `CHANGELOG.md`.
+- Affected docs: `docs/features/python-plugins.md` (the rules of `locate()`), `docs/archive/plans/series-episodes.md` (the numbers before and after), `CHANGELOG.md`.
 - No setting, no cache key change. Search entries that hold the old placements age out with `cache.search_ttl_seconds` (30 minutes in production), and the episode index keeps its rows, not placements.
 - Known limit: a site that numbers a whole series shifted against Kitsu's count (none among the fourteen) would be placed by the number, without a title's check.

@@ -16,7 +16,7 @@
 - [x] 3.1 Row 82's probe again (`PYTHONPATH=src poetry run python -P scripts/probes/anime_offsets.py --aniworld`, the same fourteen series and `--slug` pages):
   - N26's case and the placements at another row go to 0 for the series with numbers;
   - Anime K's and Anime L's title placements stay as they were;
-  - the table before and after in `docs/plans/series-episodes.md` → Row 82.
+  - the table before and after in `docs/archive/plans/series-episodes.md` → Row 82.
 - [x] 3.2 sto's long-runners through `scripts/probes/series_episodes.py --plugins sto` show no regression against their last run.
 
 ## 4. Docs
@@ -35,4 +35,4 @@
   - Anime E: Sequel's four references (S1E1, S1E13, S2E1, S3E5): sto 4 of 4 right, aniworld 2 of 4 right, no wrong placement (measured 2026-10-12: aniworld 4 of 4 right, by title on Anime E's season 17);
   - `anime_offsets --aniworld` for row 82's fourteen series unchanged against row 87's after-table;
   - `series_episodes --plugins sto` unchanged apart from the leak's results (then 3.2).
-- [x] 5.6 Docs: the title match in `docs/features/`, `docs/plans/series-episodes.md`, `CHANGELOG.md`.
+- [x] 5.6 Docs: the title match in `docs/features/`, `docs/archive/plans/series-episodes.md`, `CHANGELOG.md`.

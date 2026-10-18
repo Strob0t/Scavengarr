@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Additional Plugins
+
+> **Status:** archived
+> **Superseded by:** `docs/how-to/new-plugin.md` (row 114)
 
 **Status:** Mostly complete — 42 plugins implemented (2026-09-28: streamworld removed, site gone; 2026-10-11: filmo added)
 **Priority:** Low (ongoing)
@@ -8,7 +9,7 @@
 
 ## Current State
 
-Scavengarr ships with **42 plugins** covering German and English streaming, DDL and anime sites: 36 on httpx bases and 6 on `PlaywrightPluginBase`. The current list, with base class, domains and languages, is the generated [`docs/plugins.md`](../plugins.md) (`scripts/generate_plugin_list.py`). streamworld was removed on 2026-09-28 (site gone).
+Scavengarr ships with **42 plugins** covering German and English streaming, DDL and anime sites: 36 on httpx bases and 6 on `PlaywrightPluginBase`. The current list, with base class, domains and languages, is the generated [`docs/plugins.md`](../../plugins.md) (`scripts/generate_plugin_list.py`). streamworld was removed on 2026-09-28 (site gone).
 
 ## Remaining Candidates
 

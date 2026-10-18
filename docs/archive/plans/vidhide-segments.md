@@ -1,5 +1,8 @@
 # VidHide Segments behind the HLS Proxy (step 27)
 
+> **Status:** archived
+> **Superseded by:** `docs/current/stremio-addon.md` (row 113)
+
 **Question.** Step 24's play check (`docs/plans/stremio-latency.md`, seventh round) found 6 of 6 VidHide streams failing behind the HLS proxy: the playlists came back, the segments answered 403. The proxy fetches from the production host, the address that resolved the stream, so the suspicion was the headers it sends (`_player_headers` with the resolver's stored `Referer`).
 
 **Probe.** `scripts/probes/vidhide_segments.py` takes the newest stored VidHide HLS link (or the streams of `--imdb`), resolves its hoster URL again with the XFS resolver, and walks the proxy's fetch chain for both: stream URL, first variant playlist, first segment. It builds every URL with the proxy's own functions (`_proxy_uri`, `build_cdn_url`), so it shows whether the proxy would fetch a segment or leave it to the player. Each chain runs under six header sets: the stored headers with the player's User-Agent (what the proxy sends), the Referer with the resolver's User-Agent, Referer and Origin with the player's User-Agent, the Referer alone, the player's User-Agent alone, no headers. It prints hosts, statuses and content types only.

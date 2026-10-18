@@ -5,7 +5,7 @@ The gate's limit starts at ``min(2, ceiling)``; the ceiling is
 and memory. One page more when a page request waited and the machine has
 room, one page less under memory or CPU pressure, the start value back
 after two quiet minutes. A lower limit takes no running page away. See
-``docs/plans/browser-page-budget.md``.
+``docs/archive/plans/browser-page-budget.md``.
 """
 
 from __future__ import annotations
