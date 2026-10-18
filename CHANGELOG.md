@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: `prodctl.py stats` Shows an Idle App's CPU Load
+- `scripts/prodctl.py stats` prints the cores in use with three decimals (an idle production app read "CPU 0.00", now "CPU 0.004 of 4 cores") and "CPU ? of N cores" for a sample without a previous one to measure against, which `scripts/playback_under_load.py` leaves out of its CPU figures instead of counting it as idle.
+
 ### Changed: The Docs Carry No Private Traces
 - Network, device and hosting details are generic (`*.example.lan`, "the production host", "a residential network"), the usage guard reads its status repository and time zone from `USAGE_STATUS_REPO` and `USAGE_GUARD_TZ`, third-party addresses in the kinoger and kinox fixtures are `user@example.org`
 - Clock times of playbacks and observations became durations or offsets from a timeline's first entry, dates of playbacks went, request ids read "a request", and the titles and IMDb/Kitsu ids of the maintainer's requests are placeholders ("Anime A", `<Anime A>`); test data and fixtures keep their titles
