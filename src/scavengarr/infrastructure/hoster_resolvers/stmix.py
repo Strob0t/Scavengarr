@@ -1,4 +1,4 @@
-"""STMix hoster resolver — validates DDL links on stmix.io.
+"""STMix hoster resolver — validates video links on stmix.io.
 
 STMix is a video hosting service. URLs follow the pattern:
     https://stmix.io/{file_id}

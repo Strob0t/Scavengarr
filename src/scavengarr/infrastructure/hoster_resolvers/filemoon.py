@@ -1,4 +1,4 @@
-"""Filemoon hoster resolver — extracts HLS URLs from filemoon.sx embed pages.
+"""Filemoon hoster resolver — captures the Byse player's stream, unpacks legacy pages.
 
 Supports two page generations:
 1. Byse player (current): a Vite/React app whose stream URL exists only once

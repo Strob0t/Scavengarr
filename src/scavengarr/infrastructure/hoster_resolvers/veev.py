@@ -1,4 +1,4 @@
-"""veev.to hoster resolver — decodes the player API source.
+"""veev.to hoster resolver — the MP4 decoded from the player API.
 
 Resolution strategy (port of JD2 ``VeevTo.getEmbedDllink``, originally from
 https://github.com/skoruppa/docchi-players/blob/main/veev.py):

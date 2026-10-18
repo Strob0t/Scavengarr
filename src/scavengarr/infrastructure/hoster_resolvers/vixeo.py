@@ -1,4 +1,5 @@
-"""Vixeo (vixeo.io) hoster resolver — Vidsonic's current player.
+"""Vixeo (vixeo.io) hoster resolver — captures the HLS stream of Vidsonic's
+current player.
 
 The embed page ``/e/{id}`` is a JavaScript app that builds the signed HLS URL
 (``*.vidsonic.net/secure/.../index.m3u8``) only while it runs; the page source

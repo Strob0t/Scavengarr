@@ -1,4 +1,4 @@
-"""Playmate (playmate.to) hoster resolver — HLS master via the JSON API.
+"""Playmate (playmate.to) hoster resolver — the HLS master from the JSON API.
 
 Resolution strategy (port of JD2 ``PlaymateTo``):
 

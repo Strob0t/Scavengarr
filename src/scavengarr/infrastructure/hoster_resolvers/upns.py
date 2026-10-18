@@ -1,5 +1,5 @@
-"""UPN Share and RPM Share hoster resolver (moflix's ``upns`` and ``rpmplay``
-mirrors).
+"""UPN Share and RPM Share hoster resolver — the HLS master decrypted from the
+player's API (moflix's ``upns`` and ``rpmplay`` mirrors).
 
 One player family (``moflix.upns.xyz``, ``moflix.rpmplay.xyz``): a vidstack
 player with the video id in the URL fragment (``/#<id>``) that refuses

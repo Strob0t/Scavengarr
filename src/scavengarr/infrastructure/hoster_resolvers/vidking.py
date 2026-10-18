@@ -1,4 +1,4 @@
-"""VidKing hoster resolver — validates DDL links on vidking.net.
+"""VidKing hoster resolver — validates video links on vidking.net.
 
 VidKing is a video hosting service. URLs follow the pattern:
     https://vidking.net/{file_id}

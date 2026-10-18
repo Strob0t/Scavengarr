@@ -21,6 +21,7 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
 from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
@@ -360,6 +361,54 @@ def build_crawljob_store(
     return repo, factory
 
 
+def build_hoster_resolvers(
+    http_client: httpx.AsyncClient, stealth_pool: StealthPool | None
+) -> list[HosterResolverPort]:
+    """The hoster resolvers in registration order.
+
+    A domain two resolvers claim stays with the first one registered, so the
+    specific resolvers come before the generic XFS and DDL ones.
+    ``scripts/generate_resolver_list.py`` lists them in
+    ``docs/reference/resolvers.md``.
+    """
+    return [
+        # Streaming resolvers (extract direct video URLs)
+        VoeResolver(http_client=http_client),
+        StreamtapeResolver(http_client=http_client),
+        SuperVideoResolver(http_client=http_client, stealth_pool=stealth_pool),
+        DoodStreamResolver(http_client=http_client, stealth_pool=stealth_pool),
+        FilemoonResolver(http_client=http_client, stealth_pool=stealth_pool),
+        # DDL resolvers (custom — non-generic)
+        FilerNetResolver(http_client=http_client),
+        RapidgatorResolver(http_client=http_client),
+        DDownloadResolver(http_client=http_client),
+        SerienstreamResolver(http_client=http_client),
+        StmixResolver(http_client=http_client),
+        StrmupResolver(http_client=http_client),
+        VidguardResolver(http_client=http_client),
+        VidkingResolver(http_client=http_client),
+        VidsonicResolver(http_client=http_client),
+        SendVidResolver(http_client=http_client),
+        VeevResolver(http_client=http_client),
+        FirestreamResolver(http_client=http_client),
+        PlaymateResolver(http_client=http_client),
+        MixdropResolver(http_client=http_client),
+        VixeoResolver(http_client=http_client, stealth_pool=stealth_pool),
+        VinovoResolver(http_client=http_client),
+        GxplayerResolver(http_client=http_client),
+        FsstResolver(http_client=http_client),
+        UpnsResolver(http_client=http_client, hoster="upns"),
+        UpnsResolver(http_client=http_client, hoster="rpmplay"),
+        # DDL resolvers (custom — non-XFS)
+        MediafireResolver(http_client=http_client),
+        GoFileResolver(http_client=http_client),
+        # DDL resolvers (consolidated, one per GenericDDLConfig)
+        *create_all_ddl_resolvers(http_client=http_client),
+        # XFS resolvers (consolidated, one per XFSConfig)
+        *create_all_xfs_resolvers(http_client=http_client, stealth_pool=stealth_pool),
+    ]
+
+
 def build_tmdb_client(
     config: AppConfig, http_client: httpx.AsyncClient, cache: CachePort
 ) -> TmdbClientPort:
@@ -573,57 +622,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #    unplayable (browser captures that cannot pass a challenge from this IP)
     hoster_breaker = PluginCircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
     state.hoster_resolver_registry = HosterResolverRegistry(
-        resolvers=[
-            # Streaming resolvers (extract direct video URLs)
-            VoeResolver(http_client=state.http_client),
-            StreamtapeResolver(http_client=state.http_client),
-            SuperVideoResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            DoodStreamResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            FilemoonResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            # DDL resolvers (custom — non-generic)
-            FilerNetResolver(http_client=state.http_client),
-            RapidgatorResolver(http_client=state.http_client),
-            DDownloadResolver(http_client=state.http_client),
-            SerienstreamResolver(http_client=state.http_client),
-            StmixResolver(http_client=state.http_client),
-            StrmupResolver(http_client=state.http_client),
-            VidguardResolver(http_client=state.http_client),
-            VidkingResolver(http_client=state.http_client),
-            VidsonicResolver(http_client=state.http_client),
-            SendVidResolver(http_client=state.http_client),
-            VeevResolver(http_client=state.http_client),
-            FirestreamResolver(http_client=state.http_client),
-            PlaymateResolver(http_client=state.http_client),
-            MixdropResolver(http_client=state.http_client),
-            VixeoResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            VinovoResolver(http_client=state.http_client),
-            GxplayerResolver(http_client=state.http_client),
-            FsstResolver(http_client=state.http_client),
-            UpnsResolver(http_client=state.http_client, hoster="upns"),
-            UpnsResolver(http_client=state.http_client, hoster="rpmplay"),
-            # DDL resolvers (custom — non-XFS)
-            MediafireResolver(http_client=state.http_client),
-            GoFileResolver(http_client=state.http_client),
-            # DDL resolvers (consolidated — 10 hosters)
-            *create_all_ddl_resolvers(http_client=state.http_client),
-            # XFS resolvers (consolidated — 25 hosters)
-            *create_all_xfs_resolvers(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-        ],
+        resolvers=build_hoster_resolvers(state.http_client, state.stealth_pool),
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
