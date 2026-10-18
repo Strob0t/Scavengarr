@@ -1,7 +1,7 @@
 # Refactor: Clean Architecture Migration
 
 > **Status:** archived
-> **Superseded by:** none (history)
+> **Superseded by:** `docs/target/architecture.md` (the rule) and `docs/current/architecture.md` (the module map)
 
 **Status:** Completed
 **Commits:** `7726ba8` through `6f770b8` (plus follow-up commits through `028c932`)

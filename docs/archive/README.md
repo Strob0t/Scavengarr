@@ -9,7 +9,7 @@ The current behaviour lives in the documents of [`docs/README.md`](../README.md)
 
 | File | What it was | Outcome | Successor |
 |---|---|---|---|
-| [`refactor/clean-architecture-migration.md`](refactor/clean-architecture-migration.md) | The record of the migration from a flat codebase to the domain, application, infrastructure and interfaces layers. | Completed before the first release. | none (history) |
+| [`refactor/clean-architecture-migration.md`](refactor/clean-architecture-migration.md) | The record of the migration from a flat codebase to the domain, application, infrastructure and interfaces layers. | Completed before the first release. | `docs/target/architecture.md` (the rule), `docs/current/architecture.md` (the module map) |
 | [`refactor/pydantic-domain-removal.md`](refactor/pydantic-domain-removal.md) | The record of the removal of Pydantic from the domain layer. | Completed: the domain models are plain dataclasses. | none (history) |
 | [`refactor/german-english-translation.md`](refactor/german-english-translation.md) | The record of the translation of comments, docstrings and log messages from German to English. | Completed before the first release. | none (history) |
 | [`plans/anime-ids-spike.md`](plans/anime-ids-spike.md) | The comparison of anime id sources for `kitsu:` requests. | Built: the Anime Kitsu addon's meta, with Fribb's id list as the fallback. | `docs/current/stremio-addon.md` (row 113) |
