@@ -9,7 +9,6 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "06:00"
-      timezone: "Europe/Berlin"
     open-pull-requests-limit: 3
     groups:
       minor-and-patch:
@@ -26,7 +25,6 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "06:00"
-      timezone: "Europe/Berlin"
     labels:
       - "dependencies"
 
@@ -38,6 +36,5 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "06:00"
-      timezone: "Europe/Berlin"
     labels:
       - "dependencies"
