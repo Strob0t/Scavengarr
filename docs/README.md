@@ -107,7 +107,6 @@ Open plans stay in `docs/plans/`; a closed plan moves to the archive with its ou
 | [`plans/stremio-stream-split.md`](plans/stremio-stream-split.md) | plan (closed) | The split of the Stremio stream use case along its phases. |
 | [`plans/title-matching.md`](plans/title-matching.md) | plan (closed) | Title matching for short and German series titles. |
 | [`plans/vidhide-segments.md`](plans/vidhide-segments.md) | plan (closed) | VidHide's HLS segments behind the proxy. |
-| [`plans/round-titles.txt`](plans/round-titles.txt) | reference | The Stremio ids the end-to-end checks request, read by `scripts/stremio_round.py`. |
 
 ## Archive
 
