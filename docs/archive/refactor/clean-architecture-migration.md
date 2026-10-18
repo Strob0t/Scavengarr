@@ -1,6 +1,7 @@
-[← Back to Index](../../features/README.md)
-
 # Refactor: Clean Architecture Migration
+
+> **Status:** archived
+> **Superseded by:** none (history)
 
 **Status:** Completed
 **Commits:** `7726ba8` through `6f770b8` (plus follow-up commits through `028c932`)
@@ -68,7 +69,7 @@ class SearchResult:
 - Moved Pydantic validation of plugin definitions to the Infrastructure layer (validate with Pydantic, then convert to domain dataclasses)
 - Pydantic remained in the Infrastructure layer for config parsing (`pydantic-settings`)
 
-See also: `docs/refactor/COMPLETED/pydantic-domain-removal.md` for detailed entity changes.
+See also: `docs/archive/refactor/pydantic-domain-removal.md` for detailed entity changes.
 
 ## Phase 2: Consolidate SearchResult Definition
 

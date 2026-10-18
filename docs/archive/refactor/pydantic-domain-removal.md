@@ -1,6 +1,7 @@
-[← Back to Index](../../features/README.md)
-
 # Refactor: Pydantic Removal from Domain Layer
+
+> **Status:** archived
+> **Superseded by:** none (history)
 
 **Status:** Completed
 **Commit:** `7726ba8` — *refactor(phase1): remove Pydantic from Domain layer*

@@ -74,7 +74,7 @@ Scavengarr is a self-hosted Torznab/Newznab indexer for Prowlarr and other Arr a
 
 Torznab request flow: HTTP request → use case loads plugin from registry (lazy) → plugin runs multi-stage search (search page → detail pages → links; results cached) → links validated in parallel until the requested page is full → one `.crawljob` per item → presenter renders Torznab XML. Stremio stream flow: IMDb id (a `kitsu:` id of the anime catalogs is translated first: the Anime Kitsu addon's meta, Fribb's id list as the fallback; `infrastructure/anime/`) → title(s) and the Cinemeta meta (kind, episode list; the episode reference for plugins that locate episodes, numbered by Kitsu for an anime episode where one Kitsu entry counts the series) → cached or shared plugin search per title → title/episode filter, rank → each hoster's best link resolved (resolver cache) → play/proxy links.
 
-Feature docs: `docs/features/README.md` (index). Architecture: `docs/architecture/clean-architecture.md`.
+Docs index: `docs/README.md` (every document with its status, and the documentation rules). Architecture: `docs/architecture/clean-architecture.md`.
 
 ---
 
@@ -190,5 +190,5 @@ Step-by-step guides:
 | Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
 | Production diagnostics | `scripts/prodctl.py`, `scripts/probes/`, `scripts/portainer.py`, `scripts/digest.py` |
 | Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
-| Refactor history | `docs/refactor/COMPLETED/` |
+| Archive (closed plans, refactor history) | `docs/archive/` (index: `docs/archive/README.md`) |
 | OpenSpec change specs | `openspec/changes/` |

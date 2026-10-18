@@ -1,5 +1,8 @@
 # MCP servers
 
+> **Status:** reference
+> **As of:** d17c66f7
+
 The MCP servers Claude Code starts for this repository, from `.mcp.json` (versioned);
 `.devcontainer/setup.sh` installs what they need on every attach. Servers configured per
 user (`~/.claude.json`, such as Context7 or caveman) are not listed here.

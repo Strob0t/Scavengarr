@@ -1,4 +1,4 @@
-[← Back to Index](./README.md)
+[← Back to Index](../README.md)
 
 # Scavengarr Feature Handbook
 
@@ -8,7 +8,7 @@
 
 ## Feature Overview
 
-Current plugin, resolver, and test counts are listed in the [repository README](../../README.md) and the [feature index](./README.md).
+Current plugin, resolver, and test counts are listed in the [repository README](../../README.md).
 
 | Feature | Status | Details |
 |---|---|---|

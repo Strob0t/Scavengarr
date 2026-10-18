@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Docs Have One Index, a Document Contract and an Archive
+- `docs/README.md` replaces `docs/features/README.md` as the one index: one line per document with its status (current, target, how-to, reference, plan, archived), a "start here" for agents, and the document contract of `docs/plans/docs-overhaul.md` word for word as its "Documentation rules". It carries no hand-kept counts; the back-links of the docs, the README and AGENTS.md point to it.
+- `docs/archive/` holds the history with its own index (file, what it was, outcome, successor); the three refactor records moved there from `docs/refactor/COMPLETED/` with an archived status block. `docs/target/decisions/_template.md` is the template of the decision records, and the two docs under `docs/agents/` carry their status block.
+- `tests/unit/infrastructure/test_docs_paths.py` also checks the folders of the target layout (`docs/target/`, `docs/current/`, `docs/how-to/`, `docs/reference/`, `docs/agents/`) and `docs/backlog.md`. The new `tests/unit/infrastructure/test_docs_style.py` holds the index and those folders to the contract: the status block on line 3 (a generated reference file names its generator there), no heading that names a round, trial, measurement, proof or finding, and no backlog id outside the backlog.
+
 ### Fixed: `prodctl.py stats` Shows an Idle App's CPU Load
 - `scripts/prodctl.py stats` prints the cores in use with three decimals (an idle production app read "CPU 0.00", now "CPU 0.004 of 4 cores") and "CPU ? of N cores" for a sample without a previous one to measure against, which `scripts/playback_under_load.py` leaves out of its CPU figures instead of counting it as idle.
 

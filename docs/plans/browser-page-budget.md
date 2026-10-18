@@ -1,4 +1,4 @@
-[← Back to Index](../features/README.md)
+[← Back to Index](../README.md)
 
 # Plan: Browser Page Budget (Who Gets a Stealth Page, and How Many There Are)
 

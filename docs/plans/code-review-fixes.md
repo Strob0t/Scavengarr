@@ -1,4 +1,4 @@
-[← Back to Index](../features/README.md)
+[← Back to Index](../README.md)
 
 # Plan: Fixes from the Full Code Review of `staging`
 

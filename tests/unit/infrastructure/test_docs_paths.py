@@ -1,9 +1,11 @@
 """The docs name repository paths that exist.
 
-Every backticked path in the instruction files and the feature and
-architecture docs (plans and OpenSpec changes name future files and are
-not checked) must exist, so a moved module shows up here and not in a
-reader's shell (finding 10 of ``docs/plans/ideas-backlog.md``). The
+Every backticked path in the instruction files, the feature and
+architecture docs and the folders of the target layout must exist (plans,
+OpenSpec changes and the index's document contract name future files, the
+archive names removed ones; none of them is checked), so a moved module
+shows up here and not in a reader's shell (finding 10 of
+``docs/plans/ideas-backlog.md``). The
 docs cite paths relative to the package (``infrastructure/plugins/dom.py``)
 and the architecture tables relative to their layer (``entities/torznab.py``,
 ``plugins/base.py``, ``cache/redis_adapter.py``); those count as present when
@@ -22,8 +24,14 @@ _DOCS = [
     _ROOT / "AGENTS.md",
     _ROOT / "README.md",
     _ROOT / "CONTRIBUTING.md",
+    *sorted((_ROOT / "docs").glob("backlog.md")),
     *sorted((_ROOT / "docs" / "features").glob("*.md")),
     *sorted((_ROOT / "docs" / "architecture").glob("*.md")),
+    *(
+        doc
+        for folder in ("target", "current", "how-to", "reference", "agents")
+        for doc in sorted((_ROOT / "docs" / folder).rglob("*.md"))
+    ),
 ]
 _PREFIXES = (
     "src/",

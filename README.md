@@ -15,7 +15,7 @@
 [Configuration](#configuration) ·
 [FAQ](#faq--troubleshooting) ·
 [Plugins](docs/plugins.md) ·
-[Docs](docs/features/README.md)
+[Docs](docs/README.md)
 
 </div>
 
@@ -338,7 +338,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 | Topic | Link |
 |---|---|
-| All features | [docs/features/README.md](docs/features/README.md) |
+| All documents | [docs/README.md](docs/README.md) |
 | Stremio addon | [docs/features/stremio-addon.md](docs/features/stremio-addon.md) |
 | Torznab API | [docs/features/torznab-api.md](docs/features/torznab-api.md) |
 | Prowlarr integration | [docs/features/prowlarr-integration.md](docs/features/prowlarr-integration.md) |

@@ -1,6 +1,7 @@
-[← Back to Index](../../features/README.md)
-
 # Refactor: German to English Translation
+
+> **Status:** archived
+> **Superseded by:** none (history)
 
 **Status:** Completed
 **Commits:** `04f4b81`, `bcfe059`, `b18711e`, `4e440d7`

@@ -1,5 +1,8 @@
 # Claude Code skills
 
+> **Status:** reference
+> **As of:** d17c66f7
+
 The skills installed for Claude Code in the dev container, grouped by their source
 repository. `.devcontainer/setup.sh` installs them on every attach with the pinned
 `skills` CLI (`SKILL_SOURCES`), one call per source:
