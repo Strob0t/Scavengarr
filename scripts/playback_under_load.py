@@ -351,7 +351,9 @@ async def sample_cpu(container: Portainer, run: Run, stop: asyncio.Event) -> Non
         except httpx.HTTPError as exc:
             print(f"  stats: {type(exc).__name__}", file=sys.stderr)
         else:
-            run.cpu.append(cpu_cores(sample)[0])
+            cores = cpu_cores(sample)[0]
+            if cores is not None:
+                run.cpu.append(cores)
         try:
             await asyncio.wait_for(stop.wait(), _STATS_EVERY)
         except TimeoutError:

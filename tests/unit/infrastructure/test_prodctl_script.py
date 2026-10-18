@@ -137,7 +137,7 @@ class TestStatsLine:
             "networks": {"eth0": {"rx_bytes": 2048, "tx_bytes": 512}},
         }
         assert _mod.stats_line("app", sample) == (
-            "app: CPU 2.00 of 4 cores | memory 100.0 MiB of 1.0 GiB | processes 7"
+            "app: CPU 2.000 of 4 cores | memory 100.0 MiB of 1.0 GiB | processes 7"
             " | network rx 2.0 KiB tx 512 B"
         )
 
@@ -410,5 +410,61 @@ class TestCpuCores:
         }
         assert _mod.cpu_cores(sample) == (2.0, 4)
 
-    def test_an_empty_sample_is_idle_on_one_core(self) -> None:
-        assert _mod.cpu_cores({}) == (0.0, 1)
+    def test_an_empty_sample_has_no_figure(self) -> None:
+        assert _mod.cpu_cores({}) == (None, 1)
+
+
+# One-shot reads of production through Portainer (stream=false), the CPU
+# fields only: Docker's read carries its previous sample about 1 s before
+_IDLE_FRAME = {
+    "cpu_stats": {
+        "cpu_usage": {"total_usage": 189_449_619_000},
+        "system_cpu_usage": 4_841_142_920_000_000,
+        "online_cpus": 4,
+    },
+    "precpu_stats": {
+        "cpu_usage": {"total_usage": 189_446_136_000},
+        "system_cpu_usage": 4_841_138_990_000_000,
+        "online_cpus": 4,
+    },
+}
+
+
+class TestCpuFigure:
+    """``stats`` printed "CPU 0.00" for an idle app (0.0035 cores, rounded
+    to two decimals), which read as a missing sample."""
+
+    def test_an_idle_app_shows_its_load(self) -> None:
+        line = _mod.stats_line("app", _IDLE_FRAME)
+        assert line.startswith("app: CPU 0.004 of 4 cores | ")
+
+    def test_a_loaded_app(self) -> None:
+        frame = {
+            "cpu_stats": {
+                "cpu_usage": {"total_usage": 2_350_000_000},
+                "system_cpu_usage": 5_000_000_000,
+                "online_cpus": 4,
+            },
+            "precpu_stats": {
+                "cpu_usage": {"total_usage": 1_000_000_000},
+                "system_cpu_usage": 1_000_000_000,
+            },
+        }
+        # 1.35e9 ns of the container over 4.0e9 ns of the system, 4 CPUs
+        assert _mod.stats_line("app", frame).startswith("app: CPU 1.350 of 4 cores")
+
+    @pytest.mark.parametrize(
+        "precpu",
+        [
+            {},
+            {"cpu_usage": {"total_usage": 189_446_136_000}},
+            # the same sample twice: no interval
+            _IDLE_FRAME["cpu_stats"],
+        ],
+        ids=["empty", "no-system-usage", "no-interval"],
+    )
+    def test_a_frame_without_a_previous_sample_has_no_figure(
+        self, precpu: dict[str, object]
+    ) -> None:
+        frame = {"cpu_stats": _IDLE_FRAME["cpu_stats"], "precpu_stats": precpu}
+        assert _mod.stats_line("app", frame).startswith("app: CPU ? of 4 cores | ")

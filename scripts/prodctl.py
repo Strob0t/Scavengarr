@@ -123,24 +123,27 @@ def select_lines(
     return lines[-limit:] if limit > 0 else lines, len(lines)
 
 
-def cpu_cores(sample: dict[str, Any]) -> tuple[float, int]:
+def cpu_cores(sample: dict[str, Any]) -> tuple[float | None, int]:
     """The CPU cores a ``docker stats`` sample shows in use (the sample's
-    interval against its predecessor), and the cores online."""
+    interval against its predecessor), and the cores online; ``None`` in use
+    without a predecessor to measure against."""
     cpu = sample.get("cpu_stats", {})
     pre = sample.get("precpu_stats", {})
     used = _nested(cpu, "cpu_usage", "total_usage") - _nested(
         pre, "cpu_usage", "total_usage"
     )
     system = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
+    measured = "system_cpu_usage" in pre and system > 0
     cpus = cpu.get("online_cpus") or len(
         cpu.get("cpu_usage", {}).get("percpu_usage") or [1]
     )
-    return (used / system * cpus if system > 0 else 0.0), cpus
+    return (used / system * cpus if measured else None), cpus
 
 
 def stats_line(name: str, sample: dict[str, Any]) -> str:
     """CPU cores in use, memory without page cache, processes, network totals."""
     cores, cpus = cpu_cores(sample)
+    in_use = "?" if cores is None else f"{cores:.3f}"
     memory = sample.get("memory_stats", {})
     page_cache = memory.get("stats", {})
     resident = memory.get("usage", 0) - page_cache.get(
@@ -150,7 +153,7 @@ def stats_line(name: str, sample: dict[str, Any]) -> str:
     rx = sum(n.get("rx_bytes", 0) for n in networks)
     tx = sum(n.get("tx_bytes", 0) for n in networks)
     return (
-        f"{name}: CPU {cores:.2f} of {cpus} cores | memory {_size(resident)}"
+        f"{name}: CPU {in_use} of {cpus} cores | memory {_size(resident)}"
         f" of {_size(memory.get('limit', 0))} | processes"
         f" {sample.get('pids_stats', {}).get('current', '?')}"
         f" | network rx {_size(rx)} tx {_size(tx)}"
