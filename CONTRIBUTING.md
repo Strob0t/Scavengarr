@@ -137,7 +137,7 @@ Every plugin must:
 - parse pages with `selectolax` through `await parse_page(parser, html)`,
 - declare `name`, `provides` (`stream`, `download` or `both`), `_domains` (primary domain first, then mirrors) and, if not German, `languages`.
 
-Analyse the site in a real browser before writing code. The full guide is [docs/features/python-plugins.md → Adding a New Plugin](docs/features/python-plugins.md).
+Analyse the site in a real browser before writing code. The full guide is [docs/how-to/new-plugin.md](docs/how-to/new-plugin.md).
 
 After adding, removing or changing a plugin's metadata, regenerate the plugin list (a test fails otherwise):
 

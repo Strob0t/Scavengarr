@@ -21,7 +21,7 @@
 
 ## 4. Docs
 
-- [x] 4.1 `docs/features/python-plugins.md`: the rules of `locate()`, and the reference's absolute number, which the Kitsu number now gives for IMDb anime requests too (rows 76 and 77).
+- [x] 4.1 `docs/current/plugins.md`: the rules of `locate()`, and the reference's absolute number, which the Kitsu number now gives for IMDb anime requests too (rows 76 and 77).
 - [x] 4.2 `CHANGELOG.md` under `## Unreleased (staging)`.
 
 ## 5. The wrong-series leak and the parent series (row 92)

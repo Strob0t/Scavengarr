@@ -70,4 +70,4 @@ Until 2026-09-28 the Playwright smoke tests were always skipped ("Chromium not i
 
 ## Prerequisites
 
-- Site analysis per `docs/features/python-plugins.md` ("Adding a New Plugin") uses `playwright-mcp`. It runs over stdio from the committed `.mcp.json` (no Docker); `.devcontainer/setup.sh` installs Chromium with its system libraries. Verify after the next container recreate that the `playwright-mcp` tools are available in Claude Code.
+- Site analysis per `docs/how-to/new-plugin.md` uses `playwright-mcp`. It runs over stdio from the committed `.mcp.json` (no Docker); `.devcontainer/setup.sh` installs Chromium with its system libraries. Verify after the next container recreate that the `playwright-mcp` tools are available in Claude Code.

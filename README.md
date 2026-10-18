@@ -14,7 +14,7 @@
 [Connect your apps](#connect-your-apps) ·
 [Configuration](#configuration) ·
 [FAQ](#faq--troubleshooting) ·
-[Plugins](docs/plugins.md) ·
+[Plugins](docs/reference/plugins.md) ·
 [Docs](docs/README.md)
 
 </div>
@@ -104,7 +104,7 @@ flowchart LR
 
 ### Sources and hosters
 
-- 42 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
+- 42 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/reference/plugins.md)
 - 62 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
 - Mirror fallback: plugins try alternative domains when the primary one is down, and follow a site's own published list of its addresses
@@ -223,7 +223,7 @@ Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr
 Each plugin is added as its own indexer:
 
 1. Prowlarr → **Settings → Indexers → Add Indexer → Generic Torznab**.
-2. **URL:** `http://<your-host>:7979/api/v1/torznab/<plugin>` (plugin names: [plugin list](docs/plugins.md)).
+2. **URL:** `http://<your-host>:7979/api/v1/torznab/<plugin>` (plugin names: [plugin list](docs/reference/plugins.md)).
 3. **API Key:** leave empty.
 4. **Categories:** `2000` (Movies), `5000` (TV).
 5. **Test**, then **Save**. Prowlarr syncs the indexer to Sonarr and Radarr.
@@ -263,7 +263,7 @@ Every setting can also come from the environment: a section's key as `SCAVENGARR
 
 Scavengarr ships 42 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
 
-The complete, generated list with domains, content type, engine and languages is in **[docs/plugins.md](docs/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
+The complete, generated list with domains, content type, engine and languages is in **[docs/reference/plugins.md](docs/reference/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
 
 Want a site that is missing? Plugins are single Python files — see [Contributing](#contributing).
 
@@ -344,11 +344,12 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Prowlarr integration | [docs/features/prowlarr-integration.md](docs/features/prowlarr-integration.md) |
 | Configuration reference | [docs/features/configuration.md](docs/features/configuration.md) |
 | Observability | [docs/features/observability.md](docs/features/observability.md) |
-| Plugin list | [docs/plugins.md](docs/plugins.md) |
-| Plugin system | [docs/features/plugin-system.md](docs/features/plugin-system.md) |
+| Plugin list | [docs/reference/plugins.md](docs/reference/plugins.md) |
+| Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
+| Plugin domains | [docs/current/plugin-domains.md](docs/current/plugin-domains.md) |
+| Writing a plugin | [docs/how-to/new-plugin.md](docs/how-to/new-plugin.md) |
 | Hoster resolvers | [docs/features/hoster-resolvers.md](docs/features/hoster-resolvers.md) |
 | Link validation | [docs/features/link-validation.md](docs/features/link-validation.md) |
-| Plugin scoring | [docs/features/plugin-scoring-and-probing.md](docs/features/plugin-scoring-and-probing.md) |
 | Architecture | [docs/architecture/clean-architecture.md](docs/architecture/clean-architecture.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 

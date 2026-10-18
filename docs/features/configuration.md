@@ -409,7 +409,7 @@ The `environment` setting controls several behavioral defaults (see [Environment
 | `plugins.overrides.<name>.max_results` | int | — | Override the plugin's max results |
 | `plugins.overrides.<name>.enabled` | bool | `true` | `false` removes the plugin from the registry |
 
-The plugin registry scans the plugin directory at startup for `.py` files. All plugins are imported once during startup wiring and cached in memory. Unknown plugin names in `overrides` are logged as a warning (`plugin_override_unknown`), a misspelled `enabled: false` included. See [Plugin System](./plugin-system.md) and [Per-Plugin Overrides](./plugin-system.md#per-plugin-overrides) for details.
+How the registry loads the plugins and applies the overrides, and what it logs for an unknown name, is described in [Plugins](../current/plugins.md#discovery-and-loading).
 
 ```yaml
 plugins:
@@ -514,7 +514,7 @@ A dict you set (`language_scores`, `hoster_scores`) replaces the default dict; l
 | `stremio.max_plugins_scored` | int | `5` | Top-N plugins when scoring is active |
 | `stremio.exploration_probability` | float | `0.15` | Chance to include a random mid-score plugin |
 
-See [Stremio Addon](./stremio-addon.md) for the full feature description and [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) for the scoring system.
+See [Stremio Addon](./stremio-addon.md) for the full feature description and [Plugins](../current/plugins.md#scores-and-probes) for the scoring system.
 
 ### Concurrency Pool
 
@@ -546,7 +546,7 @@ When `auto_tune_all` is `false` and `max_concurrent_plugins_auto` is `true`, onl
 
 ### Scoring
 
-Controls the background plugin scoring and probing system. See [Plugin Scoring & Probing](./plugin-scoring-and-probing.md) for the full architecture and data model.
+Controls the background plugin scoring and probing system. See [Plugins](../current/plugins.md#scores-and-probes) for the full architecture and data model.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

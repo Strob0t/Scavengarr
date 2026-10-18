@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Plugin Docs Follow the Document Contract
+- `docs/current/plugins.md` describes how plugins are discovered, loaded and called (the contract, the results, the base classes, the search stages, categories, episodes, the sto gate, the plugin selection of a Stremio request, scores and probes); `docs/current/plugin-domains.md` the domain check, site moves, official domain lists, boerse's own fallback and the mirror groups; `docs/how-to/new-plugin.md` the steps of a new plugin.
+- They replace `docs/features/plugin-system.md`, `python-plugins.md`, `multi-stage-scraping.md`, `plugin-scoring-and-probing.md` and `mirror-url-fallback.md`; the per-plugin overrides have one description, in `docs/current/plugins.md`, and the settings stay in the configuration reference.
+- The generated plugin list moved to `docs/reference/plugins.md`; `scripts/generate_plugin_list.py` writes the generator's name on its line 3.
+- Every citation of the old paths outside the CHANGELOG and the archived OpenSpec changes names the successor.
+
 ### Changed: The Closed Plans Are Archived
 - The 25 closed plans and measurement logs moved unchanged under their names from `docs/plans/` to `docs/archive/plans/`, each with an archived status block that names its successor document (or the row that will write it) and with one row in `docs/archive/README.md` (what it was, outcome, successor). `docs/plans/` keeps the open plans only: the backlog, the challenge decision, the Stremio latency plan and the docs overhaul.
 - Every citation of a moved plan in the code, the scripts, the tests, the specs, the open OpenSpec changes and the docs names its new path; the CHANGELOG and the archived OpenSpec changes keep theirs as history. The open items of the archived plans are listed under "Carried over" in the backlog's Ideas section.

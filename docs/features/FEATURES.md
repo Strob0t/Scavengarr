@@ -61,9 +61,9 @@ Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source
 | `HttpxPluginBase` | [x] Implemented | Shared base for httpx plugins (client, domain fallback, semaphore) |
 | `PlaywrightPluginBase` | [x] Implemented | Shared base for Playwright plugins (browser lifecycle, Cloudflare) |
 | Season/episode support | [x] Implemented | All plugins accept `season`/`episode` params for TV content |
-| Per-plugin overrides | [x] Implemented | See [Plugin System](./plugin-system.md#per-plugin-overrides) |
+| Per-plugin overrides | [x] Implemented | See [Plugins](../current/plugins.md#discovery-and-loading) |
 
-**Detailed docs:** [Plugin System](./plugin-system.md), [Python Plugins](./python-plugins.md)
+**Detailed docs:** [Plugins](../current/plugins.md), [Adding a plugin](../how-to/new-plugin.md)
 
 ---
 
@@ -190,7 +190,7 @@ Plugins implement the search → detail → links flow internally; there is no s
 | Pagination | [x] Implemented | Plugins page through search results up to their `_max_results` |
 | Rate limiting | [x] Implemented | Per-domain rate limiting in the shared HTTP client |
 
-**Detailed docs:** [Multi-Stage Scraping](./multi-stage-scraping.md)
+**Detailed docs:** [Plugins: search stages](../current/plugins.md#search-stages)
 
 ---
 
@@ -260,7 +260,7 @@ Plugins can define multiple domains. If the primary domain is unreachable, the p
 | Multiple domain entries | [x] Implemented | Plugin `_domains` list for mirror fallback |
 | Sequential fallback | [x] Implemented | Try mirrors in order until one works |
 
-**Detailed docs:** [Mirror URL Fallback](./mirror-url-fallback.md)
+**Detailed docs:** [Plugin domains](../current/plugin-domains.md)
 
 ---
 

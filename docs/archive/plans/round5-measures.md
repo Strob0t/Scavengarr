@@ -116,7 +116,7 @@ The backend saves about a quarter of the proxy's CPU (15–27% across the runs).
 
 **Problem.** 28 plugins parse with `html.parser` subclasses (pure Python, holds the GIL); only filmpalast and hdfilme use selectolax for their biggest pages.
 
-**Design.** Rewrite each plugin's parsing with selectolax (`LexborHTMLParser`, CSS selectors) and identical results: the plugin's unit tests and the real-page tests (`tests/unit/infrastructure/test_real_pages.py`) are the specification. Big pages parse in a worker thread as `_feed()` does today. Order: the Stremio plugins with the biggest pages first (kinoger, s.to, megakino, movie2k, aniworld, kinoking, the DLE mirrors, kinox, burningseries), then the Torznab-only plugins. The first two set the pattern and any shared helper; the others follow it one plugin per commit. `AGENTS.md` §5 and `docs/features/python-plugins.md` change with the last one.
+**Design.** Rewrite each plugin's parsing with selectolax (`LexborHTMLParser`, CSS selectors) and identical results: the plugin's unit tests and the real-page tests (`tests/unit/infrastructure/test_real_pages.py`) are the specification. Big pages parse in a worker thread as `_feed()` does today. Order: the Stremio plugins with the biggest pages first (kinoger, s.to, megakino, movie2k, aniworld, kinoking, the DLE mirrors, kinox, burningseries), then the Torznab-only plugins. The first two set the pattern and any shared helper; the others follow it one plugin per commit. `AGENTS.md` §5 and `docs/how-to/new-plugin.md` change with the last one.
 
 **Tests.** Unchanged plugin tests and real-page tests pass for every migrated plugin; a parse benchmark on the real pages before and after.
 

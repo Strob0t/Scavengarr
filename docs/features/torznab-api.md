@@ -21,7 +21,7 @@ All API routes are mounted under the `/api/v1` prefix; only the Prometheus endpo
 | `GET` | `/api/v1/healthz` | JSON | Liveness probe |
 | `GET` | `/api/v1/readyz` | JSON | Readiness probe |
 
-The Stremio addon endpoints (`/api/v1/stremio/...`) are documented in [Stremio Addon](./stremio-addon.md); `/api/v1/stats/plugin-scores` in [Plugin Scoring & Probing](./plugin-scoring-and-probing.md); `/api/v1/stats/metrics` and `/metrics` in [Observability](./observability.md).
+The Stremio addon endpoints (`/api/v1/stremio/...`) are documented in [Stremio Addon](./stremio-addon.md); `/api/v1/stats/plugin-scores` in [Plugins](../current/plugins.md#scores-and-probes); `/api/v1/stats/metrics` and `/metrics` in [Observability](./observability.md).
 
 ---
 
@@ -169,7 +169,7 @@ GET /api/v1/torznab/filmpalast?t=search&q=iron+man&offset=100&limit=100
 
 A search request with `extended=1` and **no** `q` parameter is handled as a lightweight reachability probe instead of a full search:
 
-1. The plugin's current `base_url` is read: the first `_domains` entry until a search has picked a working domain (see [Mirror URL Fallback](./mirror-url-fallback.md)). The other domains are not tried, so a plugin whose first domain is down can fail the test and still find results through a fallback domain.
+1. The plugin's current `base_url` is read: the first `_domains` entry until a search has picked a working domain (see [Plugin domains](../current/plugin-domains.md)). The other domains are not tried, so a plugin whose first domain is down can fail the test and still find results through a fallback domain.
 1. The origin URL (`scheme://host/`) is probed with `HEAD` (5 s timeout, redirects followed).
 1. If `HEAD` returns 405 or 501, a streamed `GET` with `Range: bytes=0-0` is sent instead.
 
@@ -205,7 +205,7 @@ Runs the same lightweight probe as the test mode against the plugin's current `b
 }
 ```
 
-Plugins declare fallback domains via `_domains`, and `base_url` is the domain in use (see [Mirror URL Fallback](./mirror-url-fallback.md)).
+Plugins declare fallback domains via `_domains`, and `base_url` is the domain in use (see [Plugin domains](../current/plugin-domains.md)).
 
 | Status | Condition |
 |---|---|

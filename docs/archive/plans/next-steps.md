@@ -32,7 +32,7 @@ As of 2026-09-29 (the status line has what changed since): the code is in good s
 | Automation | No CI (no `.github/workflows/`; added 2026-09-30, see item 2); pre-commit runs ruff and hygiene hooks only; basedpyright runs in the editor only (`.vscode/settings.json`, `standard`) |
 | Dependencies | 17 top-level packages outdated; major steps: guessit 3.8 → 4.4, redis 7 → 8, cryptography 46 → 50; also fastapi 0.128 → 0.142, uvicorn 0.40 → 0.54 |
 | Process | OpenSpec unused since January: `add-config-system` (75 of 87 tasks) and `add-plugin-loader` (67 of 186) never archived, no `openspec/specs/`; plans live in `docs/plans/` |
-| Repository | public, 0 stars, 0 forks; `docs/plugins.md` names every site |
+| Repository | public, 0 stars, 0 forks; `docs/reference/plugins.md` names every site |
 
 ### Live smoke run (2026-09-29)
 
@@ -98,7 +98,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 
 | Question | Recommendation |
 |---|---|
-| Keep the repository public? | Private, if it is for personal use: nobody follows it (0 stars, 0 forks), and a takedown notice against the sites named in `docs/plugins.md` would hit the whole repository. |
+| Keep the repository public? | Private, if it is for personal use: nobody follows it (0 stars, 0 forks), and a takedown notice against the sites named in `docs/reference/plugins.md` would hit the whole repository. |
 | OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](../../plans/ideas-backlog.md) I16, **done** 2026-10-06); new changes use it (`add-observability` and the advisor review's changes). |
 | Torznab `cat=` with several ids | Pass all ids to the plugins (a port change); today `cat=5070,5000` becomes a strict 5070 request ([open observations](code-review-fixes.md#open-observations)). |
 | DDL hosters in Stremio | Decide whether validate-only DDL hosters may appear as Stremio streams; today the playback check drops them all. |

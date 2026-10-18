@@ -257,7 +257,7 @@ Papers (each checked on a fetched page by the research):
 
 - `CHANGELOG.md` (+ `KNOWN_ISSUES` updates as plugins recover).
 - `docs/features/configuration.md` (new config keys), `docs/features/hoster-resolvers.md` (StealthPool location, captcha hosters), `docs/features/FEATURES.md`, `docs/architecture/codeplan.md` (browser package).
-- `docs/features/python-plugins.md`: base class notes (`_fetch_text`, no forced browser UA, no console events under Patchright).
+- `docs/current/plugins.md`: base class notes (`_fetch_text`, no forced browser UA, no console events under Patchright).
 - `CLAUDE.md`: overview line (Patchright instead of Playwright) and the dev container note on the Chromium install.
 - `docs/archive/plans/plugin-repair.md`: mark the three Cloudflare plugins as covered here.
 
