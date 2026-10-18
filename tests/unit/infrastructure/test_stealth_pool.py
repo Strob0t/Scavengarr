@@ -2219,6 +2219,39 @@ class TestCaptureKeepsItsState:
 
         assert store.keep_capture_state.await_count == 2
 
+    async def test_a_capture_past_a_challenge_is_kept_within_the_interval(
+        self,
+    ) -> None:
+        # Its page met a challenge on the way to its stream: the state it
+        # got is new (Byse's captcha pass), and a restart, or the pass's
+        # keeper, reads it from the store (row 106)
+        pool, _, store, _ = self._setup()
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+        mark = ChallengeMark()
+        mark.note("hoster_captcha")
+        token = challenge_mark.set(mark)
+        try:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            await self._settle(pool)
+        finally:
+            challenge_mark.reset(token)
+
+        assert store.keep_capture_state.await_count == 2
+
+    async def test_a_capture_without_a_challenge_keeps_the_interval(self) -> None:
+        pool, _, store, _ = self._setup()
+        await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+        await self._settle(pool)
+        token = challenge_mark.set(ChallengeMark())
+        try:
+            await pool.capture_media("https://dr0pstream.com/e/abc", timeout=10)
+            await self._settle(pool)
+        finally:
+            challenge_mark.reset(token)
+
+        assert store.keep_capture_state.await_count == 1
+
     async def test_without_a_stream_nothing_is_kept(self) -> None:
         pool, context, store, pages = self._setup(streams=False)
 

@@ -806,7 +806,11 @@ class StealthPool:
                     page, found, player, autoplay_wait=autoplay_wait
                 )
                 log.debug("stealth_capture", url=url, found=media is not None)
-                if media is not None and self._keep_state(page, lease, slot):
+                # A page past a challenge holds a state of its own making
+                fresh = mark is not None and mark.kind is not None
+                if media is not None and self._keep_state(
+                    page, lease, slot, fresh=fresh
+                ):
                     page = None  # closed after the state's read
                 return media
             except Exception:  # noqa: BLE001
@@ -815,13 +819,15 @@ class StealthPool:
             finally:
                 await self._close(page)
 
-    def _keep_state(self, page: Page, *holds: Hold) -> bool:
+    def _keep_state(self, page: Page, *holds: Hold, fresh: bool = False) -> bool:
         """Keep the state of *page*'s host and its frames' hosts, each at
-        most once per ``_KEEP_INTERVAL_S``, after the stream went out: the
-        page and *holds* (the browser's lease, the page's place at the
-        gate) go on to a task that reads the state (``_read_state()``), so
-        the page counts until it closes. False when there is nothing to
-        keep: the caller closes the page."""
+        most once per ``_KEEP_INTERVAL_S`` unless the page got past a
+        challenge (*fresh*: a new clearance or captcha pass, which a restart
+        and Filemoon's pass keeper read from the store; row 106), after the
+        stream went out: the page and *holds* (the browser's lease, the
+        page's place at the gate) go on to a task that reads the state
+        (``_read_state()``), so the page counts until it closes. False when
+        there is nothing to keep: the caller closes the page."""
         if self._clearance_store is None:
             return False
         now = time.monotonic()
@@ -830,7 +836,10 @@ class StealthPool:
                 host
                 for frame in page.frames
                 if (host := urlparse(frame.url).hostname)
-                and now - self._kept.get(host, -_KEEP_INTERVAL_S) >= _KEEP_INTERVAL_S
+                and (
+                    fresh
+                    or now - self._kept.get(host, -_KEEP_INTERVAL_S) >= _KEEP_INTERVAL_S
+                )
             }
         )
         if not hosts:
