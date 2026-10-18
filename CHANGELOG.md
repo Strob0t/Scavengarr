@@ -6,6 +6,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Test Guards the Dependency Rule
+- `tests/unit/test_dependency_rule.py` parses every module under `src/scavengarr` with `ast` and checks each import of the package, the ones under `if TYPE_CHECKING:` and the relative ones included, against the rule table of `docs/target/architecture.md` (`domain` imports only `domain`, `application` also `domain`, `infrastructure` `domain` and itself, `interfaces` everything); a breach fails with the importing module and the import named. Today all 542 imports of the 188 modules follow it.
+
 ### Changed: The Stremio and Browser Docs Follow the Document Contract
 - `docs/current/stremio-addon.md` describes the addon: the endpoints, the `kitsu:` translation as a flowchart, the titles and the episode reference, the search cache's key (`v3`) and its entry states as a state diagram with the `X-Cache` and `X-Search-Complete` headers, the answer budget against the plugin timeout as a sequence, the plugin breaker (every timeout a failure; the old half-budget rule is gone), the episode filter, title matching, resolution, ranking, the streams, `/play` and both proxies.
 - `docs/how-to/stremio-deployment.md` holds the deployment steps: a streaming server of its own, Scavengarr and the streaming server behind a VPN container, and the AIOStreams settings.
