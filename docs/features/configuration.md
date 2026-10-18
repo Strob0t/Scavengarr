@@ -825,6 +825,16 @@ volumes:
 
 A container in another one's namespace loses its network when that one is recreated (an update of the VPN image): recreate Scavengarr after it (`docker compose up -d --force-recreate scavengarr`).
 
+Until then the app keeps reporting healthy: the image's healthcheck asks `/api/v1/healthz` over loopback, a liveness probe that needs no network, while every outbound call fails (the sites, the hosters, IMDb, a Redis cache on another container). A production outage of 33 h went unnoticed so. The app logs such an outage once where it can (`redis_unavailable` and `redis_recovered` for the Redis cache; `query_pool_unavailable` when the scoring scheduler cannot reach IMDb, after which no probe queries are built for 10 minutes), but Docker's `json-file` log driver keeps every record without a bound by default: before those changes that outage wrote 670 000 records in 24 h. Set a rotation, as the repository's `docker-compose.yml` does for the app:
+
+```yaml
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+```
+
 ### Volumes
 
 | Container Path | Purpose | Required |

@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 import respx
+from structlog.testing import capture_logs
 
 from scavengarr.infrastructure.scoring.query_pool import (
     _FALLBACK_MOVIES,
@@ -21,11 +23,22 @@ from scavengarr.infrastructure.scoring.query_pool import (
 _SUGGEST_BASE = "https://v2.sg.media-imdb.com/suggestion"
 
 
-def _make_builder(mock_cache: AsyncMock) -> QueryPoolBuilder:
+def _make_builder(
+    mock_cache: AsyncMock, clock: _Clock | None = None
+) -> QueryPoolBuilder:
+    if clock is None:
+        return QueryPoolBuilder(http_client=httpx.AsyncClient(), cache=mock_cache)
     return QueryPoolBuilder(
-        http_client=httpx.AsyncClient(),
-        cache=mock_cache,
+        http_client=httpx.AsyncClient(), cache=mock_cache, clock=clock
     )
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 def _suggest_response(entries: list[dict]) -> dict:
@@ -238,6 +251,68 @@ class TestGetQueries:
 
         # No year means it can't match any bucket range.
         assert "No Year Film" not in result
+
+
+class TestUnavailable:
+    """Production: the network gone for 33 h, the scheduler's tick found
+    every one of 108 cells due, and each rebuilt its pool with 10 IMDb
+    requests, each logged with a traceback (287 000 records in 24 h)."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.ConnectError("Temporary failure in name resolution"),
+            # a resolver that does not answer: each request waits 10 s
+            httpx.ConnectTimeout("timed out"),
+        ],
+        ids=["connect-error", "connect-timeout"],
+    )
+    async def test_a_build_stops_at_the_first_connect_error(
+        self, mock_cache: AsyncMock, error: httpx.TransportError
+    ) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        builder = _make_builder(mock_cache, _Clock())
+
+        with respx.mock, capture_logs() as logs:
+            route = respx.get(url__startswith=_SUGGEST_BASE).mock(side_effect=error)
+            result = await builder.get_queries(2000, "current", count=2)
+
+        assert result == []
+        assert route.call_count == 1
+        unavailable = [e for e in logs if e["event"] == "query_pool_unavailable"]
+        assert len(unavailable) == 1
+        assert unavailable[0]["log_level"] == "warning"
+        assert "exc_info" not in unavailable[0]
+        assert unavailable[0]["error"] == type(error).__name__
+        assert not [e for e in logs if e["event"] == "query_pool_imdb_error"]
+        mock_cache.set.assert_not_awaited()
+
+    async def test_no_fetch_within_the_cooldown(self, mock_cache: AsyncMock) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        clock = _Clock()
+        builder = _make_builder(mock_cache, clock)
+        now = datetime.now(timezone.utc)
+
+        with respx.mock, capture_logs() as logs:
+            route = respx.get(url__startswith=_SUGGEST_BASE).mock(
+                side_effect=httpx.ConnectError("refused")
+            )
+            await builder.get_queries(2000, "current")
+            clock.now += 599
+            assert await builder.get_queries(5000, "y1_2") == []
+            assert route.call_count == 1
+
+            route.mock(
+                side_effect=None,
+                return_value=httpx.Response(
+                    200, json=_suggest_response([_movie_entry("Dune", now.year)])
+                ),
+            )
+            clock.now += 2
+            assert await builder.get_queries(2000, "current") == ["Dune"]
+
+        assert route.call_count == 11
+        assert len([e for e in logs if e["event"] == "query_pool_unavailable"]) == 1
 
 
 class TestDateRanges:

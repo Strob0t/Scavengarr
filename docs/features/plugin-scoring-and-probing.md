@@ -199,7 +199,9 @@ Shallow search probe per (plugin, category, age bucket).
 - Keeps entries of type `movie` (category `2000`) or `tvSeries`/`tvMiniSeries` (category `5000`) whose year falls into the bucket range.
 - Pools are cached for 24 h under `querypool:{media}:{bucket}`. The query picked per probe is chosen by a shuffle seeded with the ISO week number, so rotation is deterministic within a week.
 
-**Fallback:** if the IMDB Suggest API is unavailable, bundled lists of 10 popular movies and 10 popular series are used.
+**Fallback:** if the IMDB Suggest API answers with errors, bundled lists of 10 popular movies and 10 popular series are used.
+
+**Unreachable:** when IMDb cannot be reached at all (`httpx.ConnectError`: the name does not resolve, the connection is refused; or `httpx.ConnectTimeout`: no connection within the 10 s timeout, a resolver that does not answer included), the build stops at that first request instead of trying its other nine prefixes, logs `query_pool_unavailable` once at warning (the error type and its text, no traceback), and for 10 minutes (`_UNAVAILABLE_COOLDOWN_S` in `infrastructure/scoring/query_pool.py`, in memory) `get_queries` returns no queries without fetching, so the scheduler's search cycle finds nothing due. In a production outage of 33 h without a network every scheduler tick (every 5 minutes) found all 108 cells due, since the score store answered nothing either, and each rebuilt its pool with 10 requests, each logged with a traceback: 287 000 records in 24 h. A probe run in such a cooldown is not lost: the cells stay due and are probed on the first tick after it.
 
 ---
 

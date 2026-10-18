@@ -75,6 +75,13 @@ services:
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     # CPU profiles in the container (scripts/stremio_profile.py --py-spy):
     # cap_add: [SYS_PTRACE]
+    # Docker's json-file log grows without a bound otherwise: an outage
+    # without a network wrote 670 000 records in 24 h
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
     restart: unless-stopped
 
   byparr:
