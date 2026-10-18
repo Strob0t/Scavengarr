@@ -82,7 +82,7 @@ On the production host (4 cores, no cgroup limits, 1.4 cores taken by other cont
 
 ## Documentation
 
-`docs/features/stremio-addon.md`, `hoster-resolvers.md`, `observability.md`, `configuration.md` (`max_concurrent_playwright` is also the page ceiling), `docs/architecture/clean-architecture.md`, `docs/PYTHON-BEST-PRACTICES.md` 3.4, `AGENTS.md` (metrics list), `CHANGELOG.md`.
+`docs/features/stremio-addon.md`, `hoster-resolvers.md`, `observability.md`, `configuration.md` (`max_concurrent_playwright` is also the page ceiling), `docs/architecture/clean-architecture.md`, `docs/target/coding-guidelines.md` 3.4, `AGENTS.md` (metrics list), `CHANGELOG.md`.
 
 ## Acceptance (seventh round, in production)
 

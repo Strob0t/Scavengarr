@@ -167,7 +167,7 @@ Scavengarr reads `data/config.yaml` (mounted into the container; when the file i
 |---|---|---|
 | `solver` | [Byparr](https://github.com/ThePhaseless/Byparr) captcha solver | uncomment `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` |
 | `redis` | Redis as cache backend | uncomment `SCAVENGARR_CACHE_BACKEND`, `SCAVENGARR_CACHE_REDIS_URL` and `SCAVENGARR_CACHE_MAX_CONCURRENT` |
-| `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/features/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
+| `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/current/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
 
 ```bash
 docker compose --profile solver --profile redis up -d
@@ -345,7 +345,10 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Torznab and CrawlJobs | [docs/current/torznab-and-crawljobs.md](docs/current/torznab-and-crawljobs.md) |
 | Connecting Prowlarr | [docs/how-to/connect-prowlarr.md](docs/how-to/connect-prowlarr.md) |
 | Configuration reference | [docs/reference/configuration.md](docs/reference/configuration.md) |
-| Observability | [docs/features/observability.md](docs/features/observability.md) |
+| Observability | [docs/current/observability.md](docs/current/observability.md) |
+| Metrics reference | [docs/reference/metrics.md](docs/reference/metrics.md) |
+| Operating production | [docs/how-to/operations.md](docs/how-to/operations.md) |
+| Known issues | [docs/current/known-issues.md](docs/current/known-issues.md) |
 | Plugin list | [docs/reference/plugins.md](docs/reference/plugins.md) |
 | Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
 | Plugin domains | [docs/current/plugin-domains.md](docs/current/plugin-domains.md) |

@@ -29,5 +29,5 @@ accepted
 ## References
 
 - `src/scavengarr/infrastructure/stremio/hls_proxy.py`: `SegmentReadAhead` and its constants.
-- [`docs/features/observability.md`](../../features/observability.md): the read-ahead's metrics.
+- [`docs/reference/metrics.md`](../../reference/metrics.md): the read-ahead's metrics.
 - [`docs/archive/plans/pi-performance.md`](../../archive/plans/pi-performance.md): the throughput per connection, the rule and what is not known.

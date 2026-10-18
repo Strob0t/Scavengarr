@@ -1,7 +1,7 @@
 # observability Specification
 
 ## Purpose
-Make the running server measurable without changing what it does: Prometheus metrics of the core's stages (Stremio requests, plugin searches, hoster resolutions, the HLS proxy) and of its runtime state, with label values from fixed sets; a request id on every log line of an HTTP request; OpenTelemetry traces on demand. How to use it: `docs/features/observability.md`.
+Make the running server measurable without changing what it does: Prometheus metrics of the core's stages (Stremio requests, plugin searches, hoster resolutions, the HLS proxy) and of its runtime state, with label values from fixed sets; a request id on every log line of an HTTP request; OpenTelemetry traces on demand. How to use it: `docs/current/observability.md`.
 
 ## Requirements
 

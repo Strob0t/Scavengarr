@@ -111,7 +111,7 @@ A plugin's domains are code (`_domains`, `domain_list_url`, `domain_marker`); th
 ## Observability
 
 The domain check logs `<plugin>_domain_found`, `<plugin>_domain_answers` and `<plugin>_no_domain_reachable`, the site moves `<plugin>_site_moved` and `<plugin>_site_move_undone`, and the domain lists `plugin_domain_list_host` and `plugin_domain_list_failed`.
-The plugins' long-term record counts the site checks that found the site down (`unreachable`) and the searches that found no domain (`unreachable_searches`) per plugin and day; see [Observability](../features/observability.md).
+The plugins' long-term record counts the site checks that found the site down (`unreachable`) and the searches that found no domain (`unreachable_searches`) per plugin and day; see [Observability](observability.md#the-plugin-record).
 
 ## Limits
 

@@ -35,7 +35,7 @@ The maintainer's decision: R1 with R7 (backlog row 89) and R2 (row 90). R4 with 
   - `src/scavengarr/infrastructure/hoster_resolvers/_browser.py` and `filemoon.py` (the hoster's captcha requests);
   - `src/scavengarr/infrastructure/telemetry/metrics.py` (the new stage);
   - their tests.
-- **Affected docs:** `docs/features/hoster-resolvers.md`, `docs/features/observability.md`, `docs/plans/challenge-reactions.md` (the numbers after each deploy), `CHANGELOG.md`.
+- **Affected docs:** `docs/features/hoster-resolvers.md`, `docs/current/observability.md`, `docs/plans/challenge-reactions.md` (the numbers after each deploy), `CHANGELOG.md`.
 - **Unchanged:**
   - No setting: the 20 s after the cut and the cooldown steps are constants.
   - The breaker's persistence (`hoster-resolution-persistence`) and the snapshot's keys stay as they are. The cooldown lives in memory only, since a restart starts the browser cold anyway.

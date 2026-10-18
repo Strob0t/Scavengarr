@@ -3,7 +3,7 @@
 Every stage has a duration histogram ``scavengarr_<stage>_seconds`` by its
 labels and an outcome counter ``scavengarr_<stage>_total`` by its labels and
 outcome: a histogram per outcome would multiply the series. The buckets
-follow the deadlines (``docs/features/observability.md``). With tracing on,
+follow the deadlines (``docs/reference/metrics.md``). With tracing on,
 a stage is also a span (``tracing.py``).
 """
 

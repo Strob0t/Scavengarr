@@ -441,7 +441,7 @@ The settings that shape the flows above are `stremio.plugin_timeout_seconds`, `s
 ## Observability
 
 The core records its steps through `TelemetryPort` as stages: `stremio_request`, `stremio_phase`, `plugin_search`, `hoster_resolve`, `hoster_challenge_completion`, `hoster_pass_keep`, `hls_proxy`, `hls_readahead`, `browser_page_wait` and `browser_page`.
-Their metrics, labels and endpoints: [`docs/features/observability.md`](../features/observability.md).
+Their metrics, labels and endpoints: [`docs/reference/metrics.md`](../reference/metrics.md).
 The start logs `config_effective` and `app_startup_complete` with the build identity; the stop logs `app_shutdown_complete`.
 
 ## Limits

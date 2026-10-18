@@ -100,7 +100,7 @@ Invariants:
 - CrawlJobs carry the links that passed validation (with `validate_download_links` on), in deterministic order; grab-time links (`GrabResolvingPlugin`) are stored as the plugin returns them. Job ids are random UUID4s; the TTL is `cache.crawljob_ttl_seconds`.
 - Config precedence (high → low): CLI args → `SCAVENGARR_*` env (a `--dotenv` file's values included; the real environment wins) → YAML → defaults. See `docs/reference/configuration.md`. The startup line `config_effective` logs every setting away from its default: a secret setting needs `password`, `token`, `key` or `secret` in its name (or the `SecretStr` type) to show as `***`. Every setting is read in `src/` outside the config package or declares itself unused in its description (`tests/unit/infrastructure/test_config_settings_read.py` fails otherwise and names the declared ones).
 - Logging: `structlog`, structured, with context fields (`plugin`, `stage`, `duration_ms`, `results_count`; every HTTP request binds `request_id`); never log secrets.
-- Metrics: the core records its steps through `TelemetryPort` (`stage()`: duration and outcome; plugin search runner, hoster resolver registry, Stremio use case, Filemoon's pass keeper, the stealth browser's page gate, HLS proxy), never plugins or resolvers; label values only from fixed sets (no titles, ids, URLs, domains). With `telemetry.tracing_endpoint` the stages are also OpenTelemetry spans (no URLs or titles in attributes). See `docs/features/observability.md`.
+- Metrics: the core records its steps through `TelemetryPort` (`stage()`: duration and outcome; plugin search runner, hoster resolver registry, Stremio use case, Filemoon's pass keeper, the stealth browser's page gate, HLS proxy), never plugins or resolvers; label values only from fixed sets (no titles, ids, URLs, domains). With `telemetry.tracing_endpoint` the stages are also OpenTelemetry spans (no URLs or titles in attributes). See `docs/current/observability.md`.
 
 ---
 
@@ -123,7 +123,7 @@ Invariants:
 - Scraping: specific but robust selectors, `urljoin` for URLs, search terms encoded (`quote_plus`, or `quote(term, safe="")` in a path segment), missing fields → partial result + warning instead of abort.
 - Playwright: no `sleep()` waits (use conditions/locators), close contexts/pages deterministically, limit browser parallelism with a semaphore.
 
-Performance guide: `docs/PYTHON-BEST-PRACTICES.md`.
+Coding guidelines (the event loop, shared resources, concurrency, scraping, caching, retries): `docs/target/coding-guidelines.md`; measuring a change: `docs/how-to/performance-measurement.md`.
 
 ---
 

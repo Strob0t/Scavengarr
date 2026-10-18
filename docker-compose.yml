@@ -101,7 +101,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Traces on demand (docs/features/observability.md): add it to Grafana as a
+  # Traces on demand (docs/current/observability.md): add it to Grafana as a
   # Tempo data source (http://<host>:3200); keeps 3 days
   tempo:
     image: grafana/tempo:3.1.0

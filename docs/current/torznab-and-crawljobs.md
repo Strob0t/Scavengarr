@@ -187,7 +187,7 @@ The setup is described in [Connect Prowlarr](../how-to/connect-prowlarr.md).
 
 The search logs `torznab_search_completed` and `torznab_search_no_results`, an unmapped error `torznab_unhandled_error`.
 The jobs log `crawljob_saved`, `crawljob_save_failed`, `crawljob_not_found`, `crawljob_expired`, `crawljob_deserialize_error`, `crawljob_downloaded`, and for a grab-time resolution `crawljob_resolved`, `crawljob_resolve_empty` and `crawljob_resolve_failed`.
-Metrics and traces are described in [Observability](../features/observability.md).
+Metrics and traces are described in [Observability](observability.md).
 
 ## Limits
 

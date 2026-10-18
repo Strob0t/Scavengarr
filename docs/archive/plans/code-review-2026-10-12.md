@@ -132,7 +132,7 @@ The maintainer's `/code-review` at maximum effort over `origin/main...HEAD`: the
 
 - Findings 2, 3 and 5: the general rules come from the `react-to-challenges` design and spec (a `None` with a mark is `challenge`, the frame-host rule, skipping all of a hoster's links during a cooldown); neither covers these cases.
 - Finding 12: the cap is a trade-off the design accepts (`design.md:63`).
-- Finding 14: the counting rule is in `docs/features/observability.md`.
+- Finding 14: the counting rule is in `docs/current/observability.md`.
 
 ## Verified, cut at the cap of 15
 

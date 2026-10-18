@@ -268,7 +268,7 @@ The facts a setting's description leaves out, one line per setting:
 - `cache.search_ttl_seconds`: a Stremio entry answers 6 h longer while a background search refreshes it.
 - `cache.crawljob_ttl_seconds`: counts from the search that created the job, not from the grab.
 - `cache.max_concurrent`: Redis handles more (`50`, for example); diskcache writes run one at a time regardless, since SQLite has one writer.
-- `telemetry.tracing_endpoint`: unset, the tracing SDK is not loaded; Prometheus metrics (`/metrics`) need no setting, see [Observability](../features/observability.md).
+- `telemetry.tracing_endpoint`: unset, the tracing SDK is not loaded; Prometheus metrics (`/metrics`) need no setting, see [Observability](../current/observability.md).
 
 ## Auto-tune
 

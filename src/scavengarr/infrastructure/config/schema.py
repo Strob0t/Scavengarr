@@ -25,7 +25,7 @@ LogFormat = Literal["json", "console"]
 
 
 class TelemetryConfig(BaseModel):
-    """Metrics and on-demand tracing (``docs/features/observability.md``)."""
+    """Metrics and on-demand tracing (``docs/current/observability.md``)."""
 
     tracing_endpoint: str | None = Field(
         default=None,

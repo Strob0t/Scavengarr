@@ -10,7 +10,7 @@
 - [x] 1.8 Live proof (dev container): a capture cut at a short resolve bound after a challenge ends as `challenge`, and the breaker is unchanged.
 - [x] 1.9 Docs:
   - `docs/features/hoster-resolvers.md`: the outcome and the cooldown;
-  - `docs/features/observability.md`: the outcomes;
+  - `docs/current/observability.md`: the outcomes;
   - `CHANGELOG.md`.
 - [ ] 1.10 Production after the deploy: Filemoon's and Dropload's outcomes over a day, recorded in `docs/plans/challenge-reactions.md` against its baseline.
 
@@ -23,7 +23,7 @@
 - [x] 2.5 Live proof (dev container): a capture cut at a short resolve bound finishes in the background, and the next request answers from the cache.
 - [x] 2.6 Docs:
   - `docs/features/hoster-resolvers.md`: the completion;
-  - `docs/features/observability.md`: the stage;
+  - `docs/current/observability.md`: the stage;
   - `CHANGELOG.md`.
 - [ ] 2.7 Production after the deploy: the first challenged Filemoon and Dropload captures after the restart finish in the background, and the next captures run warm within 10 s. Recorded in `docs/plans/challenge-reactions.md`.
 
@@ -32,8 +32,8 @@
 - [x] 3.1 Tests: a dead link behind a passed challenge is cached as dead and the hoster's next link resolves; a cut past its challenge stays `challenge` without a cooldown; a completion past its challenge caches a dead link without a step up, and its deadline steps nothing up; the browser passes the mark on a cleared interstitial, a widget's token and an offline notice (finding 2).
 - [x] 3.2 Tests: DoodStream's capture declares its passive widget and its frames mark nothing; an interstitial still marks; reCAPTCHA's `bframe` marks nothing (finding 3).
 - [x] 3.3 Implementation: `ChallengeMark.open`, `mark_resolution_passed()`, the passes in `turnstile.py` and `capture_media()`, `passive_widget` through `capture_stream()`, the registry's rules, and the capture timing probe's `passive_widget`.
-- [x] 3.4 Docs: `docs/features/hoster-resolvers.md`, `docs/features/observability.md`, `CHANGELOG.md`.
+- [x] 3.4 Docs: `docs/features/hoster-resolvers.md`, `docs/current/observability.md`, `CHANGELOG.md`.
 - [x] 3.5 Tests and implementation: a play-time refresh passes the challenge cooldown, an open breaker still refuses it (finding 5); docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.
-- [x] 3.6 Tests and implementation: a request for a link whose completion runs joins it and answers its stream, no second capture; the join waits at most the resolve bound; a joined refresh never answers the refused stream; the outcome `joined` (finding 9). Docs in `docs/features/hoster-resolvers.md`, `docs/features/observability.md` and `CHANGELOG.md`.
+- [x] 3.6 Tests and implementation: a request for a link whose completion runs joins it and answers its stream, no second capture; the join waits at most the resolve bound; a joined refresh never answers the refused stream; the outcome `joined` (finding 9). Docs in `docs/features/hoster-resolvers.md`, `docs/current/observability.md` and `CHANGELOG.md`.
 - [x] 3.7 Tests and implementation: the completions leave one of the page gate's pages free, and a single page hands nothing over; the composition hands the registry the gate (finding 12). Docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.
 - [x] 3.8 Tests and implementation: a request cut in the bound's loop iteration cancels the capture and counts as cut (finding 15); a completion's playback check error is logged, caches and steps up nothing (V29). Docs in `docs/features/hoster-resolvers.md` and `CHANGELOG.md`.

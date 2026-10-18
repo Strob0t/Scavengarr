@@ -117,7 +117,7 @@ With `stremio.auto_tune_all`, the default, startup overwrites `validation_max_co
 | `link_head_timeout`, `link_head_http_error`, `link_head_failed`, `link_head_connect_failed` | DEBUG | `url`, `error` |
 | `link_host_unreachable_skipped` | DEBUG | `url`, `host` |
 
-Metrics are described in [Observability](../features/observability.md).
+Metrics are described in [Metrics](../reference/metrics.md).
 
 ## Limits
 

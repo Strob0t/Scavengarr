@@ -277,7 +277,7 @@ Plugin credentials come from `SCAVENGARR_<PLUGIN>_USERNAME` and `SCAVENGARR_<PLU
 
 The core records each plugin search as a telemetry stage, and each plugin's searches, results, timeouts, challenges and site checks per day in the plugins' long-term record (`GET /api/v1/stats/plugins`); plugins record nothing themselves.
 `GET /api/v1/stats/plugin-scores` lists the score snapshots, sorted by `final_score`, and answers 503 when scoring is off.
-Both are described in [Observability](../features/observability.md).
+Both are described in [Observability](observability.md).
 
 ## Limits
 
