@@ -292,6 +292,25 @@ OpenSpec `keep-capture-state`. After a capture found its stream, the stealth poo
 - **Contra:** it needs a recent link and costs captures right after the start.
 - **Cost:** small to medium.
 
+#### R5 for Filemoon: the captcha pass kept (row 106)
+
+R4's restore took, but a kept Byse state warmed a capture only while its captcha pass lived. Row 106 measured the pass's span, then built the smallest keep that follows from it.
+
+- **The pass (dev container, `capture_timing`-style runs of one Byse link in one browser, a cold capture and three warm ones after it):** the pass is the localStorage item `byse:captcha-clearance:embed` on the player host n1mwq.org, a JSON object with a 170-character token and `expiresAt` in epoch milliseconds, 1785 s after the captcha. A capture with the pass does not renew it:
+
+  | Run | Began | Challenge | Stream | The item after it |
+  |---|---|---|---|---|
+  | 1 (cold) | 0 | captcha 4.2 s, verify 4.2 s | 4.6 s | new, 1785 s left |
+  | 2 | 20 min later | none | 3.2 s | unchanged, 586 s left |
+  | 3 | 29 min later | none | 1.9 s | unchanged, 47 s left |
+  | 4 | 31 min later | captcha 4.2 s, verify 5.7 s | 6.1 s | new, 1785 s left |
+
+  So the pass lives a fixed 30 min, and a capture just before its end keeps nothing alive; the first capture after it pays the captcha. Limits: one link, one browser, one run per offset.
+- **Production (54.2 h of logs on e749a0c, up to the app's loss of its network):** every Byse resolution whose pass was 30 min old or more, or that had none, came without a stream within the 10 s bound: 12 timeouts without a challenge mark and 5 challenges, the passes 84 min to about 23 h old. The new passes came only from background completions past the bound (R2), whose streams came 17.4, 18.1, 21.5 and 31.5 s after the resolution's start, and the one warm Byse stream came 0.6 min after such a completion. Limits: one build and window; the log lines name a link's hoster by its second-level name, which moflix's Byse links share with its VidHide links (`moflix-stream`), so the count may hold some of VidHide's.
+- **A gap in R4's keep (fixed with row 106):** the stealth pool kept a host's state at most once per 10 min, so a captcha met within 10 min of the last keep left the old pass in the store, and a restart restored a pass that had gone. A capture whose page met a challenge on its way to the stream now keeps its state at once (`_keep_state(fresh=True)` in `infrastructure/browser/stealth_pool.py`); one without a challenge keeps the interval.
+- **The keeper (`PassKeeper`, `infrastructure/hoster_resolvers/pass_keeper.py`):** it reads the pass's expiry from the kept capture state (`pass_expiry()` in `hoster_resolvers/filemoon.py`, over `ClearanceStore.creation_state()`), and 30 s after it resolves the link of the newest cached Filemoon stream again (`HosterResolverRegistry.last_stream()`, then `resolve(link, refresh=True)`: past the cache and the challenge cooldown; an open breaker still refuses). That capture meets the captcha, and its new pass is kept for the next request. Its page claim is `background` (served last), and it starts only while one of the stealth browser's pages stays free beside its own (at the start's limit of 2 pages: none in use). One capture per pass: one without a new pass ends the keeping until a request's capture brings one, and without a cached Filemoon stream nothing is captured (`no_link`). A capture the bound cuts after the captcha runs on as R2's completion, which keeps the pass when it finds the stream. Its stream is cached anew, so the keeping goes on, one capture per 30 min (48 a day at most), while there is demand: a request looked up a Filemoon link within the last 48 h (Mr. Fable's bound; `_DEMAND_S`). The registry records each resolver's last lookup that a request made (`demand_age()`: `resolve()` with its cache hits and `cached()`, so a stream the keeper's capture cached counts when a request takes it; the keeper's own lookups pass `demand=False`), and the record outlives a restart in the hoster state snapshot. Past 48 h the keeper idles (`idle`), and the next request's lookup starts it again. Production's quiet stretches lasted up to about 23 h, so 48 h also cover a skipped day, and the cost after the last request is at most 96 captures. Stage `hoster_pass_keep` ([Observability](../features/observability.md#metrics)).
+- **Limits:** the keeper follows the latest pass of the kept player hosts (one in every capture measured); a capture still pays the captcha between the expiry and the keeper's capture, about the margin and the capture's time; the free page is checked when the capture starts, not held. The production proof: the first Filemoon request after a quiet stretch streams without the captcha, after the next deploy.
+
 ### R6: captures pass widgets (gap 4)
 
 - **What:** `pass_turnstile_widget()` before the play clicks when the page shows a widget.

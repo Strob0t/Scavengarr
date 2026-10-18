@@ -59,6 +59,7 @@ from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
 from scavengarr.infrastructure.hoster_resolvers.gxplayer import GxplayerResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
 from scavengarr.infrastructure.hoster_resolvers.mixdrop import MixdropResolver
+from scavengarr.infrastructure.hoster_resolvers.pass_keeper import PassKeeper
 from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
@@ -762,6 +763,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The browser and the stealth context with the kept state, so the first
     # capture (a breaker trial after a restart) does not pay for the launch
     state._browser_warmup_task = asyncio.create_task(state.stealth_pool.warmup())
+    # Filemoon's captcha pass: one capture once it has gone, so a request
+    # after a quiet half hour finds one (row 106)
+    state._pass_keeper_task = asyncio.create_task(
+        PassKeeper(
+            state.hoster_resolver_registry,
+            clearance_store,
+            pages,
+            telemetry=state.telemetry,
+        ).run_forever()
+    )
     # The anime id list, so an IMDb anime request right after the start has
     # its episode's Kitsu number (the shutdown ends a load still running)
     anime_id_lists.load_in_background()
@@ -780,6 +791,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.anime_ids.aclose()
         await state.stremio_links.aclose()
         await state.hls_read_ahead.aclose()
+        # The pass keeper's capture, before the registry ends its completions
+        state._pass_keeper_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._pass_keeper_task
         await state.hoster_resolver_registry.aclose()
         # The last resolutions and breaker changes, before the cache closes
         await state.hoster_state_store.aclose()

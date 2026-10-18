@@ -17,6 +17,7 @@ from scavengarr.infrastructure.hoster_resolvers.filemoon import (
     FilemoonResolver,
     _extract_hls_from_unpacked,
     _unpack_p_a_c_k,
+    pass_expiry,
 )
 
 if TYPE_CHECKING:
@@ -648,3 +649,66 @@ class TestByseDetailsGate:
 
         assert details.called
         assert pool.urls == ["https://filemoon.to/e/fwzwu9ny19jk"]
+
+
+def _pass_origin(host: str, value: str) -> dict[str, object]:
+    return {
+        "origin": f"https://{host}",
+        "localStorage": [{"name": "byse:captcha-clearance:embed", "value": value}],
+    }
+
+
+class TestPassExpiry:
+    """Byse's captcha pass in a kept storage state: the player's
+    localStorage item ``byse:captcha-clearance:embed``, a token and its
+    ``expiresAt`` in epoch milliseconds (row 106)."""
+
+    def test_the_items_expiry_in_epoch_seconds(self) -> None:
+        value = json.dumps({"token": "t", "expiresAt": 1_760_001_800_000})
+        state = {"cookies": [], "origins": [_pass_origin("n1mwq.org", value)]}
+
+        assert pass_expiry(state) == 1_760_001_800.0
+
+    def test_the_latest_of_several_player_hosts(self) -> None:
+        older = json.dumps({"token": "t", "expiresAt": 1_760_000_000_000})
+        newer = json.dumps({"token": "u", "expiresAt": 1_760_001_800_000})
+        state = {
+            "origins": [
+                _pass_origin("n1mwq.org", newer),
+                _pass_origin("x9z.org", older),
+            ]
+        }
+
+        assert pass_expiry(state) == 1_760_001_800.0
+
+    def test_none_without_a_pass(self) -> None:
+        other = {
+            "origin": "https://n1mwq.org",
+            "localStorage": [{"name": "volume", "value": "1"}],
+        }
+        for state in ({}, {"origins": []}, {"origins": [other]}):
+            assert pass_expiry(state) is None
+
+    def test_a_malformed_item_is_no_pass(self) -> None:
+        for value in (
+            "not json",
+            "[]",
+            json.dumps({"token": "t"}),
+            json.dumps({"expiresAt": "soon"}),
+            json.dumps({"expiresAt": True}),
+        ):
+            state = {"origins": [_pass_origin("n1mwq.org", value)]}
+            assert pass_expiry(state) is None
+
+    def test_malformed_origins_are_skipped(self) -> None:
+        value = json.dumps({"token": "t", "expiresAt": 1_760_001_800_000})
+        state = {
+            "origins": [
+                "junk",
+                {"localStorage": "junk"},
+                {"localStorage": ["junk"]},
+                _pass_origin("n1mwq.org", value),
+            ]
+        }
+
+        assert pass_expiry(state) == 1_760_001_800.0

@@ -18,6 +18,7 @@ StageName = Literal[
     "plugin_search",
     "hoster_resolve",
     "hoster_challenge_completion",
+    "hoster_pass_keep",
     "hls_proxy",
     "hls_readahead",
     "browser_page_wait",

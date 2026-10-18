@@ -2519,7 +2519,8 @@ class TestStateExport:
         await registry.resolve("https://voe.sx/e/dead")
         registry._result_cache["https://voe.sx/e/dead"].expires_at = time.monotonic()
 
-        assert registry.export_state() == {"results": [], "redirects": []}
+        state = registry.export_state()
+        assert (state["results"], state["redirects"]) == ([], [])
 
     def test_other_stream_fields_of_another_version(self) -> None:
         """A field the code no longer has is dropped, a new one takes its
@@ -2586,3 +2587,145 @@ class TestStateExport:
         assert registry.changes == 1
         await registry.resolve("https://voe.sx/e/dead")  # a cache hit
         assert registry.changes == 1
+
+
+class TestLastStream:
+    """The link of a resolver's newest cached stream: what Filemoon's pass
+    keeper resolves in the background (row 106)."""
+
+    async def test_the_newest_stream_of_the_resolver(self) -> None:
+        registry = HosterResolverRegistry(
+            resolvers=[
+                _stub_resolver("filemoon", TestStateExport._STREAM),
+                _stub_resolver("voe", TestStateExport._STREAM),
+            ]
+        )
+        for url in (
+            "https://filemoon.to/e/older",
+            "https://filemoon.to/e/newer",
+            "https://voe.sx/e/other",
+        ):
+            await registry.resolve(url)
+        registry._result_cache["https://filemoon.to/e/older"].expires_at -= 60
+
+        assert registry.last_stream("filemoon") == "https://filemoon.to/e/newer"
+
+    async def test_none_without_a_stream_in_time(self) -> None:
+        registry = HosterResolverRegistry(
+            resolvers=[
+                _stub_resolver("filemoon", None),
+                _stub_resolver("voe", TestStateExport._STREAM),
+            ]
+        )
+        await registry.resolve("https://filemoon.to/e/dead")
+        await registry.resolve("https://voe.sx/e/alive")
+        assert registry.last_stream("filemoon") is None
+
+        registry._result_cache["https://voe.sx/e/alive"].expires_at = (
+            time.monotonic() - 1
+        )
+        assert registry.last_stream("voe") is None
+
+    async def test_a_redirected_link_is_the_one_asked_for(self) -> None:
+        response = MagicMock()
+        response.url = "https://filemoon.to/e/abc"
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.head = AsyncMock(return_value=response)
+        registry = HosterResolverRegistry(
+            resolvers=[_stub_resolver("filemoon", TestStateExport._STREAM)],
+            http_client=client,
+        )
+        await registry.resolve("https://out.example.net/go/1")
+
+        # resolve() follows the redirect again
+        assert registry.last_stream("filemoon") == "https://out.example.net/go/1"
+
+
+class TestDemand:
+    """When a request last looked up a resolver's link: Filemoon's pass
+    keeper keeps the pass only while there is demand (row 106)."""
+
+    _URL = "https://filemoon.to/e/a"
+
+    @staticmethod
+    def _registry() -> HosterResolverRegistry:
+        return HosterResolverRegistry(
+            resolvers=[_stub_resolver("filemoon", TestStateExport._STREAM)]
+        )
+
+    @staticmethod
+    def _recent(registry: HosterResolverRegistry) -> bool:
+        age = registry.demand_age("filemoon")
+        return age is not None and age < 1
+
+    async def test_a_resolution_is_demand(self) -> None:
+        registry = self._registry()
+        assert registry.demand_age("filemoon") is None
+
+        await registry.resolve(self._URL)
+
+        assert self._recent(registry)
+        assert registry.demand_age("voe") is None
+
+    async def test_a_cache_hit_is_demand(self) -> None:
+        registry = self._registry()
+        await registry.resolve(self._URL)
+        registry._demand["filemoon"] -= 3600
+
+        await registry.resolve(self._URL)
+
+        assert self._recent(registry)
+
+    async def test_a_cached_answer_is_demand(self) -> None:
+        """A cached search answers with cached resolutions: a stream the
+        keeper's capture cached counts when a request takes it."""
+        registry = self._registry()
+        await registry.resolve(self._URL)
+        registry._demand["filemoon"] -= 3600
+
+        assert registry.cached(self._URL)[0]
+        assert self._recent(registry)
+
+    async def test_a_lookup_without_demand_leaves_it(self) -> None:
+        registry = self._registry()
+
+        await registry.resolve(self._URL, refresh=True, demand=False)
+
+        assert registry.last_stream("filemoon") == self._URL
+        assert registry.demand_age("filemoon") is None
+
+    async def test_it_outlives_a_restart(self) -> None:
+        old = self._registry()
+        await old.resolve(self._URL)
+        old._demand["filemoon"] -= 600
+
+        new = HosterResolverRegistry()
+        new.import_state(old.export_state(), age_s=100.0)
+
+        age = new.demand_age("filemoon")
+        assert age is not None and 700 <= age < 702
+
+    def test_a_snapshot_without_it_restores(self) -> None:
+        registry = HosterResolverRegistry()
+
+        assert registry.import_state({"results": [], "redirects": []}, 0.0) == (0, 0)
+        assert registry.demand_age("filemoon") is None
+
+    def test_a_malformed_entry_changes_nothing(self) -> None:
+        result = {
+            "url": self._URL,
+            "stream": None,
+            "remaining": 60.0,
+            "resolver": "filemoon",
+        }
+        state = {
+            "results": [result],
+            "redirects": [],
+            "demand": {"filemoon": "soon"},
+        }
+        registry = HosterResolverRegistry()
+
+        with pytest.raises(ValueError):
+            registry.import_state(state, age_s=0.0)
+        assert registry._result_cache == {}
+        assert registry.demand_age("filemoon") is None

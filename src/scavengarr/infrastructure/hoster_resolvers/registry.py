@@ -200,6 +200,8 @@ class HosterResolverRegistry:
         # Resolutions and redirects cached (export_state's content)
         self._changes = 0
         self._resolve_count = 0
+        # When a request last looked up a link of each resolver (demand_age)
+        self._demand: dict[str, float] = {}
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
         self._challenges = ChallengeCooldown()
@@ -299,12 +301,39 @@ class HosterResolverRegistry:
 
         ``(True, stream)`` for a cached stream, ``(True, None)`` for a link
         cached as dead, ``(False, None)`` when ``resolve()`` would have to
-        resolve it.
+        resolve it. A cached outcome a request takes is demand for its
+        resolver (``demand_age()``).
         """
         cached = self._result_cache.get(url.strip())
         if cached is None or cached.is_expired:
             return False, None
+        self._demand[cached.resolver] = time.monotonic()
         return True, cached.value
+
+    def demand_age(self, resolver: str) -> float | None:
+        """Seconds since a lookup last asked for a link of *resolver*:
+        ``resolve()`` (its cache hits included) and ``cached()``, not a
+        lookup without demand (Filemoon's pass keeper); ``None`` without
+        one. It outlives a restart with the state (``export_state()``)."""
+        last = self._demand.get(resolver)
+        return None if last is None else time.monotonic() - last
+
+    def last_stream(self, resolver: str) -> str | None:
+        """The link of *resolver*'s newest cached stream (the one to expire
+        last), as ``resolve()`` was asked for it; ``None`` without one: the
+        link Filemoon's pass keeper resolves again (``PassKeeper``)."""
+        now = time.monotonic()
+        newest = max(
+            (
+                (entry.expires_at, url)
+                for url, entry in self._result_cache.items()
+                if entry.resolver == resolver
+                and entry.value is not None
+                and entry.expires_at > now
+            ),
+            default=None,
+        )
+        return None if newest is None else newest[1]
 
     @property
     def changes(self) -> int:
@@ -312,10 +341,11 @@ class HosterResolverRegistry:
         :meth:`export_state` holds changed (the state store writes then)."""
         return self._changes
 
-    def export_state(self) -> dict[str, list[dict[str, Any]]]:
+    def export_state(self) -> dict[str, Any]:
         """The unexpired resolutions and redirects with their lifetime left
-        (``remaining``, seconds), oldest first, in builtins only: a snapshot
-        that outlives the process (``HosterStateStore``)."""
+        (``remaining``, seconds), oldest first, and each resolver's demand
+        (``demand``: seconds since its last lookup), in builtins only: a
+        snapshot that outlives the process (``HosterStateStore``)."""
         now = time.monotonic()
         results = [
             {
@@ -332,13 +362,15 @@ class HosterResolverRegistry:
             for url, entry in self._redirect_cache.items()
             if entry.expires_at > now
         ]
-        return {"results": results, "redirects": redirects}
+        demand = {name: now - last for name, last in self._demand.items()}
+        return {"results": results, "redirects": redirects, "demand": demand}
 
     def import_state(self, state: Mapping[str, Any], age_s: float) -> tuple[int, int]:
         """Restore :meth:`export_state`'s entries with their lifetime
         shortened by *age_s* (the time since the export); the ones that ran
-        out meanwhile stay out. Returns the numbers of resolutions and
-        redirects restored.
+        out meanwhile stay out. The demand grows older by *age_s* (a
+        snapshot without it has none). Returns the numbers of resolutions
+        and redirects restored.
 
         Raises ``KeyError``, ``TypeError`` or ``ValueError`` for a malformed
         entry, before changing anything.
@@ -359,6 +391,13 @@ class HosterResolverRegistry:
                 redirects[str(entry["url"])] = _CacheEntry(
                     str(entry["target"]), remaining
                 )
+        now = time.monotonic()
+        demand = {
+            str(name): now - float(ago) - age_s
+            for name, ago in (state.get("demand") or {}).items()
+        }
+        for name, last in demand.items():
+            self._demand[name] = max(last, self._demand.get(name, last))
         self._result_cache.update(results)
         self._enforce_max_size(self._result_cache)
         self._redirect_cache.update(redirects)
@@ -366,9 +405,17 @@ class HosterResolverRegistry:
         return len(results), len(redirects)
 
     async def resolve(
-        self, url: str, hoster: str = "", *, refresh: bool = False
+        self,
+        url: str,
+        hoster: str = "",
+        *,
+        refresh: bool = False,
+        demand: bool = True,
     ) -> ResolvedStream | None:
-        """Resolve a hoster embed URL to a playable video URL.
+        """Resolve a hoster embed URL to a playable video URL. The lookup is
+        demand for the resolver that answers (``demand_age()``), a cache hit
+        too, unless *demand* is false (Filemoon's pass keeper: the app's own
+        lookup).
 
         1. Check result cache for previously resolved URL (not with
            *refresh*: the CDN refused the cached stream, and a refresh
@@ -394,6 +441,8 @@ class HosterResolverRegistry:
         if cached is not None and not cached.is_expired:
             log.debug("hoster_resolve_cache_hit", url=url)
             self._telemetry.count("hoster_resolve", "cached", resolver=cached.resolver)
+            if demand:
+                self._demand[cached.resolver] = time.monotonic()
             return cached.value
 
         # URL domain is authoritative; fall back to plugin-provided hint
@@ -410,7 +459,7 @@ class HosterResolverRegistry:
         resolver = self._resolver_for(url, hoster_name)
         if resolver is not None:
             return await self._resolve_with(
-                resolver, hoster_name, url, url, refresh=refresh
+                resolver, hoster_name, url, url, refresh=refresh, demand=demand
             )
 
         # 2. No resolver for this domain — try following redirects
@@ -426,7 +475,12 @@ class HosterResolverRegistry:
                     url=final_url,
                 )
                 return await self._resolve_with(
-                    resolver, redirected_hoster, final_url, url, refresh=refresh
+                    resolver,
+                    redirected_hoster,
+                    final_url,
+                    url,
+                    refresh=refresh,
+                    demand=demand,
                 )
 
         # 3. Try hoster hint if different from URL domain
@@ -441,7 +495,7 @@ class HosterResolverRegistry:
                     url=url,
                 )
                 return await self._resolve_with(
-                    resolver, hoster, url, url, refresh=refresh
+                    resolver, hoster, url, url, refresh=refresh, demand=demand
                 )
 
         # 4. Fallback: content-type probing
@@ -620,10 +674,13 @@ class HosterResolverRegistry:
         cache_key: str,
         *,
         refresh: bool = False,
+        demand: bool = True,
     ) -> ResolvedStream | None:
         """Resolve *url* with *resolver*; cache the outcome under *cache_key*.
         A link whose capture runs on in the background joins it instead
-        (``_joined``)."""
+        (``_joined``). With *demand* the lookup is the resolver's demand."""
+        if demand:
+            self._demand[resolver.name] = time.monotonic()
         completion = self._completing.get(cache_key)
         if completion is not None:
             return await self._joined(completion, resolver, url)

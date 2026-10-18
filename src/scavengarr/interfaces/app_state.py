@@ -122,3 +122,6 @@ class AppState(State):
 
     # Launches the stealth browser after the app reported ready
     _browser_warmup_task: asyncio.Task[None]
+
+    # Captures a Filemoon link once the kept captcha pass has gone (PassKeeper)
+    _pass_keeper_task: asyncio.Task[None]

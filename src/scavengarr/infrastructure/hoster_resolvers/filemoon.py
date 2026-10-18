@@ -17,8 +17,10 @@ Filemoon domain variants: filemoon.sx, filemoon.to, filemoon.eu, etc.
 
 from __future__ import annotations
 
+import json
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
@@ -71,6 +73,32 @@ _HOSTS = frozenset({"moflix-stream.link"})
 # a click on the page centre lands in the frame above its play button, a
 # click on the frame's centre starts it
 _WATCH_PLAYER = ".video-page__player iframe"
+
+# The pass the captcha gives, in the player's localStorage: a token and its
+# expiry in epoch milliseconds, 30 min after the captcha. A capture with the
+# pass leaves it alone, and once it has gone the player asks again (row 106:
+# warm captures at 20 and 29 min, the captcha at 31)
+_PASS_ITEM = "byse:captcha-clearance:embed"
+
+
+def pass_expiry(state: Mapping[str, Any]) -> float | None:
+    """When the Byse captcha pass in *state* (a browser context's storage
+    state) ends, in epoch seconds: the latest of its player hosts' passes;
+    ``None`` without one."""
+    expiries: list[float] = []
+    for origin in state.get("origins") or []:
+        items = origin.get("localStorage") if isinstance(origin, dict) else None
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict) or item.get("name") != _PASS_ITEM:
+                continue
+            try:
+                record = json.loads(str(item.get("value", "")))
+            except ValueError:
+                continue
+            expires = record.get("expiresAt") if isinstance(record, dict) else None
+            if isinstance(expires, int | float) and not isinstance(expires, bool):
+                expiries.append(expires / 1000)
+    return max(expiries, default=None)
 
 
 def _unpack_p_a_c_k(packed: str) -> str | None:
