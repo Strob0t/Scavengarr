@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: Two OpenSpec Changes Are Archived and Two Spec Gaps Closed
+
+- `add-stream-media-quality` and `place-episodes-by-number-first` are archived (`openspec/changes/archive/`), their requirements merged into `openspec/specs/stremio-stream-quality/`, `stremio-anime-episodes/` and `stremio-series-identity/`; `openspec/project.md` lists them as archived.
+- The `stremio-anime-episodes` spec states the search cache key as the code writes it (`v3` with the reference's placement) and the rule that an unchecked position's row needs the site's title to confirm it; task 6.3 of the archived series-identity change (fireani's episode location) is backlog idea I19.
+
 ### Changed: The Observability, Operations and Guideline Docs Follow the Document Contract
 - `docs/current/observability.md` (from `docs/features/observability.md`) describes what the core records and where: the `TelemetryPort` stages and their outcomes, the request id and the log masking, the plugin record, Prometheus, Grafana, the alert rules, tracing on demand and the cost, with a flowchart from `stage()` to Grafana and Tempo; the plugin timeout links the search timing of `docs/current/architecture.md`.
 - `docs/reference/metrics.md` lists every metric with its type, labels, buckets and help text, the label values, the JSON statistics and the plugin record's counters; its metric table is generated from the app's registry by the new `scripts/generate_metrics_doc.py` (the families of `Telemetry` and of the scrape-time collectors, prometheus-client's own left out), and `tests/unit/infrastructure/test_metrics_doc.py` fails when it is outdated.

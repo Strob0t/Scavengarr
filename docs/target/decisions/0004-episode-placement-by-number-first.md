@@ -33,5 +33,5 @@ accepted
 - `src/scavengarr/infrastructure/plugins/episode_index.py`: `locate()` and its rules.
 - `src/scavengarr/application/stremio/title_resolution.py`: the episode reference and its position rule.
 - [`openspec/specs/stremio-anime-episodes/spec.md`](../../../openspec/specs/stremio-anime-episodes/spec.md): the requirements.
-- [`openspec/changes/place-episodes-by-number-first/proposal.md`](../../../openspec/changes/place-episodes-by-number-first/proposal.md): the change and the maintainer's decision.
+- [`openspec/changes/archive/2026-10-18-place-episodes-by-number-first/proposal.md`](../../../openspec/changes/archive/2026-10-18-place-episodes-by-number-first/proposal.md): the change and the maintainer's decision.
 - [`docs/archive/plans/series-episodes.md`](../../archive/plans/series-episodes.md): the evidence on the sites' numbering, the Kitsu number and the episode 0 entries.

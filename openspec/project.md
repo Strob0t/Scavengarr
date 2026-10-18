@@ -126,13 +126,11 @@ OpenSpec changes live in `openspec/changes/<change-id>/`:
 ### Changes
 
 Open (`openspec list`):
-- `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06; shipped in v0.4.0, task 3.2's production reading open)
 - `add-container-image` – A published multi-arch container image (approved 2026-10-06; task 2.3 waits for the production host's switch to the published image)
-- `place-episodes-by-number-first` – The row with the reference's absolute number is the episode (the maintainer's decision of 2026-10-12, backlog row 87)
 - `react-to-challenges` – A capture that meets a challenge is an outcome of its own, with a cooldown instead of the breaker, and finishes in the background (the maintainer's decision of 2026-10-12, backlog rows 89 and 90)
 - `keep-capture-state` – A capture hoster's storage state outlives restarts, recycles and relaunches (R4, the maintainer's decision of 2026-10-12, measured by backlog row 91)
 
-Archived after their release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`; on 2026-10-12, shipped in v0.4.0: `add-anime-ids` (`specs/stremio-anime-ids/`), `continue-cut-searches` (`specs/stremio-search-continuation/`), `series-identity` (`specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; its task 6.3, fireani's episode location, deferred while the site does not answer), `proxy-direct-streams` (`specs/stremio-file-proxy/`) and `persist-resolver-state` (`specs/hoster-resolution-persistence/`).
+Archived after their release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`; on 2026-10-12, shipped in v0.4.0: `add-anime-ids` (`specs/stremio-anime-ids/`), `continue-cut-searches` (`specs/stremio-search-continuation/`), `series-identity` (`specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; its task 6.3, fireani's episode location, deferred while the site does not answer), `proxy-direct-streams` (`specs/stremio-file-proxy/`) and `persist-resolver-state` (`specs/hoster-resolution-persistence/`); on 2026-10-18: `add-stream-media-quality` (`specs/stremio-stream-quality/`) and `place-episodes-by-number-first` (its deltas merged into `specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; the search cache key and the unchecked position's title check were specified with the archiving).
 
 Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [ideas-backlog.md](../docs/plans/ideas-backlog.md) I16):
 - `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it
