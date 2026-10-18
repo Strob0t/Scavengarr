@@ -1,7 +1,7 @@
 """Segment latency of a proxied HLS playback while the server searches.
 
 Usage (from a machine on the server's network):
-    poetry run python scripts/playback_under_load.py --base https://scavengarr.lan \\
+    poetry run python scripts/playback_under_load.py --base https://app.example.lan \\
         --stream-id ID [--insecure] [--label idle] [--segments 20] \\
         [--search movie/tt0816692 ...] [--search-at 10] [--tail 30] \\
         [--portainer [--container scavengarr]] [--out FILE]

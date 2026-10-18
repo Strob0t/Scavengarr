@@ -27,13 +27,13 @@ from scavengarr.infrastructure.browser.page_gate import Hold, clock_stopped
 
 log = structlog.get_logger(__name__)
 
-# Chromium's memory grows with the pages it rendered (1.7 GB on the Pi);
+# Chromium's memory grows with the pages it rendered (1.7 GB on the production host);
 # it restarts after this many pages, once none is open
 _RECYCLE_AFTER_PAGES = 200
 
 # The restart launches the new browser, so that the next operation does not
-# launch it inside its own resolve bound (6 to 11 s on the Pi against a 10 s
-# bound; code review 2026-10-12, V15). Operations wait for the restart with
+# launch it inside its own resolve bound (6 to 11 s on the production host against a 10
+# s bound; code review 2026-10-12, V15). Operations wait for the restart with
 # their bounds stopped, so it ends after this long at most
 _RESTART_BOUND_S = 30.0
 

@@ -33,7 +33,7 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
 - **The hosts.** When the capture has its stream, it notes the page's host and its frames' hosts, before the page closes:
   - a cookie is kept when its domain, without the leading dot, is one of these hosts or a parent domain of one;
   - an origin is kept when its host is one of them.
-  - Ad domains that set cookies without a frame on the page stay out (the Pi's `GL_UI4`).
+  - Ad domains that set cookies without a frame on the page stay out (the production host's `GL_UI4`).
 - **Read from the capture's own page (row 97, code review 2026-10-12, finding 6).**
   - Once `capture_media()` has its stream, before its page closes, it reads the state of the hosts not kept within the last 10 minutes (in memory): the context's cookies, and in each frame on one of them that origin's localStorage and IndexedDB (`collect_capture_state()`, one evaluate per origin, in Playwright's `StorageScript` format). A store write in the background follows; the tasks end at the pool's cleanup.
   - The read runs inside the capture's page slot and lease, so the browser's recycle cannot close it, and it visits no other origin. It took 4 to 11 ms per capture in the dev container.
@@ -53,7 +53,7 @@ Playwright (Patchright) sets cookies at any time, but localStorage and IndexedDB
   - It is the same path the first capture takes, done early. The plugin search runner's per-search warm-up stays: after a crash it relaunches the browser (a recycle relaunches it itself, below).
   - A failure is logged (`browser_warmup_failed`, the error type) and changes nothing else. The task is cancelled at shutdown before the pools close.
 - **The recycle relaunches the browser (row 97, code review 2026-10-12, V15).**
-  - The shared browser's restart after 200 pages closed it, and the next operation launched the new one inside its own resolve bound: 6 to 11 s on the Pi at the app's starts, against the 10 s bound, and a timeout counts against the hoster's breaker.
+  - The shared browser's restart after 200 pages closed it, and the next operation launched the new one inside its own resolve bound: 6 to 11 s on the production host at the app's starts, against the 10 s bound, and a timeout counts against the hoster's breaker.
   - The restart now launches the new browser before the waiting operations go on. The stealth context stays lazy: a new context and page took 0.07 s in the dev container.
   - An operation waits for the restart with its resolve bound stopped, as for a page (the page gate's `clock_stopped()`). So the restart is bounded: after 30 s, `shared_browser_restart_failed` is logged and the next operation launches the browser, as before.
   - A crash's relaunch stays with the next operation (or the next search's warm-up). A crash has no moment of its own to relaunch at, and the browser's `disconnected` event fires on the pool's own closes too.

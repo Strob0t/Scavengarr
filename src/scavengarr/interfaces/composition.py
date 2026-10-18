@@ -126,7 +126,7 @@ _CONNECT_TIMEOUT_S = 5.0
 # At most this many idle connections (httpx's default). httpcore 1.0 scans
 # its whole pool for every request and every finished response, quadratic
 # in the idle connections: with 100 kept, the scan held the GIL 10-20% of
-# the time during stream requests on the Pi, 2% with httpx's defaults
+# the time during stream requests on the production host, 2% with httpx's defaults
 _KEEPALIVE_CONNECTIONS = 20
 
 

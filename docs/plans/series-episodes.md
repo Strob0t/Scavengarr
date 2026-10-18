@@ -8,7 +8,7 @@ Columns: title-matching results (the title filter's survivors); their numbering 
 
 ## Before (2026-10-07, dev container, `staging` 79a73c7)
 
-The home connection without the VPN, fresh cache. Wall time per request 15–31 s.
+A residential connection without the VPN, fresh cache. Wall time per request 15–31 s.
 
 | plugin | results | season_episode | episode | season | none | kept | narrowed | dropped | right | leaks | failed |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -114,7 +114,7 @@ The same 12 requests with the filter of step 21's group 7 (24c8c84: the numbers 
 
 ## s.to season rows (task 6.1 of step 35, 2026-10-09)
 
-Captured from the dev container (s.to refuses the Pi) with `scripts/capture_pages.py sto "One Piece" --season 2 --episode 1` and the same for *The Last of Us*: `serienstream.to` answered every page (search, series page, season page, episode page) with 200 and the real markup (`<title>One Piece Staffel 2 | SerienStream (S.to)</title>`), no challenge page. The two season pages are fixtures: `tests/fixtures/html/sto/season-one-piece-2.html.gz` and `season-the-last-of-us-2.html.gz`.
+Captured from the dev container (s.to refuses the production host) with `scripts/capture_pages.py sto "One Piece" --season 2 --episode 1` and the same for *The Last of Us*: `serienstream.to` answered every page (search, series page, season page, episode page) with 200 and the real markup (`<title>One Piece Staffel 2 | SerienStream (S.to)</title>`), no challenge page. The two season pages are fixtures: `tests/fixtures/html/sto/season-one-piece-2.html.gz` and `season-the-last-of-us-2.html.gz`.
 
 **Rows.** An episode is `tr.episode-row` (the header row is `tr.text-uppercase` and has no number); `th.episode-number-cell` holds the season-relative number, `td.episode-title-cell` holds `strong.episode-title-ger` (the German title) and `span.episode-title-eng` (the English title). There is no `td.seasonEpisodeTitle` on s.to; that is aniworld's markup, so the empty answer for that selector on 2026-10-09 was the markup, not a challenge. One Piece, season 2, episode 1 (whitespace collapsed):
 
@@ -428,7 +428,7 @@ The code review of 2026-10-12 (finding 1): without the Kitsu number (right after
 - **Case 3's cost** (a series with a whole-series Kitsu entry whose episode got no number): Pokémon has 1099 unchecked references (its aniworld rows show no numbers, so the titles placed them before as well: unchanged), Fairy Tail 153 (175 got a Kitsu number). Without the tie rule, 2 of Fairy Tail's 153 went to a neighbour whose English title is a word subset of the reference's and so matches as fully: #249 "Tartaros Chapter - Celestial Spirit King vs. Underworld King" to #246 "Tartaros Chapter - Underworld King", and #273 "Treasure" to #268 "Treasure Hunt". With the number's row first, both stay at their own row, and Fairy Tail is 328 exact as before.
 - **Right after a start** (`--start`: every position unchecked, as until the list is in memory), each series judged by the Kitsu number, row 95 against the same references as trusted positions (staging): One Piece 1119 vs 591, Detective Conan 1096 vs 1216, Naruto Shippuden 491 vs 500, Naruto 198 vs 220, Bleach 360 vs 363, Fairy Tail 175 vs 175, Hunter x Hunter 148 vs 148; 3587 vs 3213 of 4212 judged (Pokémon's 276 and Dragon Ball Super's 131 find no numbered row either way). Duel Monsters falls back to main's 40 exact, 33 neighbours, 4 by title and 147 nothing for that window. The window is the list's load, which the start now begins (`load_in_background()`): in the dev container 0.43 s from the network into an empty diskcache (longest event-loop stall 55 ms), and 0.01 s from the cache backend in a new instance, as after a restart (the list is kept 7 days).
 
-Limits: one run each, the sites' state of 2026-10-12 afternoon, nothing in production. A placement counts as right at the row that shows the Kitsu number: aniworld counts One Piece as Kitsu does, but not every series (Detective Conan #1077, row 87). The load times are the dev container's network and disk, not the Pi's.
+Limits: one run each, the sites' state of 2026-10-12 afternoon, nothing in production. A placement counts as right at the row that shows the Kitsu number: aniworld counts One Piece as Kitsu does, but not every series (Detective Conan #1077, row 87). The load times are the dev container's network and disk, not the production host's.
 
 ### Row 98: partial titles and the title sets, before and after (2026-10-12, dev container, `handoff-98` on `staging` 3b9ca72)
 

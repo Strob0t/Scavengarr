@@ -1014,8 +1014,8 @@ class TestCloudflareFallback:
 class TestGatedStreamRequest:
     """A stream request (season and episode) answers with resolved hoster
     links only: a link-out that stayed on the site reaches the serienstream
-    resolver, which cannot follow it (``serienstream_invalid_url``, the Pi's
-    VPN address, 2026-10-07). Torznab never asks for one episode."""
+    resolver, which cannot follow it (``serienstream_invalid_url``, the production
+    host's VPN address, 2026-10-07). Torznab never asks for one episode."""
 
     @pytest.fixture(autouse=True)
     def _reset_fetcher(self) -> Iterator[None]:

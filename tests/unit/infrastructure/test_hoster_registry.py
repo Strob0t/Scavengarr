@@ -1556,7 +1556,7 @@ class _ChallengedPlayer(_PlayerBound):
 class TestChallenge:
     """A capture that met a challenge and found no stream in time says the
     hoster wants a warm browser, not that it is broken: Filemoon's and
-    Dropload's cold captures took 13 to 18 s on the Pi against the 10 s
+    Dropload's cold captures took 13 to 18 s on the production host against the 10 s
     bound, and every half-open trial since a restart reopened the breaker
     for an hour (2026-10-11; react-to-challenges, R1 and R7). A capture the
     bound cuts after its challenge runs on in the background and leaves its
@@ -2039,8 +2039,8 @@ class TestChallenge:
     @pytest.mark.usefixtures("clock")
     async def test_a_cut_capture_finds_its_stream_in_the_background(self) -> None:
         """Filemoon's cold capture got past its captcha 13 to 18 s after the
-        start on the Pi, past the 10 s bound: the answer goes out at the cut,
-        and the capture runs on, on its own page only, to leave its stream
+        start on the production host, past the 10 s bound: the answer goes out at the
+        cut, and the capture runs on, on its own page only, to leave its stream
         in the cache."""
         gate = PageGate(limit=2)
         registry, _, telemetry = self._registry(self._capture(gate, after=0.1))

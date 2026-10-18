@@ -59,7 +59,7 @@ Gate:
 
 ### Phase 0 results (2026-09-28)
 
-Setup: devcontainer, residential IP (AS3209 Vodafone), 2 rounds per variant, 30 s wait per page. playwright 1.57.0 (Chromium 143) + playwright-stealth 2.0.1, Patchright 1.63.0 (Chromium 153), Camoufox 0.5.6 (Firefox 152), nodriver 0.50.3.
+Setup: devcontainer, residential IP (a consumer ISP), 2 rounds per variant, 30 s wait per page. playwright 1.57.0 (Chromium 143) + playwright-stealth 2.0.1, Patchright 1.63.0 (Chromium 153), Camoufox 0.5.6 (Firefox 152), nodriver 0.50.3.
 
 | Target | A today | A2 PW new headless | B Patchright | C Patchright + UA | D Patchright new headless |
 |---|---|---|---|---|---|
@@ -201,7 +201,7 @@ Only if plugins remain blocked after Phase 2. Built as an option in v0.2.0: own 
 
 ## Phase 4 — httpx goes on with the browser's session (2026-10-04)
 
-Problem: production (Raspberry Pi 4, all traffic through a datacenter VPN) answered kinoger and moflix with nothing. Their sites challenge the VPN IP; after one challenge `_fetch_text()` sent every page of the host through the browser for 30 min (moflix, a Playwright plugin, always runs in the browser). On the Pi a browser page costs seconds, so the 10 s Stremio budget ran out before the detail pages.
+Problem: production (Raspberry Pi 4, all traffic through a datacenter VPN) answered kinoger and moflix with nothing. Their sites challenge the VPN IP; after one challenge `_fetch_text()` sent every page of the host through the browser for 30 min (moflix, a Playwright plugin, always runs in the browser). On the production host a browser page costs seconds, so the 10 s Stremio budget ran out before the detail pages.
 
 Measured from production's VPN IP inside the production container (2026-10-04, one run each):
 
@@ -210,16 +210,16 @@ Measured from production's VPN IP inside the production container (2026-10-04, o
 | kinoger (HostAdmin WAF, `ha-waf-*`) | 403 challenge | 4.0 s | 200 in 0.4 s | 200 in 0.4 s |
 | moflix API (Cloudflare, `cf_clearance`) | 403 challenge | 3.0 s | 200 in 0.3 s (with `Referer` and `X-XSRF-TOKEN`) | 200 in 0.3 s |
 
-From the home IP curl_cffi alone (no cookies) still got moflix's challenge. So the TLS fingerprint did not decide either check; the cookie plus the browser's User-Agent did, and curl_cffi adds nothing for these sites. The Phase 2 finding (cookie bound to the TLS fingerprint) may still hold for other sites, hence the fallback below.
+From a residential IP curl_cffi alone (no cookies) still got moflix's challenge. So the TLS fingerprint did not decide either check; the cookie plus the browser's User-Agent did, and curl_cffi adds nothing for these sites. The Phase 2 finding (cookie bound to the TLS fingerprint) may still hold for other sites, hence the fallback below.
 
 Design:
 - `BrowserFetcherPort.session(url) -> BrowserSession | None` (cookies for the site, User-Agent). `StealthPool` reads its persistent context's cookies and the browser's `navigator.userAgent` (read once); `SolverFetcher` keeps the latest solution's `cookies`/`userAgent` per host; `ChainedBrowserFetcher` asks the fetcher that served the host.
 - `HttpxPluginBase._fetch_via_browser()`: after the browser fetch, `_adopt_browser_session()` puts the cookies into the client's jar for the host and remembers the User-Agent per host (`_request_kwargs(client, url)`), and the host leaves the browser memo. During the solve the host stays in the memo, so parallel requests do not hit the challenge again.
 - A challenge less than `_SESSION_TRUST_S` (5 min) after adopting a session means the site does not accept it from httpx: memo for 30 min as before (`{name}_browser_session_rejected`). A later challenge (expired clearance) is solved again.
 
-Tests: `test_httpx_browser_fallback.py` (`TestBrowserSessionReuse`: session reused, redirects too, rejected session → memo, expired → solved again, no session → memo), `test_stealth_pool.py` (`TestStealthPoolSession`), `test_solver_fetcher.py` (solution session, chain). Live in dev: moflix's API, challenged from the home IP, solved in 2 s; the next request went through httpx (origin 401 without moflix's API headers, so the challenge was passed).
+Tests: `test_httpx_browser_fallback.py` (`TestBrowserSessionReuse`: session reused, redirects too, rejected session → memo, expired → solved again, no session → memo), `test_stealth_pool.py` (`TestStealthPoolSession`), `test_solver_fetcher.py` (solution session, chain). Live in dev: moflix's API, challenged from a residential IP, solved in 2 s; the next request went through httpx (origin 401 without moflix's API headers, so the challenge was passed).
 
-moflix (1.2.0) moved from `PlaywrightPluginBase` to `HttpxPluginBase`: it loads the homepage once for the site's Laravel session and calls its API with `_fetch_text(..., headers=...)` (`Accept: application/json`, the site as `Referer`, the `XSRF-TOKEN` cookie as `X-XSRF-TOKEN`; 401 without them). A challenged API call goes through the browser once, the rest through httpx with its session. Live in dev (API challenged from the home IP): "Matrix" 4 results/28 links in 4.3 s including the 2 s solve, then "Dune" 6/24 in 0.9 s. Before, every search ran in the browser behind a lock (`_serialize_search`).
+moflix (1.2.0) moved from `PlaywrightPluginBase` to `HttpxPluginBase`: it loads the homepage once for the site's Laravel session and calls its API with `_fetch_text(..., headers=...)` (`Accept: application/json`, the site as `Referer`, the `XSRF-TOKEN` cookie as `X-XSRF-TOKEN`; 401 without them). A challenged API call goes through the browser once, the rest through httpx with its session. Live in dev (API challenged from a residential IP): "Matrix" 4 results/28 links in 4.3 s including the 2 s solve, then "Dune" 6/24 in 0.9 s. Before, every search ran in the browser behind a lock (`_serialize_search`).
 
 ### Research (2026-10-04): clearance reuse, alternatives, papers
 
@@ -234,9 +234,9 @@ Alternatives looked at:
 | Plain httpx with the browser's cookies + UA | built (Phase 4), measured from the VPN IP |
 | TLS-impersonating clients: curl_cffi 0.16.3 (profiles up to `chrome150`), wreq (ex-rnet), primp, tls-client-python ([curl_cffi FAQ](https://curl-cffi.readthedocs.io/en/latest/faq.html)) | not needed for kinoger/moflix (curl_cffi measured, no gain). Candidate if a site rejects the httpx session; pick the profile closest to Patchright's Chromium |
 | In-page `fetch()` from the cleared tab (browser TLS/HTTP2, same origin; not `context.request`, which uses Playwright's own HTTP stack) | candidate fallback for sites that reject the httpx session: a round trip instead of a page render per request |
-| Keep the clearance warm (re-solve per site before the Challenge Passage ends) | candidate: no Stremio request waits for a solve (3–4 s on the Pi, 20 s under load). The smaller variant is built: a solve runs on when the deadline cuts its request, so the next request gets the session, and the Pi only solves when someone searches |
+| Keep the clearance warm (re-solve per site before the Challenge Passage ends) | candidate: no Stremio request waits for a solve (3–4 s on the production host, 20 s under load). The smaller variant is built: a solve runs on when the deadline cuts its request, so the next request gets the session, and the production host only solves when someone searches |
 | Browser timezone/locale matching the VPN exit country ([FP-Inconsistent](https://arxiv.org/abs/2406.07647)) | candidate, small |
-| FlareSolverr/Byparr/Camoufox/nodriver/zendriver/SeleniumBase/Botasaurus | full browsers, no faster on a Pi; FlareSolverr/Byparr already supported (`playwright.solver_url`) |
+| FlareSolverr/Byparr/Camoufox/nodriver/zendriver/SeleniumBase/Botasaurus | full browsers, no faster on a production host; FlareSolverr/Byparr already supported (`playwright.solver_url`) |
 | Solver services (CapSolver, ~$1.20/1000) | rejected: third party sees the traffic, needs a sticky proxy on the exit IP |
 | Challenged domains through a non-datacenter IP | user decision (privacy); may avoid the challenge altogether |
 | Privacy Pass / Private Access Tokens | not viable: a token does not solve a challenge, v1 tokens dropped 2023 ([PAT](https://developers.cloudflare.com/cloudflare-challenges/reference/private-access-tokens/)) |

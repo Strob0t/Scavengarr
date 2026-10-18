@@ -125,7 +125,7 @@ stremio:
   stream_deadline_seconds: 60.0 # latest answer
   verify_streams: true # drop resolved URLs that do not return video bytes
   plugin_health_interval_seconds: 1800.0 # check every plugin's site; searches skip sites that did not answer (0 = off)
-  allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on a Pi 4)
+  allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on a Raspberry Pi 4)
 
   # Title matching
   title_match_threshold: 0.7

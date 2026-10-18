@@ -46,10 +46,11 @@ class TestVixeoResolver:
         assert result.video_url == _HLS
         assert result.is_hls is True
         assert pool.capture_media.await_args.args[0] == _URL
-        # The player's ad tag stays out (row 81: on the Pi it took every click)
+        # The player's ad tag stays out (row 81: on the production host it took every
+        # click)
         assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
         # Its player takes the first click at once (row 103: 6 of 6 runs at
-        # 0.5 s, 2 of them on the Pi)
+        # 0.5 s, 2 of them on the production host)
         assert pool.capture_media.await_args.kwargs["autoplay_wait"] == 0.5
 
     async def test_login_page_is_not_resolved(self) -> None:

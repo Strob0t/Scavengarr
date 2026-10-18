@@ -81,10 +81,10 @@ The file route SHALL record the `hls_proxy` stage with `kind="file"` and the sta
 - **THEN** `scavengarr_hls_proxy_total{kind="file",outcome="206"}` rises by one and `scavengarr_hls_proxy_bytes_total{kind="file"}` by the bytes sent
 
 ### Requirement: File Throughput Measured
-`scripts/probes/hls_throughput.py --file <stream id>` SHALL fetch the first 32 MiB of a stored direct file from the Pi in one connection and then as three parallel byte ranges, and SHALL print Mbit/s for both and whether the CDN honoured the ranges, so that a read-ahead for files is decided by numbers in a change of its own.
+`scripts/probes/hls_throughput.py --file <stream id>` SHALL fetch the first 32 MiB of a stored direct file from the production host in one connection and then as three parallel byte ranges, and SHALL print Mbit/s for both and whether the CDN honoured the ranges, so that a read-ahead for files is decided by numbers in a change of its own.
 
 #### Scenario: Probe run
-- **WHEN** the probe runs on the Pi with a stored MixDrop stream id
+- **WHEN** the probe runs on the production host with a stored MixDrop stream id
 - **THEN** it prints the two Mbit/s figures and the range verdict without printing the URL
 
 ### Requirement: Production Acceptance

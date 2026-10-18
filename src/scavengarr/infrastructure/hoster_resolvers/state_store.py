@@ -108,7 +108,7 @@ class HosterStateStore:
             if reason is not None:
                 await self._discard(reason)
                 return
-            # A clock set back (the Pi has none until NTP) counts as no
+            # A clock set back (a Raspberry Pi has none until NTP) counts as no
             # downtime: lifetimes never grow
             age_s = max(0.0, time.time() - snapshot["taken_at"])
             try:

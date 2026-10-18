@@ -14,7 +14,7 @@ another over one connection, and a CDN that throttles each connection
 the player asks for segment *n*, the proxy fetches *n+1* and *n+2* into
 memory and serves them from there when asked: two to three connections
 in flight instead of one (7.3 against 1.8 Mbit/s for that title from the
-Pi, ``scripts/probes/hls_throughput.py``, 2026-10-07).
+production host, ``scripts/probes/hls_throughput.py``, 2026-10-07).
 """
 
 from __future__ import annotations

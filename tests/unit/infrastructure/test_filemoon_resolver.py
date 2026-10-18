@@ -401,7 +401,7 @@ class TestBrowserCapture:
         assert "timeout" not in pool.capture_media.await_args.kwargs
         # The player frame's ad tag stays out (row 78)
         assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
-        # The wait for a player that starts itself: on the Pi a first click
+        # The wait for a player that starts itself: on the production host a first click
         # at 1.5 s went unanswered in 3 of 4 runs (row 103)
         assert pool.capture_media.await_args.kwargs["autoplay_wait"] is None
 

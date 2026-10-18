@@ -1153,7 +1153,7 @@ class TestStealthPoolCaptureMedia:
         page.route.assert_awaited_once_with("**/*", _allow_own_player_resources)
 
 
-# The Byse watch page and its player frame (row 78 on the Pi)
+# The Byse watch page and its player frame (row 78 on the production host)
 _FRAMES = ("https://bysezejataos.com/d/abc", "https://n1mwq.org/xdk4/abc")
 
 
@@ -1352,7 +1352,7 @@ class _Request:
 class TestOwnScriptsOnly:
     """A capture that opts in runs the scripts of the page's and its
     frames' sites only: an ad tag in the player frame turns every click
-    into a popup (Filemoon on the Pi)."""
+    into a popup (Filemoon on the production host)."""
 
     def test_a_script_of_another_site_is_foreign(self) -> None:
         from scavengarr.infrastructure.browser.stealth_pool import _foreign_script

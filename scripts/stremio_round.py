@@ -1,7 +1,7 @@
 """Run a Stremio round: first answer, cached answer and playable streams per title.
 
 Usage (against a running server):
-    poetry run python scripts/stremio_round.py --base https://scavengarr.lan \\
+    poetry run python scripts/stremio_round.py --base https://scavengarr.example.lan \\
         [--insecure] [--ids-file docs/plans/round-titles.txt] [--out FILE] \\
         [--no-playcheck] [--portainer [--container scavengarr]]
 

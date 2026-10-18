@@ -29,7 +29,7 @@ When the check gets a playlist, the probe also reads the media playlist (a maste
 
 Both sources are fetched from the dev container on the LAN, as the maintainer's player fetches them:
 
-- **production**: the links in production's cache, read through Portainer, resolved from the Pi's address. The probe sends no stream request to production.
+- **production**: the links in production's cache, read through Portainer, resolved from the production host's address. The probe sends no stream request to production.
 - **dev**: the live suite's hoster links (`scripts/probes/resolver_urls.py`), resolved in the dev container with the app's registry. A file bound to the resolving address plays from here, so only a header binding shows. Two link sets: the suite's of 2026-10-10 and a set collected 2026-10-11 from 11:23 to 11:29 UTC.
 
 ```bash
@@ -85,8 +85,8 @@ No link of Dropload, RPMPlay, SuperVideo, UPNS or Vidoza resolved in either set:
 
 1. **No production link took the `play` route.** Since step 26 the address-bound files take `/proxy/<id>/file` and HLS takes the proxy. All 90 stored links of the eleventh round took one of the two. The `play` route keeps the files of hosters that are neither HLS nor address-bound: of the measured ones, StreamTape and VEEV.
 2. **VEEV is the only hoster bound on the `play` route, and it is the known case.** Its CDN answers the stored User-Agent with or without the Referer, and refuses the Firefox User-Agent with or without it: the binding is the User-Agent alone. VEEV implements `ClientBoundResolverPort` (`src/scavengarr/infrastructure/hoster_resolvers/veev.py`), so `/play` resolves it again with the player's User-Agent and Accept-Language. Step 2 of the row names that port as the remedy for a User-Agent binding, so nothing changes. StreamTape answers every way.
-3. **The file route's bindings are what the pass-through sends.** Resolved here, DoodStream's CDN wants the Referer, MixDrop's and Vinovo's want the check's User-Agent (Vinovo's is stored with the link), and FSST's wants nothing. The pass-through sends the stored headers over the browser User-Agent, the check's headers. From the LAN, production's links of all four are dead every way (an HTML page, 403 or 410): they are bound to the Pi's address, which the pass-through supplies. The eleventh round's file branch played 9 of 9 such files through it.
-4. **The HLS playlists answer the LAN, except VOE's production links.** VOE's production playlists answer 403 every way from here, and the dev container's VOE link answers every way: VOE binds the playlist to the resolving address (or to a lifetime of minutes), and the proxy asks from the Pi.
+3. **The file route's bindings are what the pass-through sends.** Resolved here, DoodStream's CDN wants the Referer, MixDrop's and Vinovo's want the check's User-Agent (Vinovo's is stored with the link), and FSST's wants nothing. The pass-through sends the stored headers over the browser User-Agent, the check's headers. From the LAN, production's links of all four are dead every way (an HTML page, 403 or 410): they are bound to the production host's address, which the pass-through supplies. The eleventh round's file branch played 9 of 9 such files through it.
+4. **The HLS playlists answer the LAN, except VOE's production links.** VOE's production playlists answer 403 every way from here, and the dev container's VOE link answers every way: VOE binds the playlist to the resolving address (or to a lifetime of minutes), and the proxy asks from the production host.
 5. **No media playlist uses byte ranges.** 39 media playlists of 10 hosters (30 from production, 9 from the dev container) carry neither `EXT-X-BYTERANGE` nor a byte-range `EXT-X-MAP`. The proxy's segment route, which forwards no `Range` and answers 200, breaks none of them that way. The `200 instead of 206` answers to the play check's 2 KiB range on HLS segments (eleventh round) stay harmless here; row 64 keeps that finding to files and byte-range playlists.
 6. **Production's logs show reachability, not header binding, for the hosters the advisor named.** The registry's playback checks of VEEV failed with `ConnectTimeout` five times from 11:03 to 11:14 UTC (`prodctl.py logs --grep veev`). A check error answers no stream, so production served no VEEV stream in the round, while veevcdn answered the dev container. FIRESTREAM's one failure in the round was a 30 s timeout, and its playlists answer the LAN. SuperVideo's breaker is open after an unplayable outcome, and Filemoon's, Dropload's and Vixeo's opened after timeouts (the digest). Whether a player shows the report's message for a stalled or failed answer is unverified.
 
@@ -160,7 +160,7 @@ Limits: one afternoon, from one network; the Dropload and SuperVideo verdicts ma
 
 ## The Other Capture Hosters (Row 81)
 
-At 15:31 UTC on 2026-10-11 production's open hoster breakers were Dropload, Filemoon, SuperVideo and Vixeo, all browser captures. Does row 78's ad tag, or another one, take their clicks too? The capture probe (`scripts/probes/capture_timing.py --diagnose`, 2 runs each, one profile per call) on the live suite's link of each hoster (`.cache/live/resolver-urls.json`), then each resolver alone and one GET of its stream (with the stored headers and bare) to name the stage where a run stops. Dev container only, 2026-10-11, 16:00 to 16:15 UTC (Mr. Normal, `handoff-81`); the Pi's run follows on Mr. Fable's signal.
+At 15:31 UTC on 2026-10-11 production's open hoster breakers were Dropload, Filemoon, SuperVideo and Vixeo, all browser captures. Does row 78's ad tag, or another one, take their clicks too? The capture probe (`scripts/probes/capture_timing.py --diagnose`, 2 runs each, one profile per call) on the live suite's link of each hoster (`.cache/live/resolver-urls.json`), then each resolver alone and one GET of its stream (with the stored headers and bare) to name the stage where a run stops. Dev container only, 2026-10-11, 16:00 to 16:15 UTC (Mr. Normal, `handoff-81`); the production host's run follows on Mr. Fable's signal.
 
 ### Dev container
 
@@ -187,10 +187,10 @@ The app's registry gave no stream for SuperVideo and Dropload in the same sessio
 
 ### Reading
 
-- **Row 78's ad tag is in two more players**: SuperVideo and Dropload load `llvpn.com/tag.min.js` as Filemoon does, and Vixeo loads a tag of the same path from `al5sm.com`. The dev container's resolver refuses all of them, so no click here was taken by an ad (0 popups in 6 runs). Whether they take the clicks on the Pi is the Pi's run.
+- **Row 78's ad tag is in two more players**: SuperVideo and Dropload load `llvpn.com/tag.min.js` as Filemoon does, and Vixeo loads a tag of the same path from `al5sm.com`. The dev container's resolver refuses all of them, so no click here was taken by an ad (0 popups in 6 runs). Whether they take the clicks on the production host is the production host's run.
 - **Two of the three stop at the CDN here, not at the capture**: SuperVideo's `serversicuro.cc` puts a script gate before its playlist (a player that runs no script gets HTML) and answers 429 after about ten requests; Dropload's `dropcdn.io` takes no connection (row 67 saw the same for `r1.dropcdn.io`, now `ds1`). An ad block cannot fix either of them.
 - **Dropload's page shows the Turnstile widget** from `challenges.cloudflare.com`, so if Dropload ever opts into the own-scripts rule, row 80's exception is the one that keeps it passable.
-- **Vixeo** captures and plays here: if its breaker is open on the Pi, the cause is there.
+- **Vixeo** captures and plays here: if its breaker is open on the production host, the cause is there.
 
 ### Limits
 
@@ -199,7 +199,7 @@ The app's registry gave no stream for SuperVideo and Dropload in the same sessio
 - The CDN checks are one GET each; the gate's redirect was not followed.
 - The dev container's resolver refuses the ad domains, so this column names what a page tried to load, not what it does when it gets it.
 
-### On the Pi (2026-10-11, 16:57 to 17:00 UTC)
+### In production (2026-10-11, 16:57 to 17:00 UTC)
 
 The same three links and the same probe in production's container (`scripts/prodctl.py probe capture_timing --diagnose --runs 2`), production's navigation bound of 10 s, each call after a `prodctl.py stats` pre-check (the app idle: CPU 0.00 to 0.01 of 4 cores, about 415 MiB), on Mr. Fable's signal; then two masked log reads for the stage. Production ran 3a257fe.
 
@@ -217,19 +217,19 @@ The same three links and the same probe in production's container (`scripts/prod
 The stage, from production's own half-open trials of 16:33 to 16:34 UTC (one request, `hdfilme`'s links; both breakers reopened for 3600 s):
 
 - **SuperVideo**: `hoster_resolve_unplayable` at 16:33:30: the resolver gave a stream and the registry's playback check failed. It stops at the CDN, as in the dev container (`serversicuro.cc`'s script gate and 429).
-- **Dropload**: `dropload_captcha_browser_fallback` at 16:33:29, `hoster_resolve_timeout` at 16:34:29. The capture needs 13.3 s cold here (the widget, two clicks), past the 10 s bound. Whether its CDN answers the Pi is not measured: the capture does not fetch the playlist, and the trial never got to the check.
+- **Dropload**: `dropload_captcha_browser_fallback` at 16:33:29, `hoster_resolve_timeout` at 16:34:29. The capture needs 13.3 s cold here (the widget, two clicks), past the 10 s bound. Whether its CDN answers the production host is not measured: the capture does not fetch the playlist, and the trial never got to the check.
 
 Reading:
 
-- **Vixeo is row 78's case in a second player**: its own tag (`al5sm.com/tag.min.js`, the path of Filemoon's `llvpn.com` tag) takes every click on the Pi, and blocking that one domain gives a stream in 2 of 2 runs with the other ad scripts still loaded. Row 79's own-scripts rule would block it too (`al5sm.com` is neither the page's site nor a frame's), so the fix candidate is Vixeo opting into the rule, a fix row for Mr. Fable to decide.
-- **Dropload's ad tag takes no click on the Pi** (0 popups in 2 runs with `llvpn.com` loaded): its time goes to the Turnstile widget. Row 80's exception keeps the widget passable if Dropload ever opts in.
+- **Vixeo is row 78's case in a second player**: its own tag (`al5sm.com/tag.min.js`, the path of Filemoon's `llvpn.com` tag) takes every click on the production host, and blocking that one domain gives a stream in 2 of 2 runs with the other ad scripts still loaded. Row 79's own-scripts rule would block it too (`al5sm.com` is neither the page's site nor a frame's), so the fix candidate is Vixeo opting into the rule, a fix row for Mr. Fable to decide.
+- **Dropload's ad tag takes no click on the production host** (0 popups in 2 runs with `llvpn.com` loaded): its time goes to the Turnstile widget. Row 80's exception keeps the widget passable if Dropload ever opts in.
 - **SuperVideo** is the CDN's, on both networks; no capture change helps it.
 
 Limits: one link per hoster, two runs per call in one profile (run 2 is the warm case), one afternoon. The stage lines come from one production request per hoster. SuperVideo's probe runs show no reason of their own for ending before a page.
 
 ### Vixeo with the own-scripts rule (Row 83)
 
-Row 81's Pi reading made Vixeo opt into row 79's rule (`own_scripts_only=True` in `vixeo.py`, Mr. Fable's design; the rule unchanged, no domain list). The probe runs the resolver, so it applies the rule. Dev container, 2026-10-11 ~17:10 UTC, the same link, 2 runs:
+Row 81's production reading made Vixeo opt into row 79's rule (`own_scripts_only=True` in `vixeo.py`, Mr. Fable's design; the rule unchanged, no domain list). The probe runs the resolver, so it applies the rule. Dev container, 2026-10-11 ~17:10 UTC, the same link, 2 runs:
 
 | Run | Captured | Clicks at | Stream at (CDN) | Popups | Scripts |
 |---:|---|---|---|---:|---|
@@ -238,11 +238,11 @@ Row 81's Pi reading made Vixeo opt into row 79's rule (`own_scripts_only=True` i
 
 No regression against row 81's dev runs (4.3 and 4.1 s, the same sites refused by the resolver there). The player's code is inline in its page: the page loads no script of its own site, before or after, so no script the player needs comes from another site.
 
-On the Pi (2026-10-12, 06:33 UTC, production on staging 39f4790, the same link, `scripts/prodctl.py probe capture_timing --hoster vixeo --runs 2 --diagnose` without `--block`, so only the app's rule aborts; after a `prodctl.py stats` pre-check, the app idle):
+On the production host (2026-10-12, 06:33 UTC, production on staging 39f4790, the same link, `scripts/prodctl.py probe capture_timing --hoster vixeo --runs 2 --diagnose` without `--block`, so only the app's rule aborts; after a `prodctl.py stats` pre-check, the app idle):
 
 | Run | Captured | Clicks at | Stream at (CDN) | Popups | Scripts |
 |---:|---|---|---|---:|---|
 | 1 | yes | 5.3 s | 5.5 s (`vidsonic.net`) | 0 | all 11 foreign script sites `blocked`: `al5sm.com`'s tag, `betteradsystem.com`, `mayhapmonisms.com`, `woofbeginner.com`, `runative-syndicate.com`, `cloudfront.net`, `uwterphco.com`, `zutdhkwkm.com`, two hosts of random names under `.cfd` and `.rest` (other names than row 81's), the script host under `vidsonic.net` |
 | 2 | yes | 4.8 s | 5.0 s (`vidsonic.net`) | 0 | the same 11 |
 
-Row 81's plain runs on the Pi gave no stream in 2 of 2, with 3 popups each; with the rule both runs give a stream after one click, as row 81's `--block al5sm.com` call did (5.8 and 5.5 s). The ad traffic the tag pulled in on the Pi (`adsco.re`, `255md.com`, `rtmark.net`) no longer appears. The two random ad hosts changed their names overnight, which a domain list would have missed and the rule does not. Limits: one link, two runs in one profile, one morning.
+Row 81's plain runs on the production host gave no stream in 2 of 2, with 3 popups each; with the rule both runs give a stream after one click, as row 81's `--block al5sm.com` call did (5.8 and 5.5 s). The ad traffic the tag pulled in on the production host (`adsco.re`, `255md.com`, `rtmark.net`) no longer appears. The two random ad hosts changed their names overnight, which a domain list would have missed and the rule does not. Limits: one link, two runs in one profile, one morning.

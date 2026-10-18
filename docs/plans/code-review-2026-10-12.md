@@ -102,7 +102,7 @@ The maintainer's `/code-review` at maximum effort over `origin/main...HEAD` at a
 `src/scavengarr/infrastructure/hoster_resolvers/registry.py:827`
 
 - **Defect:** Background completions are capped at one per resolver name only, and 29 resolver names can capture. Each completion keeps its page for up to _COMPLETION_S = 20 s past the cut. With the default 2-page gate, two challenged captures can hold every page while a /play claim waits only 12 s.
-- **Failure:** A Filemoon capture and a Dropload capture are both cut after a challenge, and their completions hold both pages (in_use=2, limit=2). A /play re-resolution of a SuperVideo link waits for a page and gets PageBusy at due - _MIN_WORK_S (12 s). /play falls back to the stale link, which fails after a CDN refusal. Reproduced with the real registry and gate, times scaled down. PageBudget adds a page only when CPU is at most 70 %, at least 400 MB is free and nothing changed in the last 30 s, so on a busy Pi it can come too late. design.md:63 accepts that pages wait, not that a play resolution ends PageBusy.
+- **Failure:** A Filemoon capture and a Dropload capture are both cut after a challenge, and their completions hold both pages (in_use=2, limit=2). A /play re-resolution of a SuperVideo link waits for a page and gets PageBusy at due - _MIN_WORK_S (12 s). /play falls back to the stale link, which fails after a CDN refusal. Reproduced with the real registry and gate, times scaled down. PageBudget adds a page only when CPU is at most 70 %, at least 400 MB is free and nothing changed in the last 30 s, so on a busy production host it can come too late. design.md:63 accepts that pages wait, not that a play resolution ends PageBusy.
 
 ### 13. A test leaves the plugin globals set (row 99, confirmed)
 

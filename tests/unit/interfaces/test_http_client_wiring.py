@@ -28,13 +28,14 @@ def _pool(client: httpx.AsyncClient) -> Any:
 async def test_connections_stay_open_between_requests() -> None:
     """A stream request talks to 18-42 hosts; with httpx's 5 s keep-alive
     every pause between two requests closed them all, and the next request
-    paid TLS handshakes again (21% of the Python CPU on the Pi, 2026-10-04)."""
+    paid TLS handshakes again (21% of the Python CPU on the production host,
+    2026-10-04)."""
     client = build_http_client(AppConfig())
     try:
         pool = _pool(client)
         assert pool._keepalive_expiry == 60.0  # noqa: SLF001
         # httpcore's pool scan is quadratic in idle connections: 100 cost
-        # 10-20% of the Python CPU of a stream request on the Pi
+        # 10-20% of the Python CPU of a stream request on the production host
         assert pool._max_keepalive_connections == 20  # noqa: SLF001
         assert pool._http2 is False  # noqa: SLF001
     finally:

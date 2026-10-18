@@ -10,7 +10,7 @@ Production (a Raspberry Pi 4 behind a VPN container) builds its image from GitHu
 - **`Dockerfile.prod` bundles the plugins** (`COPY plugins/ /app/plugins/`): a bind mount over `/app/plugins` still wins, so the compose file's mount becomes an optional override, and the docs stop saying the image has no plugins.
 - **Config seeding in the entrypoint**: the image keeps the default `config.yaml` beside the config directory and `docker/entrypoint.sh` copies it into `/app/config/` only when no file is there (today the image copies it straight into the directory a volume mount shadows).
 - **Compose and docs**: `docker-compose.yml` gets the `image: ghcr.io/<owner>/scavengarr:latest` form as the default with the `build:` block as the commented alternative; README's install section and `docs/features/configuration.md` describe pull, tags, watchtower, and the production example (image, config volume, cache volume, optional plugins override); AGENTS.md §1 "Merge to main" gains the release tag (`git tag vX.Y.Z` on the merge commit, `git push origin vX.Y.Z`) that produces `vX.Y.Z` and `latest`.
-- The maintainer's Pi Dockerfile retires; their compose switches to `image: ghcr.io/<owner>/scavengarr:staging` (or `latest` for releases only) — the maintainer's step, outside the repository.
+- The maintainer's production Dockerfile retires; their compose switches to `image: ghcr.io/<owner>/scavengarr:staging` (or `latest` for releases only) — the maintainer's step, outside the repository.
 
 ## Impact
 

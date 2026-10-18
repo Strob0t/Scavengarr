@@ -176,7 +176,7 @@ class TestInFlight:
 
     @respx.mock
     async def test_after_a_429_the_run_asks_no_more(self) -> None:
-        """A throttling CDN gets no further requests: the Pi's address
+        """A throttling CDN gets no further requests: the production host's address
         shares it with the playbacks."""
         respx.get("https://cdn.example/s1.ts").respond(429)
         later = respx.get(url__regex=r"https://cdn\.example/s[23]\.ts").respond(

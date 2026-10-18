@@ -1,6 +1,6 @@
 ## 1. Spike (before any production code)
 
-- [x] 1.1 (done 2026-10-06: [anime-ids-spike.md](../../../docs/plans/anime-ids-spike.md); Kitsu's mappings place no season and no deployment has a TMDB key, the Anime Kitsu addon's meta places all ten; the maintainer chose the addon with the public list as the fallback on 2026-10-07) `scripts/probes/anime_ids.py` (read-only, home network): for ten titles — a one-entry long-runner (One Piece), a split-cour series (Attack on Titan), a current seasonal series (Frieren), a movie (Your Name), a two-season series with recaps, an OVA, a title without TheTVDB mapping, two aniworld staples, one fireani staple — fetch the Kitsu entry with mappings and one episode record, then TMDB `/find` by TheTVDB id, and print per title: mapping sites present, `thetvdb/season` format, episode `seasonNumber`/`relativeNumber`, TMDB/IMDb id found, German title, and whether aniworld's search finds the title by the Kitsu `en_jp` title. Record the table in `docs/plans/anime-ids-spike.md`. Decide from it whether path (3) (titles only) is needed at all and whether the season heuristic needs a change.
+- [x] 1.1 (done 2026-10-06: [anime-ids-spike.md](../../../docs/plans/anime-ids-spike.md); Kitsu's mappings place no season and no deployment has a TMDB key, the Anime Kitsu addon's meta places all ten; the maintainer chose the addon with the public list as the fallback on 2026-10-07) `scripts/probes/anime_ids.py` (read-only, residential network): for ten titles — a one-entry long-runner (One Piece), a split-cour series (Attack on Titan), a current seasonal series (Frieren), a movie (Your Name), a two-season series with recaps, an OVA, a title without TheTVDB mapping, two aniworld staples, one fireani staple — fetch the Kitsu entry with mappings and one episode record, then TMDB `/find` by TheTVDB id, and print per title: mapping sites present, `thetvdb/season` format, episode `seasonNumber`/`relativeNumber`, TMDB/IMDb id found, German title, and whether aniworld's search finds the title by the Kitsu `en_jp` title. Record the table in `docs/plans/anime-ids-spike.md`. Decide from it whether path (3) (titles only) is needed at all and whether the season heuristic needs a change.
 
 ## 2. Port and adapters
 
@@ -18,6 +18,6 @@
 
 ## 4. Verification and docs
 
-- [x] 4.1 Live check from the home network: `scripts/probes/anime_ids.py` also runs the real resolver (addon, list) for its ten titles and prints the translated request; record the result in `docs/plans/anime-ids-spike.md`.
+- [x] 4.1 Live check from a residential network: `scripts/probes/anime_ids.py` also runs the real resolver (addon, list) for its ten titles and prints the translated request; record the result in `docs/plans/anime-ids-spike.md`.
 - [x] 4.2 `docs/features/stremio-addon.md`: section "Anime ids" (what is accepted, how the translation works, the sources and their caches, the log events, limits); `docs/architecture/clean-architecture.md` and `codeplan.md` (the new modules); `CHANGELOG.md`.
 - [x] 4.3 Follow-up noted in `docs/plans/ideas-backlog.md`: `mal:`/`anilist:` through the same list if the maintainer's catalogs emit them.

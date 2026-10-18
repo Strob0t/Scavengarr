@@ -45,7 +45,7 @@ sees. Worktree `handoff-35` from `origin/staging`.
 
 ## 6. sto and fireani
 
-- [x] 6.1 Check s.to's season page rows for an anime from the dev container (`scripts/capture_pages.py`; s.to refuses the Pi): absolute numbers, English titles. Record the finding in `docs/plans/series-episodes.md`.
+- [x] 6.1 Check s.to's season page rows for an anime from the dev container (`scripts/capture_pages.py`; s.to refuses the production host): absolute numbers, English titles. Record the finding in `docs/plans/series-episodes.md`.
 - [x] 6.2 If the rows carry the number or the English title: `sto.py` declares `locates_episodes`, shares the index and locate code with aniworld (one module in `infrastructure/plugins/`, the two plugins pass their selectors), and applies it to its 5070 results only; tests as in 5.2 on captured pages. If not: nothing, and the gap stays documented.
 - [ ] 6.3 fireani: when the site answers again (`scripts/probes/domains.py`), read `GetAnime`'s `animeSeasons[].animeEpisodes[]` fields, implement the same rules on them, `locates_episodes = True`, tests on a captured answer. Until then this task stays open and `fireani.py` is unchanged. Deferred at the archive (2026-10-11): fireani's site does not answer, and the plugin stays enabled and reports unreachable (the maintainer's decision of 2026-10-09); a new change takes it up when the site answers.
 

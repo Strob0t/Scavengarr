@@ -4,7 +4,7 @@ Status 2026-10-07: implemented (`openspec/changes/add-anime-ids/`, all tasks don
 
 ## Setup
 
-`scripts/probes/anime_ids.py` (read-only, no cache writes, prints no URLs or keys), run from the dev container on the home network, twice for all ten titles and once more for the ONA. Per title it asks:
+`scripts/probes/anime_ids.py` (read-only, no cache writes, prints no URLs or keys), run from the dev container on a residential network, twice for all ten titles and once more for the ONA. Per title it asks:
 
 - **Kitsu's API** for the entry (subtype, titles, mappings) and the episode record (`seasonNumber`, `relativeNumber`): the sources of the approved design;
 - the **public id lists**: Fribb's anime-lists (by Kitsu id: IMDb, TheTVDB and TMDB ids, seasons) and Kometa's Anime-IDs (by AniDB id: TheTVDB season and episode offset);
@@ -51,7 +51,7 @@ With option 1 the OpenSpec change shrinks: `AnimeIdResolverPort.translate(reques
 
 ## Live check of the resolver (2026-10-07)
 
-`scripts/probes/anime_ids.py` run from the home network after the implementation (`KitsuAnimeIdResolver` with `KitsuAddonClient` and `AnimeIdLists`, an in-memory cache, Scavengarr's User-Agent): the resolver translated 10 of 10 titles, all from the addon's record (`source` `addon`), and the list adapter had entries for 9 of 10.
+`scripts/probes/anime_ids.py` run from a residential network after the implementation (`KitsuAnimeIdResolver` with `KitsuAddonClient` and `AnimeIdLists`, an in-memory cache, Scavengarr's User-Agent): the resolver translated 10 of 10 titles, all from the addon's record (`source` `addon`), and the list adapter had entries for 9 of 10.
 
 | Kitsu | Title | Resolver (searched as) | List adapter |
 |---|---|---|---|

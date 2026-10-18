@@ -192,7 +192,7 @@ reference (no meta) takes today's URL from the numbers.
 
 sto's anime pages (category 5070) come from the same software family as
 aniworld; the first task checks a season page's rows from the dev container
-(s.to refuses the Pi, finding 16). If they carry the number or the English
+(s.to refuses the production host, finding 16). If they carry the number or the English
 title, `sto.py` declares `locates_episodes` and applies the rules above for
 its 5070 results; if not, sto stays as it is and the gap is documented.
 fireani's `GetAnime` answer lists `animeSeasons[].animeEpisodes[]`; the site
@@ -202,7 +202,7 @@ answer shows the episode fields (number, title).
 
 ## Risks / Trade-offs
 
-- Cinemeta unreachable from the Pi: the stage logs `error`, `animation` is
+- Cinemeta unreachable from the production host: the stage logs `error`, `animation` is
   unknown, no reference; the behaviour is today's. One request per title,
   cached, within the plugin timeout.
 - A site's year is not the start year: the measured rollout above; the

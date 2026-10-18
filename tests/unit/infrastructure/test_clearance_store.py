@@ -197,7 +197,7 @@ def _saved(cache: AsyncMock) -> dict[str, Any]:
 
 
 # Dropload's capture: the hoster's page, the Turnstile frame, an ad domain
-# that set a cookie without a frame on the page (the Pi's GL_UI4)
+# that set a cookie without a frame on the page (the production host's GL_UI4)
 _DROPLOAD_STATE: dict[str, Any] = {
     "cookies": [
         _cookie("file_id", "dr0pstream.com", -1, "SECRET-1"),

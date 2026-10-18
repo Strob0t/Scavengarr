@@ -9,9 +9,9 @@ container (`docs/plans/stremio-latency.md`, seventh round): the HLS proxy
 played 52 of 54, the `/play/` redirects failed 36 of 37. DoodStream answered
 `error_wrong_ip` 13 times, FSST HTTP 410 11 times, Vinovo 403 7 times,
 MixDrop 403 5 times; only VEEV, resolved per player, played. These CDNs bind
-the URL to the address that resolved it, the Pi's VPN exit. A player that
+the URL to the address that resolved it, the production host's VPN exit. A player that
 fetches the redirect from another address, a native Stremio app or a browser
-on the home connection, gets a dead stream from four hosters. The maintainer
+on a residential connection, gets a dead stream from four hosters. The maintainer
 decided on 2026-10-07: "proxy sie auch durch scavengarr".
 
 ## What Changes
@@ -32,7 +32,7 @@ decided on 2026-10-07: "proxy sie auch durch scavengarr".
 - **Telemetry** on the existing `hls_proxy` stage with the kind `file` and
   the bytes counter; the metric names stay (dashboards and alerts).
 - **A file mode of the throughput probe** measures one connection against
-  three byte ranges on a stored direct file from the Pi, so a read-ahead for
+  three byte ranges on a stored direct file from the production host, so a read-ahead for
   files, if the numbers ask for it, is its own later change.
 - **Acceptance in production:** after the deploy, the round runner from the
   dev container plays the four hosters' streams.
@@ -51,7 +51,7 @@ No new configuration field. The `/play/` route is unchanged.
   refusal path), `scripts/probes/hls_throughput.py` (`--file`), tests (unit
   with respx, router, e2e), docs (`stremio-addon.md`, `hoster-resolvers.md`,
   `observability.md`, `AGENTS.md` §7, `CHANGELOG.md`).
-- Load: the Pi carries the bytes of those streams, as it does for HLS; one
+- Load: the production host carries the bytes of those streams, as it does for HLS; one
   CDN connection per player request, under the shared per-domain rate
   limiter and `_CDN_SEMAPHORE`. CPU per MB as measured for the HLS proxy
   (25 ms per MB in 64 KiB pieces).

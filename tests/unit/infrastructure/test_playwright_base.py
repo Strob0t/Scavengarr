@@ -1857,8 +1857,8 @@ async def _timed_operation(pool: Any, *, timeout: float, work: float) -> str:
 
 
 class TestSharedBrowserRecycle:
-    """Chromium's memory grows with the pages it rendered (1.7 GB on the Pi):
-    it restarts after enough pages, but never while an operation holds it
+    """Chromium's memory grows with the pages it rendered (1.7 GB on the production
+    host): it restarts after enough pages, but never while an operation holds it
     (``lease()``) or a page is open. Closing it when no context listed a
     page killed a page another slot was still opening, 10 of 10 trials,
     and the close ran inside the finishing request (code review,
@@ -1933,7 +1933,7 @@ class TestSharedBrowserRecycle:
         self, relaunched: AsyncMock
     ) -> None:
         """The next operation finds the browser up: a lazy launch took 6 to
-        11 s on the Pi, inside a capture's 10 s resolve bound (code review
+        11 s on the production host, inside a capture's 10 s resolve bound (code review
         2026-10-12, V15)."""
         pool, _, _ = self._pool(pages=-1, open_pages=0)
 

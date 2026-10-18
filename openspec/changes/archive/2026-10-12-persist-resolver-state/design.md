@@ -19,8 +19,8 @@
 
 - A breaker opened before a deploy that fixed its resolver stays open until the probe (60 s to 1 h) → accepted; the probe reopens it, and `scavengarr_circuit_breaker_open` shows it.
 - A stale "dead" entry blocks a link for up to 15 min after a restart that would have healed it today → accepted (same as without a restart).
-- Snapshot size at the cap (10,000 entries) → about 3 MB per write; the dirty flag and the 30 s cadence bound it; diskcache on the Pi's card writes it in well under a second.
-- Clock jumps on the Pi (no RTC; NTP corrects the time after boot) → an age computed from a wrong wall clock can expire everything or nothing; expire at most to zero and never extend (negative age counts as zero).
+- Snapshot size at the cap (10,000 entries) → about 3 MB per write; the dirty flag and the 30 s cadence bound it; diskcache on the production host's card writes it in well under a second.
+- Clock jumps on the production host (no RTC; NTP corrects the time after boot) → an age computed from a wrong wall clock can expire everything or nothing; expire at most to zero and never extend (negative age counts as zero).
 
 ## Migration Plan
 

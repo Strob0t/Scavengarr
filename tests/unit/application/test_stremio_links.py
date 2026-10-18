@@ -160,7 +160,11 @@ class TestCurrent:
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36"
 _PLAYER_URL = "https://cdn.example/player.mp4"
-_FIREFOX = {"user-agent": _UA, "accept-language": "de", "referer": "https://s.lan/"}
+_FIREFOX = {
+    "user-agent": _UA,
+    "accept-language": "de",
+    "referer": "https://s.example.lan/",
+}
 
 
 def _veev_link(*, age: float = 60) -> CachedStreamLink:

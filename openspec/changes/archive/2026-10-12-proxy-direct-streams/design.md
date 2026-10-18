@@ -74,7 +74,7 @@ its own change); per-player resolution through the proxy (VEEV stays on
 
 6. **Measuring before any read-ahead for files.** `scripts/probes/
    hls_throughput.py --file <stream id>` fetches 32 MiB of a stored direct
-   file from the Pi in one connection, then as three parallel 1 MiB-step
+   file from the production host in one connection, then as three parallel 1 MiB-step
    ranges, and prints Mbit/s and whether the CDN honoured the ranges. The
    numbers go to the backlog's row of this change. Players read files
    sequentially in one connection, so the per-connection throttle of
@@ -83,7 +83,7 @@ its own change); per-player resolution through the proxy (VEEV stays on
 
 ## Risks / Trade-offs
 
-- Bandwidth and CPU on the Pi for four more hosters' streams: bounded by one
+- Bandwidth and CPU on the production host for four more hosters' streams: bounded by one
   connection per player request and the shared semaphore; measured for HLS
   at 25 ms CPU per MB.
 - A CDN that ignores `Range` answers 200 with the whole file; the proxy

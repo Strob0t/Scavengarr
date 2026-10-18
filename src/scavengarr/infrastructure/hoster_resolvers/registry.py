@@ -67,7 +67,7 @@ _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
 
 # A capture the resolve bound cut after a challenge runs on for this long
 # (_complete): with production's bound of 10 s, 30 s of work in all, past the
-# Pi's cold captures of 13.3 to 17.8 s (2026-10-11)
+# production host's cold captures of 13.3 to 17.8 s (2026-10-11)
 _COMPLETION_S = 20.0
 
 

@@ -1,11 +1,11 @@
 ## Why
 
-A hoster capture runs warm only after one capture has passed the hoster's challenge in the same browser context. The context lives in memory, so a restart, the shared browser's recycle (every 200 pages) or a relaunch makes every capture hoster cold again. On the Pi the cold paths outlast the 10 s resolve bound (`docs/plans/challenge-reactions.md` → What Production Shows).
+A hoster capture runs warm only after one capture has passed the hoster's challenge in the same browser context. The context lives in memory, so a restart, the shared browser's recycle (every 200 pages) or a relaunch makes every capture hoster cold again. On the production host the cold paths outlast the 10 s resolve bound (`docs/plans/challenge-reactions.md` → What Production Shows).
 
-Row 91 measured the premise on 2026-10-12, in the dev container and on the Pi (`challenge-reactions.md` → R4's premise, measured):
+Row 91 measured the premise on 2026-10-12, in the dev container and on the production host (`challenge-reactions.md` → R4's premise, measured):
 - A fresh context in a relaunched browser met the challenge again seconds after the same address had passed it, so the hoster does not remember the address.
 - A fresh context restored from the earlier context's `storage_state(indexed_db=True)` met none.
-- On the Pi Dropload took 3.3 s restored against 12.4 s cold. Filemoon took 8.4 s against 9.3 s, its captcha skipped.
+- On the production host Dropload took 3.3 s restored against 12.4 s cold. Filemoon took 8.4 s against 9.3 s, its captcha skipped.
 
 `ClearanceStore` already keeps the clearance cookies (`cf_clearance`, `__ddg*`, `ha-waf-*`) across restarts. What makes Filemoon and Dropload warm is not among them:
 - Filemoon: the player host's cookies, its localStorage and IndexedDB.

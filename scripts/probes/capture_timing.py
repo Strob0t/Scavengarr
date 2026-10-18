@@ -52,7 +52,7 @@ subdomains in the probe's browser, as the client's block: such a request
 reads ``blocked``, apart from the capture's own cut of the media
 (``net::ERR_FAILED``) and the network's errors. Prints no URLs: domains,
 paths with ids masked and times only. Run it while nothing plays: its
-browser shares the Pi's CPU with the app.
+browser shares the production host's CPU with the app.
 """
 
 from __future__ import annotations

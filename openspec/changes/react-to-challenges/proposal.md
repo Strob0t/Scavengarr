@@ -1,6 +1,6 @@
 ## Why
 
-On the Pi a hoster capture that meets a challenge outlasts production's resolve bound of 10 s (`docs/plans/challenge-reactions.md` → What Production Shows):
+On the production host a hoster capture that meets a challenge outlasts production's resolve bound of 10 s (`docs/plans/challenge-reactions.md` → What Production Shows):
 - Filemoon's player captcha takes 17.1 to 17.8 s cold, or gives no stream.
 - Dropload's Turnstile takes 13.3 s.
 - Warm, they take 5.8 to 6.7 s and 2.2 s.

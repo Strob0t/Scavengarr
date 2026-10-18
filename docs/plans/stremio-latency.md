@@ -87,29 +87,29 @@ Same harness and title set (17 titles: German films, popular films, series, anim
 
 ## End-to-end test with Stremio Web (2026-10-03)
 
-Production (`https://scavengarr.lan`, v0.2.0) as addon in the maintainer's Stremio Web (`https://stremio.lan`), driven with Playwright; then every stream followed to its media bytes with `scripts/stremio_playcheck.py`, the way a player fetches it.
+Production (`https://scavengarr.example.lan`, v0.2.0) as addon in the maintainer's Stremio Web (`https://stremio.example.lan`), driven with Playwright; then every stream followed to its media bytes with `scripts/stremio_playcheck.py`, the way a player fetches it.
 
 | Step | Result |
 |---|---|
 | Install the addon | OK (manifest v0.2.0) |
 | Search | OK: rows "Scavengarr Movies" and "Scavengarr Series" |
 | Stream list (film, episode) | OK: names, languages, sources, `bingeGroup` |
-| Playback in Stremio Web | **blocked**: stremio.lan's streaming server answers `/settings`, `/proxy/…` and the other server routes with nginx 400 "Request Header Or Cookie Too Large" even for a bare curl request, `/hlsv2/probe` with 502. Stremio Web plays `notWebReady` streams only through that server, so every stream ends in "Video is not supported" (code 83). A 400 for tiny requests points at a proxy loop: in tsaridas/stremio-docker nginx proxies these routes to `127.0.0.1:11470` (`server.js`); with its listen port also 11470 (e.g. `WEBUI_INTERNAL_PORT=11470`) nginx forwards to itself |
+| Playback in Stremio Web | **blocked**: stremio.example.lan's streaming server answers `/settings`, `/proxy/…` and the other server routes with nginx 400 "Request Header Or Cookie Too Large" even for a bare curl request, `/hlsv2/probe` with 502. Stremio Web plays `notWebReady` streams only through that server, so every stream ends in "Video is not supported" (code 83). A 400 for tiny requests points at a proxy loop: in tsaridas/stremio-docker nginx proxies these routes to `127.0.0.1:11470` (`server.js`); with its listen port also 11470 (e.g. `WEBUI_INTERNAL_PORT=11470`) nginx forwards to itself |
 
 Play check (master, variant, first segments; file start and a seek):
 
 | Instance, checked from | Playable | Failures |
 |---|---|---|
 | dev with the fixes, same machine | 79 of 81 | firestream segments 502, vidmoly variant 504 (CDN errors at that moment) |
-| production, from the home network | 41 of 72 | DoodStream 15 (`200 error_wrong_ip`), Vinovo 8 (403), Vidsonic 4 (proxy bug), moflix paid player 2 (variant 403), vidmoly 2 |
+| production, from a residential network | 41 of 72 | DoodStream 15 (`200 error_wrong_ip`), Vinovo 8 (403), Vidsonic 4 (proxy bug), moflix paid player 2 (variant 403), vidmoly 2 |
 
 - Fixed on `staging`: Vidsonic's variant comes from the CDN root and the HLS proxy left that URI to the player (404); moflix's "Premium (No Ads)" video is its paid player (variants 403 without a paid session); kinoger's new WAF page ("Verification...") was read as the search result (0 hits on every search); kinox ran its search and detail pages for episode requests it cannot answer.
-- **IP-bound streams:** production reaches the sites through a VPN (the stream tokens name its exit address, AS43350 NForce), not through the home network's address. DoodStream and Vinovo bind their stream URLs to the resolving IP, so a player on another IP gets `error_wrong_ip` or 403. Streams through Scavengarr's HLS proxy are fetched from Scavengarr's IP and are not affected; VEEV, Playmate and FireStream played from the other IP.
+- **IP-bound streams:** production reaches the sites through a VPN (the stream tokens name its exit address, in a datacenter network), not through a residential address. DoodStream and Vinovo bind their stream URLs to the resolving IP, so a player on another IP gets `error_wrong_ip` or 403. Streams through Scavengarr's HLS proxy are fetched from Scavengarr's IP and are not affected; VEEV, Playmate and FireStream played from the other IP.
 - Production only: kinoger returned nothing (the WAF page; the fix is on `staging`), and s.to gave no episode streams while dev did.
 
 ### Second round (2026-10-03 evening, production v0.2.2)
 
-stremio.lan's server loop was the maintainer's setup. The Stremio container shares the VPN container's network, where 8080 (qBittorrent) and 8090 (TorrServer) are taken, so nginx had been moved to the server's own port 11470; `WEBUI_INTERNAL_PORT=8095` with Caddy on 8095 fixed it. Playback in Stremio Web, *The Matrix* (9 streams):
+The Stremio server loop was a setup matter: in the VPN container's network the web UI's default ports were taken by other services, so nginx had been moved to the server's own port 11470; a free `WEBUI_INTERNAL_PORT` with the reverse proxy on the same port fixed it. Playback in Stremio Web, *The Matrix* (9 streams):
 
 | Stream | Result | Cause |
 |---|---|---|
@@ -134,15 +134,15 @@ After the config reseed production answers in 10.5–15.4 s. Measured with a scr
 | Dark S02E01 | 1 (VOE · kinoking) | 10.5 s | link-out resolved (302), VOE ranked below kinoking's |
 | Breaking Bad S02E01 | 3 (kinoking, kinoger ×2) | 15.1 s | link-out resolved (302) |
 
-- **kinoger, moflix**: both challenge the VPN IP. httpx takes over the browser's session after one solve (Phase 4 of `antibot-patchright.md`); the first request after a restart misses them (the solve takes 10–20 s on the Pi and finishes in the background), later ones get them in 4–10 s. moflix returned nothing until its API, loaded directly by the browser with a stored clearance, answered 401 without the site's Referer; it is now asked by in-page `fetch()`.
-- **s.to**: three causes, one after the other. The ad layers took the clicks on the link box and the gate's checkbox; the gate's Turnstile widget took 16–70 s on the Pi; and for the VPN IP the gate is the tier `turnstile_altcha`, whose ALTCHA widget (required checkbox) blocked the form. With all three fixed the gate passes in about 20 s in the background. A pass unlocks exactly 3 link-outs for this IP (2 passes observed: 3 redirects each, then the gate again), so Stremio gets s.to for about three episode requests per pass. One stream per hoster is resolved, so an s.to VOE link loses to a better-ranked VOE stream of another site.
+- **kinoger, moflix**: both challenge the VPN IP. httpx takes over the browser's session after one solve (Phase 4 of `antibot-patchright.md`); the first request after a restart misses them (the solve takes 10–20 s on the production host and finishes in the background), later ones get them in 4–10 s. moflix returned nothing until its API, loaded directly by the browser with a stored clearance, answered 401 without the site's Referer; it is now asked by in-page `fetch()`.
+- **s.to**: three causes, one after the other. The ad layers took the clicks on the link box and the gate's checkbox; the gate's Turnstile widget took 16–70 s on the production host; and for the VPN IP the gate is the tier `turnstile_altcha`, whose ALTCHA widget (required checkbox) blocked the form. With all three fixed the gate passes in about 20 s in the background. A pass unlocks exactly 3 link-outs for this IP (2 passes observed: 3 redirects each, then the gate again), so Stremio gets s.to for about three episode requests per pass. One stream per hoster is resolved, so an s.to VOE link loses to a better-ranked VOE stream of another site.
 - **Torznab on s.to** with the VPN IP: a search for "Dark" took 83 s and sent about 950 link-out requests (all matching series, every episode and hoster); 97 of 100 results kept the s.to link-out because the gate allowed 3. Since 2026-10-04 whole seasons do not pass the gate, and after a gated episode the next episodes return their link-outs unresolved for 5 min (`_GATE_RETRY_S`) without requesting them.
-- **Play check** (`scripts/stremio_playcheck.py` from the home network): 6 of 9 streams playable, the HLS-proxy streams (VOE, Vidsonic, StreamUp) included; `HEAD` on the proxy answers 200 with CORS. The 3 failures are IP-bound (DoodStream `error_wrong_ip`, Vinovo 403, FSST 410) and play through Stremio's server in the same VPN.
+- **Play check** (`scripts/stremio_playcheck.py` from a residential network): 6 of 9 streams playable, the HLS-proxy streams (VOE, Vidsonic, StreamUp) included; `HEAD` on the proxy answers 200 with CORS. The 3 failures are IP-bound (DoodStream `error_wrong_ip`, Vinovo 403, FSST 410) and play through Stremio's server in the same VPN.
 - megakino_to and movie4k: every domain answers Cloudflare 522 (origin down). kinoking is often cut at 10 s.
 
 ### Fourth round (2026-10-04 evening, production on `staging` 53f2f88)
 
-The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.lan` after the performance plan (`docs/plans/pi-performance.md`), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
+The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.example.lan` after the performance plan (`docs/plans/pi-performance.md`), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
 
 | Pass | Median / max | Streams | Titles without stream |
 |---|---|---|---|
@@ -150,7 +150,7 @@ The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles)
 | 2 (from the search cache) | 4.6 / 10.4 s | 64 | 3 / 17 |
 
 - Streams per plugin, pass 1 → 2: aniworld 18 → 20, filmpalast 5 → 11, megakino 9 → 9, movie2k 5 → 7, moflix 6 → 6, s.to 0 → 6, fireani 3 → 3, hdfilme 2 → 2.
-- Series: pass 1 had streams for 1 of 5 (The Last of Us), pass 2 for 3 of 5 (Dark: s.to; Stranger Things S04E01: filmpalast, s.to; The Last of Us: filmpalast, movie2k, s.to). s.to's gate pass (about 20 s on the Pi) does not fit a first request; its results reach the next one through the late plugins.
+- Series: pass 1 had streams for 1 of 5 (The Last of Us), pass 2 for 3 of 5 (Dark: s.to; Stranger Things S04E01: filmpalast, s.to; The Last of Us: filmpalast, movie2k, s.to). s.to's gate pass (about 20 s on the production host) does not fit a first request; its results reach the next one through the late plugins.
 
 **Fixed on `staging`** (TDD, deployed with the next build):
 
@@ -162,7 +162,7 @@ The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles)
 | moflix asked the title API for people | 19 of 20 hits for "Oppenheimer" are people: 46 answers 404; a person's id fetched an unrelated title | Titles only, relevant hits only (e9b1ba1) |
 
 **Site and environment state** (no code change):
-- **mixdrop:** its CDN `*.mxcontent.net` does not resolve in production. gluetun's DNS answers REFUSED, while 1.1.1.1 and 9.9.9.9 answer 168.80.32.64 through the same tunnel. The name is on no block list, but gluetun's malicious IP list (`BLOCK_MALICIOUS`, on by default) holds 168.80.0.0/15, and `DNS_UNBLOCK_HOSTNAMES` does not lift address blocks (gluetun applies it to its hostname list only). In 90 minutes 10 mixdrop resolutions gave an unplayable stream (its CDN unreachable) and 12 a player without a stream URL (`mixdrop_file_offline`). Chosen for production (2026-10-05): every lookup of the VPN stack stays in the tunnel (gluetun's own DNS server, DNS over TLS), with `BLOCK_MALICIOUS=off`. Handing gluetun's DNS to the LAN's Pi-hole, tried first, sends the lookups outside the tunnel; the VPN container was unhealthy with it (cause not confirmed), and the stack that shares its network went down.
+- **mixdrop:** its CDN `*.mxcontent.net` does not resolve in production. the VPN container's DNS answers REFUSED, while 1.1.1.1 and 9.9.9.9 answer 168.80.32.64 through the same tunnel. The name is on no block list, but the VPN container's malicious IP list (`BLOCK_MALICIOUS`, on by default) holds 168.80.0.0/15, and `DNS_UNBLOCK_HOSTNAMES` does not lift address blocks (the VPN container applies it to its hostname list only). In 90 minutes 10 mixdrop resolutions gave an unplayable stream (its CDN unreachable) and 12 a player without a stream URL (`mixdrop_file_offline`). Chosen for production (2026-10-05): every lookup of the VPN stack stays in the tunnel (the VPN container's own DNS server, DNS over TLS), with `BLOCK_MALICIOUS=off`. Handing the VPN container's DNS to a filtering LAN resolver, tried first, sends the lookups outside the tunnel; the VPN container was unhealthy with it (cause not confirmed), and the stack that shares its network went down.
 - **VOE:** 4 of 18 VOE links failed: the files answer "File access denied" (restricted by the uploader), on `/e/` as well.
 - **kinoger:** Cloudflare's Turnstile is not solved from the VPN address (`cloudflare_unsolved` after 33 s), so kinoger gives nothing in production; its breaker opens, and each half-open probe costs a browser solve.
 - **kinoking:** answers a series search in 1.2 s when run alone in the container, but stalled for more than 17 s in pass 1 without an answer. Its server serializes requests behind a slow movie page: after a cancelled movie page (12–17 s to build) the next search took 10.3 s instead of 0.3 s, over HTTP/1.1 and HTTP/2 alike.
@@ -176,7 +176,7 @@ The production logs of that evening showed four more resolver defects (FireStrea
 
 ### Fifth round (2026-10-05, production on `staging` c4a6b6c)
 
-The harness and the 17 titles of the fourth round, after its fixes were deployed (each checked in the container). Changed environment: HTTP/2 off (`SCAVENGARR_HTTP_HTTP2=false`), every lookup of the VPN stack through gluetun's own DNS server over TLS with `BLOCK_MALICIOUS=off` (`stremio-addon.md`), and another exit address of the VPN (the same provider network, AS43350). A first attempt right after the stack's restart was dropped (load average 4.4, warm-up without streams); the round ran at a load below 1.2. Pass 1 searched (the titles' search-cache entries were deleted first), pass 2 followed at once from the search cache.
+The harness and the 17 titles of the fourth round, after its fixes were deployed (each checked in the container). Changed environment: HTTP/2 off (`SCAVENGARR_HTTP_HTTP2=false`), every lookup of the VPN stack through the VPN container's own DNS server over TLS with `BLOCK_MALICIOUS=off` (`stremio-addon.md`), and another exit address of the VPN (the same provider network). A first attempt right after the stack's restart was dropped (load average 4.4, warm-up without streams); the round ran at a load below 1.2. Pass 1 searched (the titles' search-cache entries were deleted first), pass 2 followed at once from the search cache.
 
 | Pass | Median / max | Streams | Titles without stream |
 |---|---|---|---|
@@ -189,7 +189,7 @@ The harness and the 17 titles of the fourth round, after its fixes were deployed
 - **Pass 2** answered in 0.0–1.8 s, except 5 requests at 4.1–4.4 s: a link resolved for the first time or again (a VOE link, a Filemoon half-open probe) held the answer for `resolve_grace_seconds`.
 
 **Hosters** (both passes):
-- **Circuit breaker open:** Dropload (since the warm-up; 28 skipped links) and Filemoon (24). No Filemoon or Byse capture finished inside the grace. Production's `http.timeout_resolve_seconds` is 10 s (`data/config.yaml`), so a cut counts as a failure from 5 s on: two Byse captures cut at 6.0 s in one request completed the five failures (the others came from requests before the round). moflix-stream.link's Byse player (7600a06) therefore delivers nothing on the Pi. A half-open probe is cut by the grace before 5 s, reports nothing and runs again after each cooldown, which never doubles; in the CPU measurement below one probe cost 6.3 s of Chromium.
+- **Circuit breaker open:** Dropload (since the warm-up; 28 skipped links) and Filemoon (24). No Filemoon or Byse capture finished inside the grace. Production's `http.timeout_resolve_seconds` is 10 s (`data/config.yaml`), so a cut counts as a failure from 5 s on: two Byse captures cut at 6.0 s in one request completed the five failures (the others came from requests before the round). moflix-stream.link's Byse player (7600a06) therefore delivers nothing on the production host. A half-open probe is cut by the grace before 5 s, reports nothing and runs again after each cooldown, which never doubles; in the CPU measurement below one probe cost 6.3 s of Chromium.
 - **DoodStream** resolves from the new exit: 9 streams (dood 2, playmogo 7), 4 offline files, 2 unplayable. **mixdrop** resolves again (its CDN's address is no longer blocked): 1 stream, 5 offline files.
 - **VOE:** 18 resolved, 12 failed (7 with no working method, among them the files denied in the fourth round; 5 dead files).
 - **SuperVideo:** 13 of 13 failed. Its CDN (serversicuro.cc) answers the playlist URL with a "Loading..." page whose script redirects to the same URL with a `js` token (and sets a `sid` cookie), and a HEAD with a 302 to an ad domain whose connection fails; the resolver's HEAD check logs `supervideo_video_verify_error`. Following the redirect without a browser led to another CDN host (302); further steps are untested, because the CDN then answered the probes with 429.
@@ -219,7 +219,7 @@ The harness and the 17 titles of the fourth round, after its fixes were deployed
 
 ### Dev-server A/B round (2026-10-05, after the round-5 measures)
 
-The measures of `round5-measures.md` against the fifth round's code, side by side in the dev container (x86, 16 cores, the home connection without the VPN, so absolute times are not the Pi's): each server on 127.0.0.1 under Xvfb with a fresh cache and its commit's `data/config.yaml`. The old code is b003bd2 (plugin timeout 10 s, soft deadline 7 s, grace 4 s, every link resolved), the new one `staging` at 661104b (the fixes below came out of this round). The fifth round's harness and titles (`stremio_measure.py`, 90 s between groups; play check with `stremio_playcheck.py`'s fetches on the stored stream objects), plus the server's CPU from `/proc` (its process, and its child processes for Chromium) and the event-loop lag from `/api/v1/stats/metrics`. Run 2 is a second fresh instance an hour after run 1; kinoking, down during run 1, was back.
+The measures of `round5-measures.md` against the fifth round's code, side by side in the dev container (x86, 16 cores, a residential connection without the VPN, so absolute times are not the production host's): each server on 127.0.0.1 under Xvfb with a fresh cache and its commit's `data/config.yaml`. The old code is b003bd2 (plugin timeout 10 s, soft deadline 7 s, grace 4 s, every link resolved), the new one `staging` at 661104b (the fixes below came out of this round). The fifth round's harness and titles (`stremio_measure.py`, 90 s between groups; play check with `stremio_playcheck.py`'s fetches on the stored stream objects), plus the server's CPU from `/proc` (its process, and its child processes for Chromium) and the event-loop lag from `/api/v1/stats/metrics`. Run 2 is a second fresh instance an hour after run 1; kinoking, down during run 1, was back.
 
 | | Old code | `staging` run 1 | `staging` run 2 |
 |---|---|---|---|
@@ -244,7 +244,7 @@ Fixes from the round, each with tests: cached answers keep a hoster's cached str
 
 ### Sixth round (2026-10-06, production on `staging` f0b9d18)
 
-The fifth round's harness and 17 titles (none in the search cache) against production with the round-5 measures, the dev-server round's fixes and that commit's `data/config.yaml` (plugin timeout 30 s, deadline 60 s, target 5 streams, links kept 7 days). The mounted config had kept the old values (10 s, 15 s, resolve everything, 2 h) through the first rebuild: the entrypoint seeds `config.yaml` only when the file is missing, so it was deleted and reseeded. Changed environment: other containers on the Pi kept about 1.4 cores busy (load 2.7–5.2 before the round, 0.7–10 during pass 1; Scavengarr idle at 0.7% of a core); the fifth round ran below 1.2. By the maintainer's decision the round was measured under that load. CPU from the app's own `/metrics` (process and container cgroup).
+The fifth round's harness and 17 titles (none in the search cache) against production with the round-5 measures, the dev-server round's fixes and that commit's `data/config.yaml` (plugin timeout 30 s, deadline 60 s, target 5 streams, links kept 7 days). The mounted config had kept the old values (10 s, 15 s, resolve everything, 2 h) through the first rebuild: the entrypoint seeds `config.yaml` only when the file is missing, so it was deleted and reseeded. Changed environment: other containers on the production host kept about 1.4 cores busy (load 2.7–5.2 before the round, 0.7–10 during pass 1; Scavengarr idle at 0.7% of a core); the fifth round ran below 1.2. By the maintainer's decision the round was measured under that load. CPU from the app's own `/metrics` (process and container cgroup).
 
 | Pass | Median / max | Streams | Titles without stream / below 5 |
 |---|---|---|---|
@@ -260,13 +260,13 @@ The fifth round's harness and 17 titles (none in the search cache) against produ
 - **Cached answers** resolved their other links in the background one title at a time (34 runs over 8 minutes) and kept every stream of the first answers.
 - **Play check** inside the container (the VPN address): 89 of 93 streams playable (fifth round 107 of 110); failures FireStream (2) and VidHide (2).
 - **HLS proxy:** ffmpeg (`Lavf/`) was refused the playlist of 48 of 48 proxied HLS streams, a player got it with HEAD and GET for 48 of 48 (the 1080p fix). The maintainer then played 1080p streams of StreamUp and Vidsonic in Stremio Web without stutter: its streaming server's ffmpeg was refused 13 times, the browser player fetched the playlists and 49 segments in two minutes, the Stremio container used 0–2% of a core after 32% at the probe (the transcoding took 1–2 cores before), Scavengarr 2–3% of a core while relaying (Docker stats). CPU per relayed MB of one VOE stream: 150–162 ms (app process, idle-corrected; fifth round during playback 259–320 ms, before the asyncio backend and 64 KiB pieces).
-- **Metrics:** `/metrics` answered 44 KB and 574 series for 29 ms of CPU per scrape on the Pi, 0.05% of a core at a 60 s interval.
+- **Metrics:** `/metrics` answered 44 KB and 574 series for 29 ms of CPU per scrape on the production host, 0.05% of a core at a 60 s interval.
 
 **Evaluation:** cached answers (0.08 instead of 1.0 s), the HLS proxy (about half the CPU per MB), the 1080p fix, the health check, the breakers and the metrics reached their goals in production. First answers did not get faster under three to four times the host load: titles with many streams answer at the target (median 8.9 s), but titles with few streams wait 30 s for kinoger, which no longer finishes because hoster captures hold the stealth browser's two pages during the search.
 
 ### Seventh round (2026-10-07, dev server on `staging` 11ca685)
 
-The first round written with `scripts/stremio_round.py` (one command; the title set `docs/plans/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, the home connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the Pi's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
+The first round written with `scripts/stremio_round.py` (one command; the title set `docs/plans/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, a residential connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the production host's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
 
 | Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|
@@ -299,7 +299,7 @@ Titles without stream: 0 of 19 (first answer), 0 of 19 (cached answer); max firs
 
 ### Seventh round, production (2026-10-07, production on `staging` before step 21)
 
-The same command against production (`--base https://scavengarr.lan --insecure --portainer`; the Pi with its VPN, the search cache warm for none of the titles): the baseline before the deploy of the continued searches (OpenSpec `continue-cut-searches`).
+The same command against production (`--base https://scavengarr.example.lan --insecure --portainer`; the production host with its VPN, the search cache warm for none of the titles): the baseline before the deploy of the continued searches (OpenSpec `continue-cut-searches`).
 
 | Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|
@@ -343,9 +343,9 @@ CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 | HLS proxy (`/proxy/`) | VOE 23, StrmUp 14, FireStream 6, VidMoly 5, VidSonic 4, Playmate 2 | 54 | 52 play; StrmUp 1 non-media segment, FireStream 1 segment 502 |
 | | VidHide | 6 | fail: segments HTTP 403 |
 
-36 of the 37 streams served through `/play/` fail; the proxied ones play, except VidHide. DoodStream says why in its answer: the video URL is bound to the IP that resolved it, the Pi's VPN address, and the check comes from the home connection. A Stremio client on the LAN fetches a `/play/` redirect from that same home address, so these streams most likely fail in the players as well, not only in the check; FSST's 410 and the 403s of Vinovo and MixDrop look like the same binding (HTML, unconfirmed). VidHide fails behind the proxy, so its segments are refused to the Pi itself or are not fetched through the proxy. Both classes point at the proxy and resolver decision (which hosters are proxied, VidHide's segments); analysis stops there, no code change.
+36 of the 37 streams served through `/play/` fail; the proxied ones play, except VidHide. DoodStream says why in its answer: the video URL is bound to the IP that resolved it, the production host's VPN address, and the check comes from a residential connection. A Stremio client on the LAN fetches a `/play/` redirect from that same residential address, so these streams most likely fail in the players as well, not only in the check; FSST's 410 and the 403s of Vinovo and MixDrop look like the same binding (HTML, unconfirmed). VidHide fails behind the proxy, so its segments are refused to the production host itself or are not fetched through the proxy. Both classes point at the proxy and resolver decision (which hosters are proxied, VidHide's segments); analysis stops there, no code change.
 
-**File throughput from the Pi** (step 26, task 5.2, 2026-10-07): `prodctl.py probe hls_throughput -- --file --hoster <hoster>`, the hoster's newest stored direct link (43 and 44 min old), its first 32 MiB in one connection, then as three parallel 1 MiB ranges.
+**File throughput from the production host** (step 26, task 5.2, 2026-10-07): `prodctl.py probe hls_throughput -- --file --hoster <hoster>`, the hoster's newest stored direct link (43 and 44 min old), its first 32 MiB in one connection, then as three parallel 1 MiB ranges.
 
 | Hoster (CDN) | File | One connection | 3 ranges | Ranges honoured |
 |---|---:|---:|---:|---|
@@ -356,7 +356,7 @@ Both CDNs throttle per connection (ranges 4 to 5 times faster; the second MixDro
 
 ### Eighth round (2026-10-09, production on `staging` 0d7d833): invalid
 
-`scripts/stremio_round.py --base https://scavengarr.lan --insecure` from the dev
+`scripts/stremio_round.py --base https://scavengarr.example.lan --insecure` from the dev
 container, 17:31 to 19:06 UTC, play checks on. The first two titles answered
 (Der Schuh des Manitu 5.0 s, 5 streams, 2 of 5 playable; Lola rennt 30.1 s, 4
 streams, 0 of 4 playable); from the third title on every request answered in
@@ -411,7 +411,7 @@ gates right: aniworld's "Dark Gathering" and "Bastard!!" dropped by category,
 filmpalast's "Dark Matter", "The Terminal List: Dark Wolf" by score and "Dark
 Matter 2024" by year, while kinoger's "Dark" is kept by its IMDb id (1.20) and
 sto's "Dark - S01E01" at 1.00; production lacks exactly those two (sto refuses
-the Pi, finding 16; kinoger timed out), so Dark's zero is the Pi's reach, as
+the production host, finding 16; kinoger timed out), so Dark's zero is the production host's reach, as
 before the gates. The same probe for One Piece (1999) keeps aniworld and sto's
 anime pages only and drops aniworld's "One Piece (2025)" and movie2k by year,
 filmpalast's 2023 release, kinoger and sto's "One Piece (2023)" by category,
@@ -552,7 +552,7 @@ maintainer's call: the row changed no default.
 
 ### Eleventh round (2026-10-11, production rebuilt 10:58 UTC from `staging` f90ef65)
 
-**The deploy check** (row 57's live proof: `prodctl.py check --base https://scavengarr.lan/api/v1/stremio --insecure`, 10:59 UTC, one minute after the start):
+**The deploy check** (row 57's live proof: `prodctl.py check --base https://scavengarr.example.lan/api/v1/stremio --insecure`, 10:59 UTC, one minute after the start):
 
 | Check                   | Result | Detail |
 |-------------------------|--------|--------|
@@ -572,7 +572,7 @@ The restored hoster state is empty but sound: the snapshot was 21.6 h old
 (`age_s` 77853, written at 13:21 UTC the day before after the last
 resolution; nothing played overnight), so every resolution and redirect had
 expired, and the five breakers came back. The unknown keys are the four
-Stremio settings row 53 removed and `stremio.title_year_penalty`: the Pi's
+Stremio settings row 53 removed and `stremio.title_year_penalty`: the production host's
 YAML still names them, and they do nothing. Row 45 is live:
 `series/tt0388629:22:4`, asked after the check's `series/kitsu:12:1089`,
 answered `MISS` with its own v3 entry (5 streams, all S22E04); on
@@ -745,7 +745,7 @@ Opened in the window: kinoking:5000 ×2, supervideo ×1, filemoon ×1, dropload 
 
 ### Twelfth round (2026-10-11, production rebuilt 14:10 UTC from `staging` dad3051)
 
-The build of rows 63 to 70: the filmo plugin, Byse through the watch page, three segments ahead, the domain lists and the challenge counter (row 75). The round ran 14:22:09 to 14:33:04 UTC (`stremio_round.py --base https://scavengarr.lan --insecure --portainer`, the 19 titles with play checks, the play check of row 64 and row 66's codecs), after Ultracode's capture probe ended at 14:16:40 UTC. Every title but Interstellar answered from the search cache's stale entries, which the eleventh round stored about 3 h 15 min earlier (`X-Cache: STALE`, each starting one refresh in the background), so the first answers are fast and their streams are whatever the stale entry and the resolver cache gave at that moment.
+The build of rows 63 to 70: the filmo plugin, Byse through the watch page, three segments ahead, the domain lists and the challenge counter (row 75). The round ran 14:22:09 to 14:33:04 UTC (`stremio_round.py --base https://scavengarr.example.lan --insecure --portainer`, the 19 titles with play checks, the play check of row 64 and row 66's codecs), after Ultracode's capture probe ended at 14:16:40 UTC. Every title but Interstellar answered from the search cache's stale entries, which the eleventh round stored about 3 h 15 min earlier (`X-Cache: STALE`, each starting one refresh in the background), so the first answers are fast and their streams are whatever the stale entry and the resolver cache gave at that moment.
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable | Findings |
 |---|---|---|---|---|---|---|---|---|
@@ -810,7 +810,7 @@ CPU of the container during the round: Python 220.8 s, Chromium 497.2 s.
   - VIDMOLY on Demon Slayer S01E01 (`FAIL variant 502`, 14:31:54 UTC, `cdn=vmnow`). The other 8 Vidmoly streams played.
   - FIRESTREAM on The Last of Us S01E01 (`FAIL hls ... 502` on a segment, 14:29:42 UTC, `cdn=firestream`), the same stream that failed in the eleventh round (a timeout then), the CDN's own answer of row 64.
   - Each is one stream of a hoster whose other streams played, and all three are network errors toward the CDN, not answers of Scavengarr's own.
-- **Filemoon and Byse.** No Filemoon stream: its breaker is open (`breaker_open` 115 since the start), and the Pi gets no Filemoon or Byse capture (Ultracode measured 0 of 4 after about 20 s, row 65's reading). That is known and needs no finding of its own here. filmo answered 31 results in 65 searches since the start.
+- **Filemoon and Byse.** No Filemoon stream: its breaker is open (`breaker_open` 115 since the start), and the production host gets no Filemoon or Byse capture (Ultracode measured 0 of 4 after about 20 s, row 65's reading). That is known and needs no finding of its own here. filmo answered 31 results in 65 searches since the start.
 - **Breakers not closed after the round:** dropload, filemoon, supervideo and vixeo (hosters, as in the eleventh round); kinoking:5000 (open) and kinox:2000 (half open).
 
 **Read-ahead (row 68's after check).** `scavengarr_hls_readahead_total` was 0 before the round (no HLS since the restart at 14:10 UTC), so these counts are the round's HLS plays alone. The play check reads a few segments per stream; it is not a playback.
@@ -829,7 +829,7 @@ The 165 fetches took 947.8 s in all (5.7 s each on average, three in flight per 
 
 ### Thirteenth round, quick (2026-10-12, production rebuilt 15:11 UTC from `staging` 1d79ec7)
 
-The build of rows 94 and 95 (the read-ahead keeps a paused playback's segment order; an unchecked episode position keeps the title check), the maintainer's end-to-end request after it. Four titles from the dev container, 15:19 to 15:24 UTC: two of the post-deploy check's anime (One Piece S22E04 by its IMDb id, Demon Slayer) and its movie, all searched by the check minutes before (so no `stremio_round.py`), plus Breaking Bad; one stream request each and `stremio_playcheck.py --base https://scavengarr.lan --insecure` on its streams. Interstellar's and Demon Slayer's answer columns are from a stream request after their play checks (15:24).
+The build of rows 94 and 95 (the read-ahead keeps a paused playback's segment order; an unchecked episode position keeps the title check), the maintainer's end-to-end request after it. Four titles from the dev container, 15:19 to 15:24 UTC: two of the post-deploy check's anime (One Piece S22E04 by its IMDb id, Demon Slayer) and its movie, all searched by the check minutes before (so no `stremio_round.py`), plus Breaking Bad; one stream request each and `stremio_playcheck.py --base https://scavengarr.example.lan --insecure` on its streams. Interstellar's and Demon Slayer's answer columns are from a stream request after their play checks (15:24).
 
 | Title | Answer | Streams | X-Cache | Complete | Playable | Findings |
 |---|---|---|---|---|---|---|
@@ -867,9 +867,9 @@ The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose o
 
 ## AIOStreams
 
-Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
+Goal was an AIOStreams test user on `aiostreams.example.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.example.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
 
-- Scavengarr as `custom` preset with `manifestUrl: https://scavengarr.lan/api/v1/stremio/manifest.json`, `resources: ["stream"]`, `mediaTypes: ["movie", "series"]`.
+- Scavengarr as `custom` preset with `manifestUrl: https://scavengarr.example.lan/api/v1/stremio/manifest.json`, `resources: ["stream"]`, `mediaTypes: ["movie", "series"]`.
 - `timeout: 62000` (ms, per addon; AIOStreams default 7000 would cut most Scavengarr answers): `stream_deadline_seconds` (60 s since the round-5 measures) + 2 s headroom.
 - `preferredLanguages: ["German", "Multi", "Dual Audio", "English", "Unknown"]`, `sortCriteria.global`: language, resolution, quality (all `desc`).
 - Scavengarr already returns one working stream per hoster, so AIOStreams dedup and result limits need no special handling for it. Whether AIOStreams parses language and resolution from Scavengarr's stream names reliably is unverified; if not, `formatPassthrough: true` keeps Scavengarr's own labels.

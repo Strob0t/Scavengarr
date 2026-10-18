@@ -261,7 +261,7 @@ Even with a shared client, patterns that **prevent connection reuse** are costly
 - Avoid using query parameters that **defeat HTTP caching/CDN** if you rely on upstream caching.
 
 > **Scavengarr hint**
-> `build_http_client()` (`src/scavengarr/interfaces/composition.py`) sets `httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=60)` and a 5 s connect timeout. One stream request talks to 18-42 hosts, and with httpx's default 5 s keep-alive every pause between two requests closed them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi). With 100 idle connections kept, httpcore's pool scan held the GIL 10-20% of the time on the Pi.
+> `build_http_client()` (`src/scavengarr/interfaces/composition.py`) sets `httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=60)` and a 5 s connect timeout. One stream request talks to 18-42 hosts, and with httpx's default 5 s keep-alive every pause between two requests closed them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi). With 100 idle connections kept, httpcore's pool scan held the GIL 10-20% of the time on the production host.
 
 ---
 

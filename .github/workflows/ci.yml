@@ -1,6 +1,6 @@
 # Offline gate: the same checks as before every commit (AGENTS.md §1).
 # Live smoke tests stay out: GitHub's datacenter IPs get harder Cloudflare
-# challenges than the home network the addon runs in, so their results would
+# challenges than a residential network, where the addon runs, so their results would
 # not show what production sees.
 name: CI
 

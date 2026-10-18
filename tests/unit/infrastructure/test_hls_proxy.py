@@ -153,9 +153,9 @@ class TestRewriteManifest:
         """VidHide's stream URL names its CDN host in mixed case and its
         playlists list the segments under the lower-case host: compared
         as written, every segment stayed unproxied and the player got 403
-        for a token bound to the Pi (step 27, 2026-10-07)."""
+        for a token bound to the production host (step 27, 2026-10-07)."""
         cdn_base = "https://2ZO6sb3MYz7fapc.acek-cdn.com/hls2/01/abc_h/"
-        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        proxy_base = "https://scavengarr.example.lan/api/v1/stremio/proxy/sid/"
         content = (
             "#EXTM3U\n#EXTINF:6.0,\n"
             "https://2zo6sb3myz7fapc.acek-cdn.com/hls2/01/abc_h/seg-1-v1-a1.ts?t=x\n"
@@ -172,7 +172,7 @@ class TestRewriteManifest:
         (``/secure/98/<id>/video.m3u8``): left as is, the player resolves
         it against the proxy's host and gets a 404."""
         cdn_base = "https://ve12.vidsonic.net/hls/r00nm90ihj96/"
-        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        proxy_base = "https://scavengarr.example.lan/api/v1/stremio/proxy/sid/"
         content = (
             "#EXTM3U\n"
             '#EXT-X-STREAM-INF:BANDWIDTH=1646000,CODECS="avc1.64001f,mp4a.40.2"\n'

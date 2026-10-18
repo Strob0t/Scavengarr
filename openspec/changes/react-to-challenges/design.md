@@ -55,7 +55,7 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
     - With the mark set and no completion running for the hoster, the task goes to the registry's completions, one per resolver name. The attempt answers `challenge` at once.
     - Otherwise the task is cancelled, as the bound cancels it today.
     - The bound's cancel must be the only new one on the request's task (`Task.cancelling()` against its count at the attempt's start): a request cut in the bound's loop iteration (the answer went out) cancels the capture too (row 96, finding 15).
-  - A completion awaits the task for at most 20 s after the cut. With production's bound of 10 s that is 30 s of work, past the Pi's cold paths of 13.3 to 17.8 s.
+  - A completion awaits the task for at most 20 s after the cut. With production's bound of 10 s that is 30 s of work, past the production host's cold paths of 13.3 to 17.8 s.
   - With a result it runs the attempt's own steps: `_judge()`, `_cache_result()` under the attempt's cache key, `_record()`. The stream ends the cooldown and closes a half-open breaker; `unplayable` counts as today.
   - Without a stream by the deadline the task is cancelled. The capture's `finally` closes the page, and the cooldown steps up.
   - `aclose()` cancels the completions as it cancels the half-open probes.
@@ -63,7 +63,7 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
   - Only `_attempt()` (the cached resolution) completes in the background. `resolve_for_client()` belongs to one player, is not cached, and ends as `challenge` without a completion.
 - **The page and the lease.**
   - A completion keeps the one page and the lease its capture holds and takes no other.
-  - The completions leave one of the page gate's pages free: at most `limit − 1` run at a time, and on a single page none (row 96, finding 12; the registry gets the gate). Two completions held both of the start's 2 pages, and a /play resolution waited for one until it ended `PageBusy`; the page budget adds pages only when the Pi has room.
+  - The completions leave one of the page gate's pages free: at most `limit − 1` run at a time, and on a single page none (row 96, finding 12; the registry gets the gate). Two completions held both of the start's 2 pages, and a /play resolution waited for one until it ended `PageBusy`; the page budget adds pages only when the production host has room.
   - The page gate's order stays: `play` first, then `plugin` and `capture` pages by their due time, then `background`.
   - A browser recycle waits for the lease, at most the 20 s.
 - **The telemetry.**
@@ -74,7 +74,7 @@ A timeout counts as a breaker failure (`_record(failed=True)`). A resolver's `No
 ## Risks / Trade-offs
 
 - **A wrong mark** (a dead hoster whose page shows a widget) costs one capture per 30 minutes instead of a breaker that opens for an hour. Small.
-- **A completion holds a page up to 20 s longer.** On the Pi plugin pages and other captures may wait for a page meanwhile (`browser_page_wait` shows it). The one-per-hoster rule and the free page (row 96) cap it.
+- **A completion holds a page up to 20 s longer.** On the production host plugin pages and other captures may wait for a page meanwhile (`browser_page_wait` shows it). The one-per-hoster rule and the free page (row 96) cap it.
 - **The cut request misses the stream.** The next request finds it in the cache, and the hoster runs warm.
 - **The mark set after the cut** (the captcha's requests come late) makes the attempt `timeout`, as today. The completion is only for a challenge seen before the cut.
 

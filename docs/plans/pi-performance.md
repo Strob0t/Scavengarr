@@ -4,7 +4,7 @@ Status: baseline measured 2026-10-04 (v0.2.3). The decided measures are implemen
 
 ## Setup
 
-- Raspberry Pi 4 (4× Cortex-A72, 8 GB RAM, Debian 13, aarch64), Python 3.12.15, Scavengarr in Docker. All traffic goes through a gluetun VPN container; DNS is gluetun's resolver on 127.0.0.1.
+- Raspberry Pi 4 (4× Cortex-A72, 8 GB RAM, aarch64), Python 3.12, Scavengarr in Docker. All traffic goes through a VPN container; DNS is its resolver on 127.0.0.1.
 - Not installed: uvloop, httptools, h2, orjson, lxml, selectolax, brotli.
 - Cache (`/app/cache`, diskcache/SQLite) and config live on the SD card (`/dev/mmcblk0p2`, ext4). Chromium's `/dev/shm` is a 1 GB tmpfs.
 - Shared httpx client: `AsyncHTTPTransport()` with httpx defaults:
@@ -29,8 +29,8 @@ Each measurement covers one Stremio stream request. Python and Chromium CPU come
   - Chromium: 15 processes, 1.7 GB RSS (shared pages are counted once per process);
   - Python: about 0.27 GB;
   - container cgroup: 625 MB;
-  - host: 5.0 of 7.8 GB available, swap unused, load average 2.4 (37 containers on the Pi).
-- **DNS through gluetun:** 2 ms when cached, 34–42 ms uncached.
+  - host: 5.0 of 7.8 GB available, swap unused, load average 2.4 (37 containers on the production host).
+- **DNS through the VPN container:** 2 ms when cached, 34–42 ms uncached.
 
 ## Where the Python CPU goes
 
@@ -52,7 +52,7 @@ Profiled with py-spy (100 Hz) on a local server (x86) running production's confi
 Limits of this profile:
 
 - The sample is small.
-- It ran on x86, not ARM. The Pi 4's Cortex-A72 has no ARMv8 crypto extensions, so TLS handshakes and AES should weigh more there.
+- It ran on x86, not ARM. The production host 4's Cortex-A72 has no ARMv8 crypto extensions, so TLS handshakes and AES should weigh more there.
 - Chromium is not included.
 
 ## Candidate measures
@@ -78,7 +78,7 @@ Ordered by measured share and effort.
 
 ## Review of the literature research (2026-10-04)
 
-A literature review proposed measures for fan-out, tail latency, caching, Python and the Pi. It is the gitignored `.devdata/research/performance-deep-research.md`: Tail at Scale, Kwiken, SRE Book, RFC 5861, Mercator, uvloop/httptools, selectolax and Pi/Docker sources. Its proposals, checked against this baseline, production and the code:
+A literature review proposed measures for fan-out, tail latency, caching, Python and the production host. It is the gitignored `.devdata/research/performance-deep-research.md`: Tail at Scale, Kwiken, SRE Book, RFC 5861, Mercator, uvloop/httptools, selectolax and Raspberry Pi/Docker sources. Its proposals, checked against this baseline, production and the code:
 
 | Proposal | Verdict |
 |---|---|
@@ -87,14 +87,14 @@ A literature review proposed measures for fan-out, tail latency, caching, Python
 | Stremio stream cache with stale-while-revalidate and single-flight | Confirmed: production served the same title twice within 17–18 s (Avengers: Endgame, Severance), a full fan-out each time |
 | Partial results when a plugin hits its timeout | Confirmed in code: `_run_plugin_with_timeout` returns `[]`, so a slow plugin's finished detail pages are lost (kinoking is often cut at 10 s) |
 | Fewer requests per stream request | Confirmed: two title variants double the fan-out ("Matrix" and "The Matrix": 205 requests against 105 for Interstellar) |
-| Resolve DNS once and connect to the IP the address guard checked | Confirmed in code: the guard and httpcore both resolve. The time saved is small, because gluetun caches (2 ms). It does close a DNS-rebinding gap in the SSRF guard |
-| selectolax instead of `html.parser`, parsing off the event loop | Confirmed at 9%; profile on the Pi first |
+| Resolve DNS once and connect to the IP the address guard checked | Confirmed in code: the guard and httpcore both resolve. The time saved is small, because the VPN container caches (2 ms). It does close a DNS-rebinding gap in the SSRF guard |
+| selectolax instead of `html.parser`, parsing off the event loop | Confirmed at 9%; profile on the production host first |
 | Early stop (`resolve_target_count > 0`) | Conflicts with the decision of 2026-10-01 (complete answers over an earlier end); needs the maintainer |
 | Token bucket "serializes every request per domain" | Overstated: it sleeps only when the bucket is empty, and then the spacing is the configured rate (10 rps, burst 10, AIMD up to 50). The `co.uk` key problem is real but hits no current site |
 | `cf_clearance` does not work with httpx (TLS fingerprint), use curl_cffi | Refuted for kinoger and moflix: httpx with the browser's cookies and User-Agent passes both from the VPN IP, and curl_cffi did no better (antibot-patchright.md Phase 4) |
-| Memory cgroup disabled on the Pi | Already fixed: `cgroup_enable=memory cgroup_memory=1` in the kernel command line, the cgroup reports 625 MB |
-| Cooler and CPU governor | No throttling seen: 54 °C at 1.8 GHz (the maximum), governor `ondemand`; one sample, Pi 4 |
-| Docker's embedded DNS | Not used: Scavengarr runs in gluetun's network namespace and uses its caching resolver |
+| Memory cgroup disabled on the production host | Already fixed: `cgroup_enable=memory cgroup_memory=1` in the kernel command line, the cgroup reports 625 MB |
+| Cooler and CPU governor | No throttling seen: 54 °C at 1.8 GHz (the maximum), governor `ondemand`; one sample, Raspberry Pi 4 |
+| Docker's embedded DNS | Not used: Scavengarr runs in the VPN container's network namespace and uses its caching resolver |
 | SSD instead of the SD card | Applies: cache and config are on the SD card (`mmcblk0p2`) |
 
 ## Baseline before the measures (2026-10-04, staging 7ead19f)
@@ -112,7 +112,7 @@ Measured in production with `scripts/stremio_profile.py --py-spy` on the three b
 - **Spread between requests:** large. The Breaking Bad episode gave 0–2 streams and used 8–39 s of Chromium CPU (gate passes, challenge solves). Compare means, not single requests.
 - **Event-loop lag** over the passes: p50 1.1–1.3 ms, p99 ~130 ms, max 384 ms.
 
-**Python CPU on the Pi** (py-spy, threads holding the GIL, 1499 samples in the warm passes, ~15 s CPU):
+**Python CPU on the production host** (py-spy, threads holding the GIL, 1499 samples in the warm passes, ~15 s CPU):
 
 | Inclusive | Warm | Cold + warm | Biggest callers |
 |---|---|---|---|
@@ -123,7 +123,7 @@ Measured in production with `scripts/stremio_profile.py --py-spy` on the three b
 | `http.cookiejar` | 4.7% | 6.2% | |
 
 - TLS shows up with only 0.7–1.5% here: in GIL mode py-spy misses the handshakes, because OpenSSL releases the GIL. They still block the event loop thread; locally, without GIL mode, they were 21%.
-- The ranking on the Pi differs from the x86 profile above: release-name parsing and HTML parsing take about 60% of the Python CPU.
+- The ranking on the production host differs from the x86 profile above: release-name parsing and HTML parsing take about 60% of the Python CPU.
 - That puts the cheapest gain in parsing each release title only once. This was not in the decided plan; it is added because the profile shows it.
 
 ## Decided plan (maintainer, 2026-10-04)
@@ -141,10 +141,10 @@ Order: build the measurement tools first and measure the current state, then imp
 | Answer | Partial results when a plugin hits its timeout. Once the cache exists, an early answer; the search goes on in the background and fills the cache |
 | Requests | Central only: title variants by plugin language, Stremio's `max_results_per_plugin` lowered after a recall check on a title set, base classes remember a site's redirect target. The check (below) kept the cap at 50: lowering it changed nothing |
 | s.to | While the gate is active and no pass is possible, return link-outs unresolved |
-| Parsing | Big pages off the event loop first, then selectolax for the hotspots the Pi profile shows |
+| Parsing | Big pages off the event loop first, then selectolax for the hotspots the production host profile shows |
 | Browser | `serviceWorkers="block"`, blocking by resource type everywhere, `--renderer-process-limit=2`, restart the browser after N solves. Done; the restart counts stealth pages (200), and site isolation stays on (check below) |
 | DNS/SSRF | Connect to the IP the address guard checked (one lookup, closes the DNS-rebinding gap). Done: `GuardedNetworkBackend` |
-| Pi host | No change |
+| production host | No change |
 
 ## Recall check: title variants and the result cap (2026-10-04)
 
@@ -222,7 +222,7 @@ The streams are within the spread: Breaking Bad gave 0–2 in both series. The c
 | New connections | 48–49 | 43–44 |
 | Wall | 35–40 s | 40 s (bounded by the slowest plugins' timeouts) |
 
-HTTP/2's framing (h2, hpack, hyperframe) runs in Python and costs more CPU on the Pi than the few handshakes it saves, and it is not faster. `http.http2` stays off.
+HTTP/2's framing (h2, hpack, hyperframe) runs in Python and costs more CPU on the production host than the few handshakes it saves, and it is not faster. `http.http2` stays off.
 
 **What is left**, by size:
 - **Chromium:** ~10–11 s CPU per request even from the search cache, because hoster resolution runs on every request (stream URLs expire and some are IP-bound). A cold request also launches the browser and solves challenges (~30 s).
@@ -235,7 +235,7 @@ The moflix noise was people in its search answer (fixed in e9b1ba1). What could 
 
 ## Playback under search load (2026-10-10, row 56)
 
-**Question.** Does a search slow a playback that runs through the proxy on the Pi? N12 of the ideas backlog proposed that the search runner lower its plugin and browser concurrency while a playback is active; the row asked for the evidence first.
+**Question.** Does a search slow a playback that runs through the proxy on the production host? N12 of the ideas backlog proposed that the search runner lower its plugin and browser concurrency while a playback is active; the row asked for the evidence first.
 
 **Setup.** Production (the container started 10:27 UTC from the 09:15 rebuild of staging 8a1dc84), measured with `scripts/playback_under_load.py` from the dev container through the reverse proxy, as a LAN player reaches it. The stream: the strmup HLS link of Der Schuh des Manitu that the tenth round had resolved minutes before (`prodctl.py probe links`), one variant, segments of 8 s and 1.3 to 4.9 MB (about 3.1 Mbit/s of video). Each run plays 20 segments at the playback pace (160 s of video); the proxy's read-ahead follows it (19 hits of 20 in every run, the first segment is the cold fetch). The load: one stream request 10 s into the playback, which goes on until 30 s after the answer. CPU: `docker stats` through Portainer about every 5 s (26 to 30 samples per run). Server view: the `/metrics` deltas of the run. Runs 1 to 3 between about 12:50 and 13:02 UTC, run 4 from 13:05:24 to 13:08:06 UTC. Runs 2 and 3 overlapped the four stream requests of another session's smoke test of `prodctl.py check` (about 12:55 to 13:05 UTC: three series, one movie, answered in 0.1 to 3.9 s), so run 2's plugin searches are not its own title's alone; run 4 ran on an idle production.
 
@@ -263,11 +263,11 @@ The quantiles of the server view are histogram bucket bounds; "max" is the highe
 
 ## Read-ahead depth (2026-10-11, row 68)
 
-**Question.** Does the read-ahead keep enough segments in flight for FireStream's throughput from the Pi? The maintainer's 1080p FireStream playback in Stremio Web (2026-10-11, 11:33 to 11:58 UTC) had no audio dropout in 25 minutes and after a seek, but its picture stalled now and then. Production's numbers for it: one connection carried about 0.44 of real time, the three in flight (the player's request and two segments ahead) about 1.3, below N1's rule of 1.5 times the bitrate.
+**Question.** Does the read-ahead keep enough segments in flight for FireStream's throughput from the production host? The maintainer's 1080p FireStream playback in Stremio Web (2026-10-11, 11:33 to 11:58 UTC) had no audio dropout in 25 minutes and after a seek, but its picture stalled now and then. Production's numbers for it: one connection carried about 0.44 of real time, the three in flight (the player's request and two segments ahead) about 1.3, below N1's rule of 1.5 times the bitrate.
 
 **Before.** Production's read-ahead counters since the 10:58 UTC start, mostly that playback: 456 hits (from memory or awaited in flight), 111 misses, 123 dropped, 13 failed, 569 fetches in 8.45 s on average (`scavengarr_hls_readahead_seconds`). The player's answers through the proxy: p50 2.2 s, p90 9.6 s, max 27 s.
 
-**Measurement.** `prodctl.py probe hls_throughput -- --imdb movie/tt0816692 --hoster firestream --in-flight 3,4,5 --segments 10`, from the Pi at about 13:18 UTC (production on 69dcc83, nothing playing), one run of 183.8 s. The title: Interstellar on FireStream (CDN `firestream.to`), a media playlist with no variants (2561 segments of 4.0 s, the runs from segment 1250), bitrate 1.6 Mbit/s. No 429 and no failed request.
+**Measurement.** `prodctl.py probe hls_throughput -- --imdb movie/tt0816692 --hoster firestream --in-flight 3,4,5 --segments 10`, from the production host at about 13:18 UTC (production on 69dcc83, nothing playing), one run of 183.8 s. The title: Interstellar on FireStream (CDN `firestream.to`), a media playlist with no variants (2561 segments of 4.0 s, the runs from segment 1250), bitrate 1.6 Mbit/s. No 429 and no failed request.
 
 | Run | Connections | Bytes | Time | Mbit/s | × real time | Ranges |
 |---|---|---|---|---|---|---|
@@ -279,7 +279,7 @@ The quantiles of the server view are histogram bucket bounds; "max" is the highe
 | read-ahead 2 × 3 ranges | 9 | 6.8 MiB | 11.7 s | 4.9 | 3.07 | 30 of 30 answered 206 |
 
 **Reading.**
-- The fourth connection adds about 1.0 times real time, the fifth only about 0.4. The sum flattens near 5 Mbit/s from the Pi, and nine connections carry no more (4.9): a cap of the VPN or the CDN. A stream above about 3.3 Mbit/s (5 / 1.5) therefore reaches 1.5 times real time at no depth.
+- The fourth connection adds about 1.0 times real time, the fifth only about 0.4. The sum flattens near 5 Mbit/s from the production host, and nine connections carry no more (4.9): a cap of the VPN or the CDN. A stream above about 3.3 Mbit/s (5 / 1.5) therefore reaches 1.5 times real time at no depth.
 - FireStream lists no lower variants, so hls.js has nothing to step down to.
 - N1's rule, connections = ⌈1.5 × bitrate / one connection's rate⌉: this title needs ⌈1.5 × 1.6 / 0.9⌉ = 3 (read-ahead 2, the old depth), the maintainer's playback ⌈1.5 / 0.44⌉ = 4 (read-ahead 3).
 - One constant fits both measured FireStream playbacks: three segments ahead, four connections in flight. That is 3.01 times real time here and about 1.76 at 0.44 per connection there.
@@ -302,7 +302,7 @@ The quantiles of the server view are histogram bucket bounds; "max" is the highe
 
 The paragraph that waited for this (the read-ahead metrics and the player's answer times during the maintainer's next FireStream playback after the rebuild) is the "After" above; a 1080p title is still to measure.
 
-**Limits.** One title and one run from the Pi, 10 segments per run; one connection's pace varied from 0.1 to 2.0 Mbit/s per segment. The maintainer's playback numbers come from production's logs and metrics, not from the probe.
+**Limits.** One title and one run from the production host, 10 segments per run; one connection's pace varied from 0.1 to 2.0 Mbit/s per segment. The maintainer's playback numbers come from production's logs and metrics, not from the probe.
 
 **A 1080p playback without read-ahead (2026-10-12, 503a0eb, Mr. Fable).** The maintainer's 1080p playback through the proxy from 17:52:47 UTC (CDN `97bf1` as `prodctl` masks it, media playlist `index_1920x1080.m3u8`; 37 to 38 segment requests per 5 minutes with a full buffer, so segments of about 8 s): the player loaded 11 segments and paused (17:53:09 to 17:57:43). In the pause row 96's round fetched the media playlists of 12 other streams (17:55:57 to 17:57:41), so `SegmentReadAhead` forgot the playback with its segment order (more than `_MAX_PLAYBACKS`, 8, followed), and the player did not fetch the VOD playlist again until it opened the stream anew at 19:06:24. The 497 segment requests from 17:57:43 to 19:06:20 were fetched on demand: none was answered in under 46 ms (from memory: 9 ms), and `hls_readahead_total` since 17:42:29 read miss 537, hit 117, ok 199, dropped 87, failed 10, cut 1. Until 18:42 that held: 37 to 38 requests per 5 minutes, median 96 to 109 ms, one answer over 3 s (3.0 s at 18:26:50). Then the CDN slowed (only this stream used the proxy from 18:35 to 19:06): median 200 to 222 ms from 18:43, from 18:51:21 to 19:04:52 an answer of 2.0 to 4.4 s about once a minute (15), two answered 502 at the 15 s bound (18:55:10, 18:59:26, `hls_proxy_network_error`), and four were cut mid-body (18:52:08, 19:01:41, 19:03:27, 19:04:16: `httpx.ReadTimeout` out of `_body`, row 102). After the new start (19:06:21, the converter refused first) the read-ahead knew the playback: five slow answers in its first 1.5 minutes (1.8 to 14.2 s, two fetches ahead failed with `ReadTimeout`), then from 19:08 on 51 requests at a median of 8.6 ms, at most 0.8 s, none failed.
 
@@ -334,7 +334,7 @@ Production beside it (41d6958, from 07:24:15 to about 08:10 UTC, `prodctl.py met
 
 Live proof (dev server, 2026-10-13 08:30 to 08:41 UTC): two real HLS playbacks of 11 minutes each in parallel, each segment asked for at its playing time with 30 s of buffer, FireStream's Inception in 1080p (175 segments) and VOE's Dune: Part Two (58 segments): all 233 answered 200, read-ahead 231 hits and 2 misses (each playback's first segment), no resume, cut, retry or failed fetch ahead; FireStream's slowest answer, 14.15 s, was a hit awaiting a fetch ahead of a whole segment that flowed slowly and was not cut. FireStream's playback ran out of its 30 s buffer 3 times (when is not recorded; the first segments come from the CDN on demand, with FireStream's headers taking up to 6.83 s); VOE's never.
 
-**Limits.** One morning, from the dev container's network (not the Pi's VPN); 25 consecutive segments per link, one link per CDN; the gaps are those of `aiter_raw()`, which hands over what one socket read brought (at most 64 KiB).
+**Limits.** One morning, from the dev container's network (not the production host's VPN); 25 consecutive segments per link, one link per CDN; the gaps are those of `aiter_raw()`, which hands over what one socket read brought (at most 64 KiB).
 
 ## The capture's autoplay wait (2026-10-12, row 103)
 
@@ -370,11 +370,11 @@ No popup in the 88 runs with `--diagnose` (the 12 `--restore` runs ran without i
 - **Dropload needs about 3 s when cold.** Its Turnstile frame shows at 0.6 s; a click at 2.0 or 1.0 s went unanswered (4 of 4 cold runs), and the stream came at 7.1 to 8.1 s against 4.6 s. Warm, its player starts itself at 0.6 s.
 - **SuperVideo starts itself** at 0.5 to 0.9 s: its stream comes before the wait ends.
 
-**What it means for the change (after the Pi runs and Mr. Fable's go).** A wait per resolver, from the dev numbers: 0.5 s for DoodStream and Vixeo, 3 s kept for Dropload and SuperVideo. For Filemoon, 1.5 s helps a cold capture on one of its two hosts, and in the dev container it does not matter warm, production's case. Whether it matters on the Pi is the Pi runs' question: the idle Pi's warm filemoon.to run of 17:49 (`docs/plans/challenge-reactions.md` → R4) clicked at 5.1 s and found the stream at 6.5 s, so there the warm player had not started itself 3 s after its page. Whether a click 1.5 s after the page brings it sooner there, or comes too early, the dev numbers cannot tell.
+**What it means for the change (after the production host runs and Mr. Fable's go).** A wait per resolver, from the dev numbers: 0.5 s for DoodStream and Vixeo, 3 s kept for Dropload and SuperVideo. For Filemoon, 1.5 s helps a cold capture on one of its two hosts, and in the dev container it does not matter warm, production's case. Whether it matters on the production host is the production host runs' question: the idle production host's warm filemoon.to run of 17:49 (`docs/plans/challenge-reactions.md` → R4) clicked at 5.1 s and found the stream at 6.5 s, so there the warm player had not started itself 3 s after its page. Whether a click 1.5 s after the page brings it sooner there, or comes too early, the dev numbers cannot tell.
 
-**Limits.** The dev container: a fast CPU, page loads of 0.2 to 2.1 s. One link per hoster, two to six runs per cell, within 13 minutes. A Pi's page and player are slower, so a wait the player takes in the dev container can come too early there, and a missed click costs 5 s.
+**Limits.** The dev container: a fast CPU, page loads of 0.2 to 2.1 s. One link per hoster, two to six runs per cell, within 13 minutes. A Raspberry Pi's page and player are slower, so a wait the player takes in the dev container can come too early there, and a missed click costs 5 s.
 
-**On the Pi (production 503a0eb, 19:51:08 to 19:52:58 UTC).** Ultracode's four calls on Mr. Fable's go, through `scripts/prodctl.py probe`, `--runs 2 --diagnose` each (run 1 cold, run 2 warm), with production's `capture_timing.py` of 503a0eb and only `--autoplay-wait` added: today's probe needs row 97's capture state, which 503a0eb lacks. The links are the dev runs'. Before each call the container had been up for 2 hours, its CPU was at 0.00 to 0.27 of 4 cores, and its log had no `/play`, `/proxy` or HLS line in the last 2 minutes; the maintainer's playback held the calls back from 19:04 until 19:49. Times are seconds after the resolution's start, a page as its start and its load:
+**On the production host (production 503a0eb, 19:51:08 to 19:52:58 UTC).** Ultracode's four calls on Mr. Fable's go, through `scripts/prodctl.py probe`, `--runs 2 --diagnose` each (run 1 cold, run 2 warm), with production's `capture_timing.py` of 503a0eb and only `--autoplay-wait` added: today's probe needs row 97's capture state, which 503a0eb lacks. The links are the dev runs'. Before each call the container had been up for 2 hours, its CPU was at 0.00 to 0.27 of 4 cores, and its log had no `/play`, `/proxy` or HLS line in the last 2 minutes; the maintainer's playback held the calls back from 19:04 until 19:49. Times are seconds after the resolution's start, a page as its start and its load:
 
 | Hoster, wait | Run | Page | Clicks | `captcha`, `captcha/verify` | Stream | At 3 s (an earlier call) |
 |---|---|---|---|---|---|---|
@@ -382,22 +382,22 @@ No popup in the 88 runs with `--diagnose` (the 12 `--restore` runs ran without i
 | | 2 (warm) | `/d/` 2.0 s, 3.5 s | 7.1, 12.2, 17.4 s | – | 18.9 s | 17:48: page 0.6 s, 0.8 s; click 4.5 s; captcha 5.5 s, verify 6.8 s; stream 8.0 s |
 | Filemoon (filemoon.to), 1.5 s | 1 (cold) | `/e/` 1.5 s, 1.8 s | 4.9, 9.9 s | 10.7 s, 11.3 s | 13.3 s | 17:49: page 1.3 s, 1.4 s; click 5.8 s; captcha 6.6 s, verify 8.0 s; stream 9.2 s |
 | | 2 (warm) | `/e/` 0.6 s, 1.2 s | 3.4 s | – | 6.2 s | 17:49: page 0.8 s, 1.1 s; click 5.1 s; stream 6.5 s |
-| DoodStream, 0.5 s | 1, 2 | none | – | – | none in the browser: resolved over HTTP in 1.0 and 0.3 s | none on the Pi |
+| DoodStream, 0.5 s | 1, 2 | none | – | – | none in the browser: resolved over HTTP in 1.0 and 0.3 s | none on the production host |
 | Vixeo, 0.5 s | 1 (cold) | `/e/` 0.7 s, 1.2 s | 2.6 s | – | 3.0 s | 06:33: click 5.3 s, stream 5.5 s |
 | | 2 (warm) | `/e/` 0.8 s, 2.3 s | 4.1 s | – | 5.9 s | 06:33: click 4.8 s, stream 5.0 s |
 
 The 3 s calls are row 101's (`docs/plans/challenge-reactions.md` → R4, production 503a0eb) and row 83's (`docs/plans/header-bound-hosters.md` → Vixeo with the own-scripts rule, production 39f4790). No popup in the eight runs. The Filemoon and DoodStream calls overlapped no app request. Vixeo's call overlapped a real Stremio request from 19:52:46 on (two stream requests, a kinoger search page in the app's browser at 19:52:48, then Dropload's open breaker and six VOE resolutions over HTTP), most likely in its run 2. No app capture line fell into the calls' windows; the request's Byse capture timed out at 19:53:32, after them.
 
-**Reading (Pi).**
-- **Filemoon keeps 3 s.** At 1.5 s the player left the first click unanswered in 3 of 4 runs: no captcha and no stream before the next click, 5 s later. At 3 s, row 101's four runs answered it with the captcha or the stream. filemoon.to's pages loaded as at 17:49 (1.8 and 1.2 s against 1.4 and 1.1 s). Its cold capture's missed click put the stream at 13.3 s instead of 9.2 s, past production's 10 s resolve bound. Its warm capture's click was answered 1.7 s sooner, but the stream came only 0.3 s sooner (6.2 s against 6.5 s). Byse's pages started 1.4 to 2.2 s later and loaded 1.1 to 2.7 s slower than at 17:48, and its warm run left its second click unanswered too, 6.7 s after its page: its two runs also measure a slower site or Pi. Unlike in the dev container, Filemoon's warm player did not start itself on the Pi, at 1.5 s here or at 3 s at 17:49, so production's warm captures need their click.
-- **Vixeo takes the first click at 0.5 s on the Pi**, in 2 of 2 runs, without a popup. Run 1, before the app's request, found its stream at 3.0 s, against 5.5 and 5.0 s at 3 s in the morning. Run 2's page loaded in 2.3 s instead of 1.2 s, and its stream came 1.8 s after the click (run 1: 0.4 s; the morning's runs: 0.2 s), at 5.9 s; it most likely ran during the app's request.
-- **DoodStream did not capture on the Pi.** The site sent the Pi's request no Cloudflare challenge, so the resolver resolved the link over HTTP, opened no browser page, and the wait never began. Production's log since 503a0eb's deploy, to about 20:00 UTC, shows no `doodstream_cloudflare_browser_fallback` either (8 `doodstream_offline`, 2 `doodstream_captcha_required`, 1 `doodstream_invalid_video_base`). The dev container's requests meet the challenge, so the dev numbers are the only numbers for DoodStream's capture. A 3 s call would have taken the same HTTP path, so none was added.
+**Reading (production).**
+- **Filemoon keeps 3 s.** At 1.5 s the player left the first click unanswered in 3 of 4 runs: no captcha and no stream before the next click, 5 s later. At 3 s, row 101's four runs answered it with the captcha or the stream. filemoon.to's pages loaded as at 17:49 (1.8 and 1.2 s against 1.4 and 1.1 s). Its cold capture's missed click put the stream at 13.3 s instead of 9.2 s, past production's 10 s resolve bound. Its warm capture's click was answered 1.7 s sooner, but the stream came only 0.3 s sooner (6.2 s against 6.5 s). Byse's pages started 1.4 to 2.2 s later and loaded 1.1 to 2.7 s slower than at 17:48, and its warm run left its second click unanswered too, 6.7 s after its page: its two runs also measure a slower site or host. Unlike in the dev container, Filemoon's warm player did not start itself on the production host, at 1.5 s here or at 3 s at 17:49, so production's warm captures need their click.
+- **Vixeo takes the first click at 0.5 s on the production host**, in 2 of 2 runs, without a popup. Run 1, before the app's request, found its stream at 3.0 s, against 5.5 and 5.0 s at 3 s in the morning. Run 2's page loaded in 2.3 s instead of 1.2 s, and its stream came 1.8 s after the click (run 1: 0.4 s; the morning's runs: 0.2 s), at 5.9 s; it most likely ran during the app's request.
+- **DoodStream did not capture on the production host.** The site sent the production host's request no Cloudflare challenge, so the resolver resolved the link over HTTP, opened no browser page, and the wait never began. Production's log since 503a0eb's deploy, to about 20:00 UTC, shows no `doodstream_cloudflare_browser_fallback` either (8 `doodstream_offline`, 2 `doodstream_captcha_required`, 1 `doodstream_invalid_video_base`). The dev container's requests meet the challenge, so the dev numbers are the only numbers for DoodStream's capture. A 3 s call would have taken the same HTTP path, so none was added.
 
-**For the change (Mr. Fable's go per resolver).** By Mr. Fable's rule: 0.5 s for Vixeo, whose first click the Pi answered; 3 s kept for Filemoon, Dropload and SuperVideo. DoodStream's click was not measured on the Pi; while the Pi's requests meet no challenge, its wait changes nothing in production.
+**For the change (Mr. Fable's go per resolver).** By Mr. Fable's rule: 0.5 s for Vixeo, whose first click the production host answered; 3 s kept for Filemoon, Dropload and SuperVideo. DoodStream's click was not measured on the production host; while the production host's requests meet no challenge, its wait changes nothing in production.
 
-**Limits (Pi).** One link per hoster and one call each, a few minutes after the maintainer's playback. The 3 s calls are other calls, 2 hours earlier for Filemoon and 13 hours earlier for Vixeo, perhaps with other links (the earlier links are not recorded), at other loads of the Pi and the sites, as Byse's page times show. Vixeo's run 2 overlapped an app request.
+**Limits (production).** One link per hoster and one call each, a few minutes after the maintainer's playback. The 3 s calls are other calls, 2 hours earlier for Filemoon and 13 hours earlier for Vixeo, perhaps with other links (the earlier links are not recorded), at other loads of the production host and the sites, as Byse's page times show. Vixeo's run 2 overlapped an app request.
 
-**Production proof (4429aff, the change deployed with 41d6958).** One `capture_timing.py` call on the Pi with the resolver's own wait (no `--autoplay-wait`), through `scripts/prodctl.py probe`, `--runs 2 --diagnose`, with the deployed probe (9466e3f) and the Vixeo link of the runs above. It waited for a quiet Pi: the container up for 2 hours, its CPU at 0.00 of 4 cores, no `/play`, `/proxy` or HLS line in the last 2 minutes. The call took 18 s, 5.6 s of it the browser's launch, and its report named `autoplay wait: 0.5 s (the resolver's)`. Times are seconds after the resolution's start, a page as its start and its load:
+**Production proof (4429aff, the change deployed with 41d6958).** One `capture_timing.py` call on the production host with the resolver's own wait (no `--autoplay-wait`), through `scripts/prodctl.py probe`, `--runs 2 --diagnose`, with the deployed probe (9466e3f) and the Vixeo link of the runs above. It waited for a quiet production host: the container up for 2 hours, its CPU at 0.00 of 4 cores, no `/play`, `/proxy` or HLS line in the last 2 minutes. The call took 18 s, 5.6 s of it the browser's launch, and its report named `autoplay wait: 0.5 s (the resolver's)`. Times are seconds after the resolution's start, a page as its start and its load:
 
 | Run | Page | Click | Stream | At 3 s (row 83's call, production 39f4790) |
 |---|---|---|---|---|
@@ -408,7 +408,7 @@ No challenge, no popup, no leftover process, and no app line in the call's windo
 
 **The app's Vixeo resolutions.** The registry's `duration_ms` covers the resolver and the playback check (`check_playable` runs before `hoster_resolve_success`), so it does not compare with the probe's stream times. The capture's own part is the `capture_state_saved` line's time less its read, against the resolution's start. One resolution on 4429aff, during a playback: its state's read (143 ms) was saved 3.36 s after the resolution began, so its stream came within 3.22 s (an upper bound: the store's write and any wait for a page are inside it), and `hoster_resolve_success` followed 3.11 s later (6472 ms, `challenge=None`). A missed first click could not have streamed before 5.5 s after the player's start. Two more on 4429aff streamed within 5.03 and 5.73 s (reads of 129 and 113 ms, 6713 and 7832 ms in total, both `challenge=None`): the first inside those 5.5 s, the second too unless its page had loaded within 0.23 s of the resolution's start (the probe's pages loaded at 1.1 and 1.2 s). An earlier one on 41d6958 took 5075 ms in total (`challenge=None`); its container's log is gone, so its capture part is unknown.
 
-**Reading (production).** Vixeo's player takes the first click at 0.5 s on the Pi, cold and warm: the stream followed the click by 0.2 s, 2.6 and 2.4 s sooner than with the 3 s wait. No capture missed its first click: 2 of 2 probe runs, and the app's three captures with a save line. The app's streams came within 3.22 to 5.73 s of their resolution's start, slower than the probe's 2.6 and 2.9 s on a quiet Pi; the cause is not measured.
+**Reading (production).** Vixeo's player takes the first click at 0.5 s on the production host, cold and warm: the stream followed the click by 0.2 s, 2.6 and 2.4 s sooner than with the 3 s wait. No capture missed its first click: 2 of 2 probe runs, and the app's three captures with a save line. The app's streams came within 3.22 to 5.73 s of their resolution's start, slower than the probe's 2.6 and 2.9 s on a quiet production host; the cause is not measured.
 
 **Limits (production).** One call of two runs on one link, and three app captures with a save line, as upper bounds, their player's start unknown (the third's first click is inferred from the probe's page loads). The 3 s numbers come from another call, a day earlier, perhaps with another link.
 
@@ -420,22 +420,22 @@ No challenge, no popup, no leftover process, and no app line in the call's windo
 - CPU of the Python and Chromium processes, read from `/proc` before and after;
 - httpx requests per host, counted from the `HTTP Request:` lines of the JSON container log. httpx writes them at `logging.level: DEBUG` only (since I1, 2026-10-06), so the counts need a run at that level.
 
-At the end it reports the event-loop lag from `/api/v1/stats/metrics`. `--repeat 2` runs a cold and a warm pass. `--py-spy` samples the app process on the Pi and prints the CPU share per category; it needs `cap_add: [SYS_PTRACE]` on the container, and py-spy is installed into `/tmp` and run as root.
+At the end it reports the event-loop lag from `/api/v1/stats/metrics`. `--repeat 2` runs a cold and a warm pass. `--py-spy` samples the app process on the production host and prints the CPU share per category; it needs `cap_add: [SYS_PTRACE]` on the container, and py-spy is installed into `/tmp` and run as root.
 
 ```bash
 PORTAINER_URL=http://<pi-address>:9000 PORTAINER_API_KEY=… \
   poetry run python scripts/stremio_profile.py --portainer \
-  --base https://scavengarr.lan --insecure \
-  --connect-to scavengarr.lan:<pi-address> --repeat 2 --py-spy
+  --base https://scavengarr.example.lan --insecure \
+  --connect-to scavengarr.example.lan:<pi-address> --repeat 2 --py-spy
 ```
 
 On the Docker host, `--docker` uses the docker CLI instead of Portainer. A local server can be profiled with `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …`. Compare runs only when they use the same titles and the same pass (cold or warm).
 `scripts/playback_under_load.py` measures a playback through the proxy while the server searches: a paced player (one segment per `EXTINF` duration, as a player with a full buffer asks) fetches a stored HLS stream's segments through `/api/v1/stremio/proxy/<id>/scavengarr.m3u8` and times each (headers, last byte; a segment slower than its own duration is a stall), `--search` ids are requested during the playback (the searches' wall time, streams and cache headers), `--portainer` samples the container's CPU about every 5 s, and the `/metrics` deltas of the run give the server's view (the proxy's segment stage, the read-ahead's fetches and outcomes, the plugin searches' durations, the event-loop lag; quantiles are histogram bucket bounds). It runs from a machine on the server's network (the dev container reaches production through its reverse proxy) and prints no URLs:
 
 ```bash
-poetry run python scripts/playback_under_load.py --base https://scavengarr.lan --insecure \
+poetry run python scripts/playback_under_load.py --base https://scavengarr.example.lan --insecure \
   --stream-id <id from prodctl.py probe links> --segments 20 --portainer --label idle
-poetry run python scripts/playback_under_load.py --base https://scavengarr.lan --insecure \
+poetry run python scripts/playback_under_load.py --base https://scavengarr.example.lan --insecure \
   --stream-id <id> --segments 20 --portainer --label search --search movie/tt15398776
 ```
 

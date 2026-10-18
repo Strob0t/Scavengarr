@@ -13,7 +13,7 @@ The stealth browser (`StealthPool`) loads at most 2 pages at a time through one 
 1. **kinoger starves.** 13 of 13 kinoger searches hit the 30 s plugin timeout; alone in the production container, with a browser of its own, the same searches took 7.9–17.3 s. Each of its page loads queues behind the captures that came first. Titles with few streams (Good Bye Lenin, Lola rennt, Dark, ...) waited the full 30 s for it.
 2. **The resolve clock runs while waiting.** A resolution gets `resolve_timeout` (10 s in production) from its start, including the wait for a page. A capture that waited 9 s has 1 s left, times out, and the timeout counts for the hoster's circuit breaker: the breakers of Filemoon, Dropload and SuperVideo opened in the sixth round although the hosters were healthy.
 3. **Work runs that cannot finish.** A page is opened for work whose request is cut seconds later.
-4. **The page count is fixed.** 2 pages on every host; a larger host cannot use its CPUs, the Pi under the load of other containers has no brake.
+4. **The page count is fixed.** 2 pages on every host; a larger host cannot use its CPUs, the production host under the load of other containers has no brake.
 
 ## Design
 
@@ -51,13 +51,13 @@ The variable lives in the domain port module rather than being injected like `se
 `PageBudget` in `infrastructure/browser/page_budget.py`, a background task started and stopped by the composition root, changes the gate's limit every 5 s:
 
 - **Bounds:** at least 1 page; at most `stremio.max_concurrent_playwright` (auto-tuned at startup from the container's CPU and memory limits, else the host's: `min(cpu, mem_gb / 0.15, 10)`); starts at `min(2, ceiling)`, today's value.
-- **Signals** (`ResourceSampler` in `infrastructure/resource_detector.py`, which already reads the cgroup limits; the own-cgroup helpers of the telemetry collector move there): CPU busy share since the last sample, the larger of the host's (`/proc/stat`) and, with a CPU limit, the container's share of its quota (`cpu.stat`, `cpu.max`); free memory, the smaller of the host's `MemAvailable` and, with a memory limit, the cgroup's room (`memory.max` minus `memory.current` plus `inactive_file`); the longest page wait since the last sample (gate, waits still running included). PSI would be better but the Pi's kernel has none.
+- **Signals** (`ResourceSampler` in `infrastructure/resource_detector.py`, which already reads the cgroup limits; the own-cgroup helpers of the telemetry collector move there): CPU busy share since the last sample, the larger of the host's (`/proc/stat`) and, with a CPU limit, the container's share of its quota (`cpu.stat`, `cpu.max`); free memory, the smaller of the host's `MemAvailable` and, with a memory limit, the cgroup's room (`memory.max` minus `memory.current` plus `inactive_file`); the longest page wait since the last sample (gate, waits still running included). PSI would be better but the production host's kernel has none.
 - **Up** (one page) when a page request waited at least 1 s, the CPU was at most 70 % busy, at least two pages' worth of memory (2 × 200 MB) is free, and the last change is 30 s ago (a new page's own CPU shows only after it ran).
 - **Down** (one page) when free memory is below one page (at once), or the CPU was at least 90 % busy on two samples in a row and the last change is 10 s ago.
 - **Idle:** back to the start value after 2 minutes without waits and without changes, so an old burst leaves no large limit behind; from below only with the room the up rule asks for.
 - The band between 70 and 90 % holds the count; unknown CPU or memory (no `/proc`) allows no step up. Changes are logged (`browser_pages_changed`: `pages`, `previous`, `reason` (`wait`, `memory`, `cpu`, `idle`), `cpu_busy`, `memory_free_mb`, `waited_s`).
 
-On the Pi (4 cores, no cgroup limits, 1.4 cores taken by other containers) the ceiling is 4 and the count will mostly stay at 1–2; the kinoger fix there comes from parts 1 and 2. Part 3 pays on larger hosts and protects playback (the Stremio server's CPU) under pressure.
+On the production host (4 cores, no cgroup limits, 1.4 cores taken by other containers) the ceiling is 4 and the count will mostly stay at 1–2; the kinoger fix there comes from parts 1 and 2. Part 3 pays on larger hosts and protects playback (the Stremio server's CPU) under pressure.
 
 ### Not changed
 
@@ -83,7 +83,7 @@ On the Pi (4 cores, no cgroup limits, 1.4 cores taken by other containers) the c
 
 `docs/features/stremio-addon.md`, `hoster-resolvers.md`, `observability.md`, `configuration.md` (`max_concurrent_playwright` is also the page ceiling), `docs/architecture/clean-architecture.md`, `docs/PYTHON-BEST-PRACTICES.md` 3.4, `AGENTS.md` (metrics list), `CHANGELOG.md`.
 
-## Acceptance (seventh round, production on the Pi)
+## Acceptance (seventh round, in production)
 
 - kinoger finds results again, p50 below 20 s; titles with few streams answer below 30 s.
 - No breaker of Filemoon, Dropload or SuperVideo opens from timeouts; `browser_page_wait{kind="plugin"}` p90 below 5 s.

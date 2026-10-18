@@ -41,7 +41,7 @@ file bound to the resolving address plays from here and only header binding
 shows; ``production`` reads production's links resolved in the last
 ``--since`` seconds (or the ``--ids``) through Portainer (``PORTAINER_URL``
 and ``PORTAINER_API_KEY`` as in ``scripts/portainer.py``): resolved from the
-Pi's address and fetched from here, as a player on the LAN fetches them.
+production host's address and fetched from here, as a player on the LAN fetches them.
 Prints hosters, titles, CDN domains, header names, statuses and content
 kinds, never a URL, a header value or a stream id; changes nothing.
 """

@@ -27,7 +27,7 @@ As of 2026-09-29 (the status line has what changed since): the code is in good s
 | Tests | 4547 tests pass (from 3611 unit, 172 E2E and 37 integration test functions), 94 % line coverage of `src/` and `plugins/`; pre-commit green |
 | Live | Stremio end-to-end passes (Oppenheimer and Breaking Bad S01E01 each play a stream); 20 of 35 plugin smoke tests return results ([details](#live-smoke-run-2026-09-29)) |
 | Release | `main` is at `a08ed04` "test claude" (2026-02-09), `staging` is 536 commits ahead; version `0.1.0`; ~860 CHANGELOG lines under "Unreleased", v0.1.0 still dated `2025-XX-XX` |
-| Production | `https://scavengarr.lan` answers 502 on every path (Caddy up, backend down; also earlier that day) |
+| Production | `https://scavengarr.example.lan` answers 502 on every path (the reverse proxy up, backend down; also earlier that day) |
 | Automation | No CI (no `.github/workflows/`; added 2026-09-30, see item 2); pre-commit runs ruff and hygiene hooks only; basedpyright runs in the editor only (`.vscode/settings.json`, `standard`) |
 | Dependencies | 17 top-level packages outdated; major steps: guessit 3.8 → 4.4, redis 7 → 8, cryptography 46 → 50; also fastapi 0.128 → 0.142, uvicorn 0.40 → 0.54 |
 | Process | OpenSpec unused since January: `add-config-system` (75 of 87 tasks) and `add-plugin-loader` (67 of 186) never archived, no `openspec/specs/`; plans live in `docs/plans/` |
@@ -57,7 +57,7 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 
 - **CI** (agent) — **Done 2026-09-30:** `.github/workflows/ci.yml` runs `poetry install --with dev`, `pre-commit run --all-files` and `pytest` without live tests on every push to `staging`, on pull requests to `staging` (where CONTRIBUTING.md sends contributors) and `main`, and on demand. Free for public repositories. No non-live test needs a real browser: in a clean clone with an empty `PLAYWRIGHT_BROWSERS_PATH`, a fresh `HOME` and no `SCAVENGARR_*` variables, install took 25 s, pre-commit 40 s and the 4547 tests 62 s, all green.
 - **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away. `/metrics` serves Prometheus metrics (dashboard: `docker/grafana-dashboard.json`); open: the Prometheus scrape job on the host (maintainer) and the alert rules ([ideas-backlog.md](ideas-backlog.md) I8).
-- **Scheduled live run** (maintainer's host): `pytest -m live` once a week from the home network (about 13 min), with the result as a notification. Not on GitHub-hosted runners: they use datacenter IPs, which Cloudflare-protected sites challenge harder, so the results would not show what the home network sees. No self-hosted runner either, since pull requests from forks of a public repository could run code on it.
+- **Scheduled live run** (maintainer's host): `pytest -m live` once a week from a residential network (about 13 min), with the result as a notification. Not on GitHub-hosted runners: they use datacenter IPs, which Cloudflare-protected sites challenge harder, so the results would not show what a residential network sees. No self-hosted runner either, since pull requests from forks of a public repository could run code on it.
 
 ## 3. Plugin round for Stremio
 
@@ -65,7 +65,7 @@ In order of value for the Stremio use case (German films and series, new release
 
 **2026-10-01, CUII block list:** every film/series site on the list has a plugin except kinogo (Russian only, skipped). Four player hosters of covered sites lack a resolver (gxplayer, kinoger.pw, p2pplay, fsst streams). Details in [cuii-coverage.md](cuii-coverage.md). 2026-10-02: gxplayer, kinoger.pw and fsst resolve; p2pplay is no longer linked; rubyvidhub (new, kinoger) was down. Two kinoger parser bugs fixed on the way (films labelled as series, single-player pages without links).
 
-**2026-10-03, end-to-end test with Stremio Web:** install, search and stream lists work; playback is blocked by stremio.lan's streaming server (nginx 400 "Request Header Or Cookie Too Large" on its server routes). Following every stream to its media bytes found four bugs, fixed on `staging` (Vidsonic through the HLS proxy, moflix's paid player, kinoger's new WAF page, kinox on episode requests), and one deployment constraint: DoodStream and Vinovo stream URLs only play from the IP that resolved them, and production resolves through a VPN. Details in [stremio-latency.md](stremio-latency.md#end-to-end-test-with-stremio-web-2026-10-03).
+**2026-10-03, end-to-end test with Stremio Web:** install, search and stream lists work; playback is blocked by stremio.example.lan's streaming server (nginx 400 "Request Header Or Cookie Too Large" on its server routes). Following every stream to its media bytes found four bugs, fixed on `staging` (Vidsonic through the HLS proxy, moflix's paid player, kinoger's new WAF page, kinox on episode requests), and one deployment constraint: DoodStream and Vinovo stream URLs only play from the IP that resolved them, and production resolves through a VPN. Details in [stremio-latency.md](stremio-latency.md#end-to-end-test-with-stremio-web-2026-10-03).
 
 1. **cine**: find out why the link lookup is empty for every title (site change or a new request format). **2026-10-01:** the links API now needs the language (`lang=1` German, `2` English); fixed. Every `/out/` link opens a reCAPTCHA gateway, so cine serves downloads only.
 2. **Turnstile group** (kinoger, serienfans, ddlspot, ddlvalley, scnsrc, filmfans): run their smoke tests headful (`xvfb-run -a`, `playwright.headless: false`, `playwright.browser_fallback: true`) and fix what still fails.
@@ -104,14 +104,14 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 | Forum credentials | Provide them as `SCAVENGARR_*` variables if the forum plugins should be checked live. |
 | Persist `~/.claude` in the dev container | Yes: a named volume on `/home/vscode/.claude` keeps Claude Code's login, sessions and memory across rebuilds (today they live in the container filesystem and are lost). The Dockerfile must create the directory owned by `vscode`, otherwise Docker creates the mount point as root. |
 
-## Live tests with stremio.lan (done 2026-10-03)
+## Live tests with stremio.example.lan (done 2026-10-03)
 
 Done on 2026-10-03 (item 3, end-to-end test with Stremio Web); the later rounds, up to the sixth, are in [stremio-latency.md](stremio-latency.md). The setup notes below still apply.
 
-Goal: run the Stremio use case against the maintainer's Stremio Web instance (`https://stremio.lan`) with a Scavengarr started in the dev container.
+Goal: run the Stremio use case against the maintainer's Stremio Web instance (`https://stremio.example.lan`) with a Scavengarr started in the dev container.
 
 - The dev container publishes port 7979 on all host interfaces (AGENTS.md §9); start the server with `--host 0.0.0.0 --port 7979`. The manifest is at `/api/v1/stremio/manifest.json`.
-- `https://stremio.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a Caddy site on the host that proxies to `<workstation>:7979`.
-- Stream and proxy URLs are built from `request.base_url`. uvicorn trusts `X-Forwarded-*` headers only from `127.0.0.1` by default, so behind Caddy on another host start the server with `FORWARDED_ALLOW_IPS=<caddy-ip>`; otherwise the URLs come out as `http://`.
+- `https://stremio.example.lan` is an HTTPS page, so the browser blocks plain-HTTP addon and stream URLs (mixed content). The instance needs an HTTPS route, for example a reverse-proxy site on the host that proxies to `<workstation>:7979`.
+- Stream and proxy URLs are built from `request.base_url`. uvicorn trusts `X-Forwarded-*` headers only from `127.0.0.1` by default, so behind the reverse proxy on another host start the server with `FORWARDED_ALLOW_IPS=<proxy-ip>`; otherwise the URLs come out as `http://`.
 - Measure against the budget in [stremio-latency.md](stremio-latency.md): time until the streams show and the share of streams that play, for German films, series, new releases and anime.
 - Claude Code's memory is not part of the repository: after the rebuild restore it from the gitignored copy with `mkdir -p ~/.claude/projects/-workspaces-scavengarr/memory && cp .claude/memory-backup/* ~/.claude/projects/-workspaces-scavengarr/memory/`.
