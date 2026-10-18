@@ -47,8 +47,10 @@ class _Rig:
     store: MagicMock
     pages: PageGate
     telemetry: Telemetry
-    # What the Filemoon resolver answers, and the page claim of each call
+    # What the Filemoon resolver answers, after how long, and the page
+    # claim of each call
     answer: dict[str, ResolvedStream | None]
+    took: dict[str, float]
     claims: list[PageClaim | None] = field(default_factory=list)
 
     def kept(self, expires_at: float | None) -> None:
@@ -68,28 +70,36 @@ class _Rig:
         return sum(claim is not None for claim in self.claims)
 
 
-async def _rig(*, limit: int = 2, cached: bool = True) -> _Rig:
+async def _rig(
+    *, limit: int = 2, cached: bool = True, resolve_timeout: float = 15.0
+) -> _Rig:
     """A keeper over a registry with a Filemoon resolver; *cached*: a request
     resolved ``_LINK`` before (its stream is in the cache)."""
     answer: dict[str, ResolvedStream | None] = {"stream": _STREAM}
+    took = {"s": 0.0}
     claims: list[PageClaim | None] = []
 
     async def _resolve(url: str) -> ResolvedStream | None:
         claims.append(page_claim.get())
+        await asyncio.sleep(took["s"])
         return answer["stream"]
 
     resolver = MagicMock()
     resolver.name = "filemoon"
     resolver.resolve = AsyncMock(side_effect=_resolve)
     telemetry = Telemetry()
-    registry = HosterResolverRegistry(resolvers=[resolver], telemetry=telemetry)
+    registry = HosterResolverRegistry(
+        resolvers=[resolver], resolve_timeout=resolve_timeout, telemetry=telemetry
+    )
     store = MagicMock()
     store.creation_state = AsyncMock(return_value=None)
     pages = PageGate(limit=limit)
     keeper = PassKeeper(registry, store, pages, telemetry=telemetry)
     if cached:
         await registry.resolve(_LINK)
-    return _Rig(keeper, registry, resolver, store, pages, telemetry, answer, claims)
+    return _Rig(
+        keeper, registry, resolver, store, pages, telemetry, answer, took, claims
+    )
 
 
 class TestWaits:
@@ -156,6 +166,20 @@ class TestCapture:
         assert rig.captures == 1
         await rig.keeper.step(_NOW + 1900)
         assert rig.captures == 2
+
+    async def test_its_capture_has_a_bound_of_its_own(self) -> None:
+        """The cold path outlasts the requests' bound: the captcha comes
+        after the first click, 3 s after the page has loaded (row 106's
+        proofs: cut before it, no pass). No request waits for the keeper."""
+        rig = await _rig(resolve_timeout=0.05)
+        rig.took["s"] = 0.2
+        rig.kept(_NOW - 60)
+
+        await rig.keeper.step(_NOW)
+
+        assert rig.outcome("stream") == 1
+        # A request's lookup keeps the registry's bound
+        assert await rig.registry.resolve(_LINK, refresh=True) is None
 
     async def test_no_stream_is_recorded(self) -> None:
         rig = await _rig()

@@ -683,6 +683,23 @@ class TestHosterResolverRegistry:
         assert await registry.resolve("https://voe.sx/e/abc") is not None
 
     @pytest.mark.asyncio
+    async def test_a_lookup_can_have_a_bound_of_its_own(self) -> None:
+        """Filemoon's pass keeper: no request waits for its capture."""
+
+        async def _slow(url: str) -> ResolvedStream | None:
+            await asyncio.sleep(0.2)
+            return ResolvedStream(video_url="https://cdn.example.com/v.mp4")
+
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(side_effect=_slow)
+        registry = HosterResolverRegistry(resolvers=[resolver], resolve_timeout=0.05)
+
+        assert await registry.resolve("https://voe.sx/e/abc", bound=1) is not None
+        # The next lookup has the registry's
+        assert await registry.resolve("https://voe.sx/e/def") is None
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "error", [httpx.ReadTimeout("slow"), httpx.ConnectError("down")]
     )
@@ -1928,6 +1945,25 @@ class TestChallenge:
         # The completion runs on
         assert "filemoon" in registry._completions
         await registry.aclose()
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_joined_lookup_waits_its_own_bound(self) -> None:
+        """The pass keeper's lookup of a link whose capture runs on waits for
+        it as long as its own bound."""
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            mark_resolution_challenge("hoster_captcha")
+            await asyncio.sleep(0.3)
+            return ResolvedStream(video_url=self._MP4)
+
+        registry, resolver, _ = self._registry(_resolve)
+        assert await registry.resolve(self._url("a")) is None
+
+        assert await registry.resolve(self._url("a")) is None
+        stream = await registry.resolve(self._url("a"), bound=1)
+
+        assert stream is not None and stream.video_url == self._MP4
+        assert resolver.resolve.await_count == 1
 
     @pytest.mark.usefixtures("clock")
     async def test_a_joined_refresh_never_answers_the_refused_stream(self) -> None:

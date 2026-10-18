@@ -372,8 +372,8 @@ class HosterResolverRegistry:
         snapshot without it has none). Returns the numbers of resolutions
         and redirects restored.
 
-        Raises ``KeyError``, ``TypeError`` or ``ValueError`` for a malformed
-        entry, before changing anything.
+        Raises ``AttributeError``, ``KeyError``, ``TypeError`` or
+        ``ValueError`` for a malformed entry, before changing anything.
         """
         results: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         for entry in state["results"]:
@@ -411,11 +411,13 @@ class HosterResolverRegistry:
         *,
         refresh: bool = False,
         demand: bool = True,
+        bound: float | None = None,
     ) -> ResolvedStream | None:
         """Resolve a hoster embed URL to a playable video URL. The lookup is
-        demand for the resolver that answers (``demand_age()``), a cache hit
+        demand for the resolver it goes to (``demand_age()``), a cache hit
         too, unless *demand* is false (Filemoon's pass keeper: the app's own
-        lookup).
+        lookup). *bound* replaces the resolve bound for this lookup (the
+        keeper's again: no request waits for its capture).
 
         1. Check result cache for previously resolved URL (not with
            *refresh*: the CDN refused the cached stream, and a refresh
@@ -459,7 +461,13 @@ class HosterResolverRegistry:
         resolver = self._resolver_for(url, hoster_name)
         if resolver is not None:
             return await self._resolve_with(
-                resolver, hoster_name, url, url, refresh=refresh, demand=demand
+                resolver,
+                hoster_name,
+                url,
+                url,
+                refresh=refresh,
+                demand=demand,
+                bound=bound,
             )
 
         # 2. No resolver for this domain — try following redirects
@@ -481,6 +489,7 @@ class HosterResolverRegistry:
                     url,
                     refresh=refresh,
                     demand=demand,
+                    bound=bound,
                 )
 
         # 3. Try hoster hint if different from URL domain
@@ -495,7 +504,13 @@ class HosterResolverRegistry:
                     url=url,
                 )
                 return await self._resolve_with(
-                    resolver, hoster, url, url, refresh=refresh, demand=demand
+                    resolver,
+                    hoster,
+                    url,
+                    url,
+                    refresh=refresh,
+                    demand=demand,
+                    bound=bound,
                 )
 
         # 4. Fallback: content-type probing
@@ -675,19 +690,23 @@ class HosterResolverRegistry:
         *,
         refresh: bool = False,
         demand: bool = True,
+        bound: float | None = None,
     ) -> ResolvedStream | None:
         """Resolve *url* with *resolver*; cache the outcome under *cache_key*.
         A link whose capture runs on in the background joins it instead
-        (``_joined``). With *demand* the lookup is the resolver's demand."""
+        (``_joined``). With *demand* the lookup is the resolver's demand;
+        *bound* replaces the resolve bound."""
         if demand:
             self._demand[resolver.name] = time.monotonic()
+        if bound is None:
+            bound = self._resolve_timeout
         completion = self._completing.get(cache_key)
         if completion is not None:
-            return await self._joined(completion, resolver, url)
+            return await self._joined(completion, resolver, url, bound)
         return await self._guarded(
             resolver,
             url,
-            partial(self._attempt, resolver, hoster_name, url, cache_key),
+            partial(self._attempt, resolver, hoster_name, url, cache_key, bound),
             refresh=refresh,
         )
 
@@ -696,16 +715,18 @@ class HosterResolverRegistry:
         completion: asyncio.Task[ResolvedStream | None],
         resolver: HosterResolverPort,
         url: str,
+        bound: float,
     ) -> ResolvedStream | None:
         """Wait for the background *completion* of *url*'s capture, at most
-        the resolve bound, and answer the stream it cached; ``None`` without
-        one in time. A second capture of the link would end without the
-        first's challenge and cache the link as dead over the completion's
-        stream (code review 2026-10-12, finding 9). The wait leaves the
-        completion running when the bound or the request ends it."""
+        the lookup's *bound*, and answer the stream it cached; ``None``
+        without one in time. A second capture of the link would end without
+        the first's challenge and cache the link as dead over the
+        completion's stream (code review 2026-10-12, finding 9). The wait
+        leaves the completion running when the bound or the request ends
+        it."""
         log.info("hoster_resolve_joined", hoster=resolver.name, url=url)
         self._telemetry.count("hoster_resolve", "joined", resolver=resolver.name)
-        await asyncio.wait((completion,), timeout=self._resolve_timeout)
+        await asyncio.wait((completion,), timeout=bound)
         if not completion.done() or completion.cancelled():
             return None
         if completion.exception() is not None:
@@ -772,10 +793,12 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         cache_key: str,
+        bound: float,
     ) -> ResolvedStream | None:
-        """One resolution of *url*; its outcome is cached under *cache_key*."""
+        """One resolution of *url* within *bound*; its outcome is cached
+        under *cache_key*."""
         result, cacheable = await self._try_resolver(
-            resolver, hoster_name, url, cache_key=cache_key
+            resolver, hoster_name, url, cache_key=cache_key, bound=bound
         )
         if cacheable:
             self._cache_result(cache_key, result, resolver.name)
@@ -799,15 +822,16 @@ class HosterResolverRegistry:
         *,
         resolve: Callable[[], Awaitable[ResolvedStream | None]] | None = None,
         cache_key: str | None = None,
+        bound: float | None = None,
     ) -> tuple[ResolvedStream | None, bool]:
         """Attempt resolution with a specific resolver, logging success/failure.
 
         Returns the stream (None = failed) and whether the outcome may be
-        cached. The resolver gets ``resolve_timeout`` in total (the
-        resolvers' own request timeouts add up over several requests); the
-        clock stops while it waits for a stealth browser page
-        (``work_clock``). *resolve* replaces ``resolver.resolve(url)`` (a
-        player's resolution).
+        cached. The resolver gets ``resolve_timeout`` in total, or the
+        lookup's own *bound* (the resolvers' own request timeouts add up
+        over several requests); the clock stops while it waits for a
+        stealth browser page (``work_clock``). *resolve* replaces
+        ``resolver.resolve(url)`` (a player's resolution).
 
         The circuit breaker counts a timeout and an unplayable stream; a
         stream resets it. A dead link, a failed request and a cut neither
@@ -836,7 +860,9 @@ class HosterResolverRegistry:
         cancels = _cancels()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
-                async with asyncio.timeout(self._resolve_timeout) as clock:
+                async with asyncio.timeout(
+                    self._resolve_timeout if bound is None else bound
+                ) as clock:
                     work = _started(
                         resolve or partial(resolver.resolve, url), clock, mark
                     )

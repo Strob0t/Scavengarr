@@ -96,7 +96,7 @@ _STAGES: dict[StageName, _StageSpec] = {
     # the resolve bound, and the wait for a page before it
     "hoster_pass_keep": _StageSpec(
         (),
-        (1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 30.0),
+        (1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 20.0, 30.0),
         "Captures of Filemoon's captcha pass keeper",
     ),
     # A span per segment would bury the requests in the traces

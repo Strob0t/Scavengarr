@@ -11,7 +11,10 @@ The keeper reads the pass's expiry from the kept capture state
 (``ClearanceStore``: a capture past a challenge keeps its state at once) and,
 once it has gone, resolves the link of the newest cached Filemoon stream
 again in the background. That capture meets the captcha, and its new pass
-is kept for the next request's capture. Only while there is demand: a
+is kept for the next request's capture. It has a bound of its own: the
+captcha comes with the player's first click, 3 s after the page has loaded,
+and within production's resolve bound (10 s) a slow load cut the capture
+before it (no pass; row 106's dev proofs). Only while there is demand: a
 request looked up a Filemoon link within 48 h (``demand_age()``: its cache
 hits count, a stream the keeper's capture cached included; the keeper's
 own lookups do not). Past that the keeper idles, and the next request's
@@ -50,9 +53,11 @@ _MARGIN_S = 30.0
 _RECHECK_S = 300.0
 # The wait for a free page while the stealth browser is busy
 _BUSY_S = 30.0
-# The capture's claim is due this long after its start: the page gate
-# serves it last and refuses it 3 s before
-_DUE_S = 30.0
+# The capture's bound in place of the resolve bound, and its page claim's
+# due (the page gate serves it last and refuses it 3 s before): a page load
+# of 8.6 s put the captcha past production's 10 s. 30 s is what a challenged
+# capture gets there in all, the bound and the 20 s completion
+_BOUND_S = 30.0
 # The keeping stops this long after a request's last Filemoon lookup
 _DEMAND_S = 48 * 3600.0
 
@@ -127,15 +132,17 @@ class PassKeeper:
         return _RECHECK_S
 
     async def _capture(self, link: str, *, gone_s: float) -> None:
-        """Resolve *link* past the cache and the challenge cooldown, as
-        background work and no demand. A capture the resolve bound cuts
-        after the captcha runs on as the registry's challenge completion,
-        which keeps the new pass when it finds the stream."""
+        """Resolve *link* past the cache and the challenge cooldown within
+        ``_BOUND_S``, as background work and no demand. A capture the bound
+        cuts after the captcha runs on as the registry's challenge
+        completion, which keeps the new pass when it finds the stream."""
         started = time.monotonic()
-        claim = page_claim.set(PageClaim("background", started + _DUE_S))
+        claim = page_claim.set(PageClaim("background", started + _BOUND_S))
         try:
             with self._telemetry.stage("hoster_pass_keep") as stage:
-                stream = await self._registry.resolve(link, refresh=True, demand=False)
+                stream = await self._registry.resolve(
+                    link, refresh=True, demand=False, bound=_BOUND_S
+                )
                 stage.outcome = "none" if stream is None else "stream"
         finally:
             page_claim.reset(claim)
