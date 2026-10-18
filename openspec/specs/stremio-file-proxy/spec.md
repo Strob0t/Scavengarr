@@ -1,7 +1,7 @@
 # stremio-file-proxy Specification
 
 ## Purpose
-Play the direct files that a hoster's CDN binds to the address that resolved them (DoodStream, MixDrop, Vinovo, FSST) through Scavengarr: such a stream goes to the player as `/proxy/<id>/file`, a byte-range pass-through, instead of a redirect to the CDN. How it behaves: `docs/features/stremio-addon.md`.
+Play the direct files that a hoster's CDN binds to the address that resolved them (DoodStream, MixDrop, Vinovo, FSST) through Scavengarr: such a stream goes to the player as `/proxy/<id>/file`, a byte-range pass-through, instead of a redirect to the CDN. How it behaves: `docs/current/stremio-addon.md`.
 
 ## Requirements
 

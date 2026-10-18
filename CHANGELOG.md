@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Stremio and Browser Docs Follow the Document Contract
+- `docs/current/stremio-addon.md` describes the addon: the endpoints, the `kitsu:` translation as a flowchart, the titles and the episode reference, the search cache's key (`v3`) and its entry states as a state diagram with the `X-Cache` and `X-Search-Complete` headers, the answer budget against the plugin timeout as a sequence, the plugin breaker (every timeout a failure; the old half-budget rule is gone), the episode filter, title matching, resolution, ranking, the streams, `/play` and both proxies.
+- `docs/how-to/stremio-deployment.md` holds the deployment steps: a streaming server of its own, Scavengarr and the streaming server behind a VPN container, and the AIOStreams settings.
+- `docs/current/browser-and-challenges.md` describes the shared browser, the stealth pool and its captures, the page gate as a flowchart with its adaptive budget, the clearance store and the capture state's life cycle as a state diagram, a challenge's outcome and cooldown, and the browser fallback of httpx plugins with its session adoption.
+- `docs/features/stremio-addon.md` is gone; every citation of it outside the CHANGELOG and the archived OpenSpec changes, and the captcha links of README.md and `docs/features/FEATURES.md`, name the successors.
+
 ### Changed: Two OpenSpec Changes Are Archived and Two Spec Gaps Closed
 
 - `add-stream-media-quality` and `place-episodes-by-number-first` are archived (`openspec/changes/archive/`), their requirements merged into `openspec/specs/stremio-stream-quality/`, `stremio-anime-episodes/` and `stremio-series-identity/`; `openspec/project.md` lists them as archived.

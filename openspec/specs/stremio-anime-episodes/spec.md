@@ -1,7 +1,7 @@
 # stremio-anime-episodes Specification
 
 ## Purpose
-Find an anime request's episode on sites that number episodes their own way: the request carries an episode reference (the English title, the air date and an absolute number, Kitsu's where one Kitsu entry counts the series), and plugins that declare episode location place it on the site's own season pages, or answer nothing for the series. How it behaves: `docs/current/plugins.md` and `docs/features/stremio-addon.md`.
+Find an anime request's episode on sites that number episodes their own way: the request carries an episode reference (the English title, the air date and an absolute number, Kitsu's where one Kitsu entry counts the series), and plugins that declare episode location place it on the site's own season pages, or answer nothing for the series. How it behaves: `docs/current/plugins.md` and `docs/current/stremio-addon.md`.
 
 ## Requirements
 

@@ -7,7 +7,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Python 3.12 – 3.14](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FStrob0t%2FScavengarr%2Fmain%2Fpyproject.toml&query=%24.tool.poetry.version&label=version&color=green)](CHANGELOG.md)
-[![Stremio addon](https://img.shields.io/badge/Stremio-addon-8A5AAB)](docs/features/stremio-addon.md)
+[![Stremio addon](https://img.shields.io/badge/Stremio-addon-8A5AAB)](docs/current/stremio-addon.md)
 [![Torznab](https://img.shields.io/badge/Torznab-Prowlarr%20%7C%20Sonarr%20%7C%20Radarr-orange)](docs/reference/torznab-api.md)
 
 [Quick Start](#quick-start) ·
@@ -216,7 +216,7 @@ The browser also needs system libraries: install them once with `sudo poetry run
    ```
 3. Click **Install**. Open any movie or episode; Scavengarr's streams appear in the stream list.
 
-Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr behind a reverse proxy with a certificate (Caddy, Traefik, nginx) when you use it from other devices; `docker-compose.yml` trusts the proxy's `X-Forwarded-Proto` from private networks (`FORWARDED_ALLOW_IPS`), so the links Scavengarr builds use `https://`. Details: [Stremio addon](docs/features/stremio-addon.md).
+Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr behind a reverse proxy with a certificate (Caddy, Traefik, nginx) when you use it from other devices; `docker-compose.yml` trusts the proxy's `X-Forwarded-Proto` from private networks (`FORWARDED_ALLOW_IPS`), so the links Scavengarr builds use `https://`. Details: [Deploying the Stremio addon](docs/how-to/stremio-deployment.md).
 
 ### Prowlarr (and through it Sonarr/Radarr)
 
@@ -298,7 +298,7 @@ Every stream passed a playback check when it was listed, and Scavengarr resolves
 <details>
 <summary><b>A site is behind Cloudflare or a captcha</b></summary>
 
-The built-in headful browser passes most Cloudflare challenges; in Docker it runs on a virtual display automatically. For sites it cannot pass, start the Byparr sidecar (`--profile solver`) and set `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`. See [Captcha solving](docs/archive/plans/captcha-solving.md).
+The built-in headful browser passes most Cloudflare challenges; in Docker it runs on a virtual display automatically. For sites it cannot pass, start the Byparr sidecar (`--profile solver`) and set `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`. See [Browser and challenges](docs/current/browser-and-challenges.md).
 
 </details>
 
@@ -339,7 +339,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Topic | Link |
 |---|---|
 | All documents | [docs/README.md](docs/README.md) |
-| Stremio addon | [docs/features/stremio-addon.md](docs/features/stremio-addon.md) |
+| Stremio addon | [docs/current/stremio-addon.md](docs/current/stremio-addon.md) |
 | Deployment | [docs/how-to/deploy.md](docs/how-to/deploy.md) |
 | Torznab API | [docs/reference/torznab-api.md](docs/reference/torznab-api.md) |
 | Torznab and CrawlJobs | [docs/current/torznab-and-crawljobs.md](docs/current/torznab-and-crawljobs.md) |

@@ -59,7 +59,9 @@ Every new or moved document adds its own line here, and every document follows t
 | Document | Status | What it holds |
 |---|---|---|
 | [`features/FEATURES.md`](features/FEATURES.md) | current | Every feature in one compact handbook. |
-| [`features/stremio-addon.md`](features/stremio-addon.md) | current | The Stremio addon: catalog, streams, matching, ranking and the proxies. |
+| [`current/stremio-addon.md`](current/stremio-addon.md) | current | The Stremio addon: the endpoints, anime ids, titles, the search cache, matching, ranking and the proxies. |
+| [`how-to/stremio-deployment.md`](how-to/stremio-deployment.md) | how-to | Deploying the addon with a streaming server, a VPN container and AIOStreams. |
+| [`current/browser-and-challenges.md`](current/browser-and-challenges.md) | current | The shared browser, the stealth pool, the page gate, the clearance store and capture state, and challenges. |
 | [`current/plugins.md`](current/plugins.md) | current | How plugins are discovered, loaded and called: the contract, the base classes, the search stages, episodes, selection and scores. |
 | [`current/plugin-domains.md`](current/plugin-domains.md) | current | The domain check, site moves, official domain lists and mirror groups. |
 | [`how-to/new-plugin.md`](how-to/new-plugin.md) | how-to | Writing a new plugin, from the site analysis to the regenerated plugin list. |

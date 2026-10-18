@@ -47,7 +47,7 @@ A start logs what it restored of the run before ([State across restarts](../feat
 - `hoster_state_restore_failed` only when that delete fails too, and `hoster_state_save_failed` for a failed write;
 - with the Redis backend, which swallows `RedisError`, `redis_get_error` and `redis_set_error` instead (a failed read then logs a zero `hoster_state_restored`).
 
-The search's log lines ([Stremio Addon](../features/stremio-addon.md#request-flow-stream-resolution)):
+The search's log lines ([Stremio addon](../current/stremio-addon.md#observability)):
 
 - `stremio_search_complete` per request with `source`, `complete` (no plugin missing from the answer's entry, no search running for it), `missing` (the plugins still to come), `dropped` (results the episode filter dropped) and the counts;
 - `stremio_search_completion` when the background search for an entry's missing plugins ends (`plugins`, `outcome` `complete` or `partial`, `unfinished`, `result_count`);

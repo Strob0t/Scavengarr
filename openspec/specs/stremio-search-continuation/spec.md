@@ -1,7 +1,7 @@
 # stremio-search-continuation Specification
 
 ## Purpose
-Keep what a cut search would lose: a Stremio request answers at its budget with the results known by then, while the plugins still running finish to their own timeout in the background, their results merge into the cached entry, and a partial entry names the plugins it still misses until one completion search fills it; the response headers say how complete an answer is. How it behaves: `docs/features/stremio-addon.md`.
+Keep what a cut search would lose: a Stremio request answers at its budget with the results known by then, while the plugins still running finish to their own timeout in the background, their results merge into the cached entry, and a partial entry names the plugins it still misses until one completion search fills it; the response headers say how complete an answer is. How it behaves: `docs/current/stremio-addon.md`.
 
 ## Requirements
 

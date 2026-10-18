@@ -1,7 +1,7 @@
 # stremio-anime-ids Specification
 
 ## Purpose
-Answer the stream requests of Stremio's anime catalogs, which open a title by its Kitsu id (`kitsu:<id>` or `kitsu:<id>:<episode>`): the id is translated to the IMDb title, season and episode the plugins search (the Anime Kitsu addon's meta first, Fribb's id list as the fallback). How it behaves: `docs/features/stremio-addon.md`.
+Answer the stream requests of Stremio's anime catalogs, which open a title by its Kitsu id (`kitsu:<id>` or `kitsu:<id>:<episode>`): the id is translated to the IMDb title, season and episode the plugins search (the Anime Kitsu addon's meta first, Fribb's id list as the fallback). How it behaves: `docs/current/stremio-addon.md`.
 
 ## Requirements
 

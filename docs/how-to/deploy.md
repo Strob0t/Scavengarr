@@ -205,7 +205,7 @@ curl http://localhost:7979/api/v1/torznab/indexers
 ```
 
 The startup log's `config_effective` line names every setting away from its default and the layer it came from ([startup log](../reference/configuration.md#startup-log)).
-Next: [connect Prowlarr](connect-prowlarr.md) or add the Stremio addon ([Stremio addon](../features/stremio-addon.md)).
+Next: [connect Prowlarr](connect-prowlarr.md) or add the Stremio addon ([Stremio addon](../current/stremio-addon.md)).
 
 ## Troubleshooting
 

@@ -1,7 +1,7 @@
 # stremio-series-identity Specification
 
 ## Purpose
-Keep other series of the same name out of a Stremio answer (an anime, its live-action series and a remake stay apart): the requested series' kind and first year come from Cinemeta, a result whose year lies outside the tolerance or whose category contradicts the kind is dropped, an IMDb id in the result decides over its title, and every dropped result logs its reason. How it behaves: `docs/features/stremio-addon.md`.
+Keep other series of the same name out of a Stremio answer (an anime, its live-action series and a remake stay apart): the requested series' kind and first year come from Cinemeta, a result whose year lies outside the tolerance or whose category contradicts the kind is dropped, an IMDb id in the result decides over its title, and every dropped result logs its reason. How it behaves: `docs/current/stremio-addon.md`.
 
 ## Requirements
 
