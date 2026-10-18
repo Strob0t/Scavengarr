@@ -2,9 +2,11 @@
 
 ``probe capture_state`` prints per kept host its age, each cookie's name,
 domain, path and remaining lifetime, and per origin the localStorage key
-names with their value lengths; then the stored clearance cookies alike.
-Read-only; prints names, lengths and times, never a value, and masks the
-id-like segments of names and paths (``mask()``).
+names with their value lengths and, for a value that is a JSON object, the
+epoch times among its top-level fields from now (Byse's captcha pass: its
+``expiresAt``); then the stored clearance cookies alike. Read-only;
+prints names, lengths and times, never a value, and masks the id-like
+segments of names and paths (``mask()``).
 """
 
 from __future__ import annotations
@@ -31,6 +33,9 @@ from scavengarr.infrastructure.config import load_config
 # characters with letters and digits (setting names such as i18nextLng are
 # shorter)
 _SEGMENT = re.compile(r"[^./:_-]+")
+# An epoch time in seconds, 2017 to 2049: smaller or larger numbers are no
+# time (an id, a count)
+_EPOCH, _EPOCH_END = 1.5e9, 2.5e9
 
 
 def _masked(segment: re.Match[str]) -> str:
@@ -77,17 +82,46 @@ def _cookie_line(cookie: Mapping[str, Any], now: float) -> str:
     )
 
 
-def _origin_line(origin: Mapping[str, Any]) -> str:
+def _times(value: str, now: float) -> list[str]:
+    """The epoch times among the top-level fields of *value*, a JSON
+    object (an expiry, in seconds or milliseconds), each from *now*; no
+    other field."""
+    try:
+        record = json.loads(value)
+    except ValueError:
+        return []
+    if not isinstance(record, dict):
+        return []
+    times = []
+    for key, field in record.items():
+        if isinstance(field, bool) or not isinstance(field, (int, float)):
+            continue
+        seconds = next(
+            (s for s in (field, field / 1000) if _EPOCH < s < _EPOCH_END), None
+        )
+        if seconds is not None:
+            when = (
+                f"in {span(seconds - now)}"
+                if seconds > now
+                else f"{span(now - seconds)} ago"
+            )
+            times.append(f"{mask(str(key))} {when}")
+    return times
+
+
+def _item(item: Mapping[str, Any], now: float) -> str:
+    value = str(item.get("value", ""))
+    details = ", ".join([f"{len(value)} chars", *_times(value, now)])
+    return f"{mask(str(item.get('name')))} ({details})"
+
+
+def _origin_line(origin: Mapping[str, Any], now: float) -> str:
     address = str(origin.get("origin", ""))
     host = urlsplit(address).hostname or address
     parts = []
     items = [i for i in origin.get("localStorage") or [] if isinstance(i, dict)]
     if items:
-        keys = ", ".join(
-            f"{mask(str(i.get('name')))} ({len(str(i.get('value', '')))} chars)"
-            for i in items
-        )
-        parts.append(f"localStorage {keys}")
+        parts.append(f"localStorage {', '.join(_item(i, now) for i in items)}")
     bases = [b for b in origin.get("indexedDB") or [] if isinstance(b, dict)]
     if bases:
         parts.append("IndexedDB " + ", ".join(str(b.get("name")) for b in bases))
@@ -126,7 +160,7 @@ def _state_lines(raw: str | bytes | None, now: float) -> list[str]:
         cookies = [c for c in entry.get("cookies") or [] if isinstance(c, dict)]
         origins = [o for o in entry.get("origins") or [] if isinstance(o, dict)]
         lines += [_cookie_line(c, now) for c in cookies]
-        lines += [_origin_line(o) for o in origins]
+        lines += [_origin_line(o, now) for o in origins]
         if not cookies and not origins:
             lines.append("- nothing kept")
     return lines

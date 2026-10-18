@@ -146,6 +146,60 @@ class TestMask:
         ]
 
 
+def _item_line(value: str) -> str:
+    states = {
+        "n1mwq.org": {
+            "saved_at": _NOW - 60,
+            "cookies": [],
+            "origins": [
+                {
+                    "origin": "https://n1mwq.org",
+                    "localStorage": [
+                        {"name": "byse:captcha-clearance:embed", "value": value}
+                    ],
+                }
+            ],
+        }
+    }
+    return _mod.report_lines(json.dumps(states), None, now=_NOW)[2]
+
+
+class TestTimes:
+    def test_a_json_items_epoch_times_show_from_now(self) -> None:
+        # Byse's captcha pass: a token and its expiry in epoch milliseconds
+        value = json.dumps({"token": "secret-7", "expiresAt": (_NOW + 23 * 60) * 1000})
+
+        assert _item_line(value) == (
+            "- origin n1mwq.org: localStorage byse:captcha-clearance:embed"
+            f" ({len(value)} chars, expiresAt in 23 min)"
+        )
+
+    def test_a_past_time_in_seconds(self) -> None:
+        value = json.dumps({"issuedAt": _NOW - 90, "count": 3})
+
+        assert _item_line(value).endswith(f"({len(value)} chars, issuedAt 1 min ago)")
+
+    def test_no_other_field_or_value_shows(self) -> None:
+        # An id-sized number, a string with digits, a nested time, a flag
+        value = json.dumps(
+            {
+                "user": 123456789012345,
+                "token": "secret-8",
+                "inner": {"expiresAt": _NOW * 1000},
+                "flag": True,
+            }
+        )
+
+        line = _item_line(value)
+
+        assert line.endswith(f"({len(value)} chars)")
+        assert "123456789012345" not in line and "secret-8" not in line
+
+    def test_a_value_that_is_no_json_object_shows_its_length(self) -> None:
+        for value in ("not json", "[1760000000]", "1760000000"):
+            assert _item_line(value).endswith(f"({len(value)} chars)")
+
+
 class TestLifetime:
     def test_the_spans(self) -> None:
         assert _mod.span(45) == "45 s"
