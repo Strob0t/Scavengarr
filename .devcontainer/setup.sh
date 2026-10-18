@@ -102,6 +102,21 @@ if command -v graphify >/dev/null 2>&1; then
     || echo "WARN: graphify install failed (optional)"
 fi
 
+# Serena (oraios/serena), the code-intelligence MCP server of .mcp.json: uv runs
+# it (uv tool install fetches the Python it asks for), and basedpyright's language
+# server is fetched ahead of the first session. Pinned: bump SERENA_VERSION together
+# with docs/agents/mcp-servers.md. Optional, warns only; safe to repeat.
+SERENA_VERSION="2.0.0"
+echo "[devcontainer] Installing Serena ${SERENA_VERSION}..."
+pipx install uv >/dev/null 2>&1 || pipx upgrade uv >/dev/null 2>&1 \
+  || echo "WARN: uv install failed (optional)"
+if command -v uv >/dev/null 2>&1; then
+  uv tool install -p 3.13 "serena-agent==${SERENA_VERSION}" </dev/null >/dev/null 2>&1 \
+    && serena init </dev/null >/dev/null 2>&1 \
+    && serena download-ls-dependencies python_basedpyright </dev/null >/dev/null 2>&1 \
+    || echo "WARN: Serena install failed (optional)"
+fi
+
 echo "[devcontainer] Configuring Poetry..."
 poetry config virtualenvs.in-project true
 

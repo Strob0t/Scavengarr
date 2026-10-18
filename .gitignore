@@ -73,6 +73,10 @@ coverage.xml
 # playwright-mcp session output (snapshots, console logs, screenshots)
 .playwright-mcp/
 
+# Serena (the MCP server of .mcp.json): project.yml is versioned, the rest is per machine
+.serena/*
+!.serena/project.yml
+
 # ── IDE ────────────────────────────────────────────
 # .vscode/
 # .idea/
