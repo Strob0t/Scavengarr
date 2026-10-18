@@ -7,7 +7,7 @@
 
 Scavengarr runs one headful Chromium for the work plain HTTP cannot do: the Playwright plugins, the plugin pages behind Cloudflare, the hoster captures and the link-outs.
 This document describes the shared browser, the stealth pool and its captures, the page gate and its budget, the clearance store and the capture state, a challenge's outcome and cooldown, and the browser fallback of httpx plugins with its session adoption.
-Which resolvers capture their streams is in [Hoster resolvers](../features/hoster-resolvers.md#browser-capture), and Filemoon's pass keeper in [its decision](../target/decisions/0009-pass-keeper-demand-bound.md).
+Which resolvers capture their streams is in [Hoster resolvers](hoster-resolvers.md#browser-captures), and Filemoon's pass keeper in [its decision](../target/decisions/0009-pass-keeper-demand-bound.md).
 
 ## How it works
 

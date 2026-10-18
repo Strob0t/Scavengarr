@@ -386,7 +386,7 @@ The domain check, the health prober and the link validator sent the shared clien
 
 ## HTML answers fail the CDN verification (2026-10-10, row 46)
 
-`verify_video_url()` (the XFS video path, VOE, Streamtape) counted any 200/206 as reachable, so a dead file that a CDN serves as an error page with 200 passed to the playback check, or with `stremio.verify_streams` off to Stremio. It rejects `text/html` now and asks a CDN that does not allow HEAD (405) for the first bytes, which must not be HTML either (5661f9e; `docs/features/hoster-resolvers.md` → CDN verification). Proof: the live resolver cases (`.cache/live/resolver-urls.json`, 18 resolvers, a live and a dead case each) on the dev container, once before and once after the change, minutes apart.
+`verify_video_url()` (the XFS video path, VOE, Streamtape) counted any 200/206 as reachable, so a dead file that a CDN serves as an error page with 200 passed to the playback check, or with `stremio.verify_streams` off to Stremio. It rejects `text/html` now and asks a CDN that does not allow HEAD (405) for the first bytes, which must not be HTML either (5661f9e; `docs/current/hoster-resolvers.md` → CDN checks). Proof: the live resolver cases (`.cache/live/resolver-urls.json`, 18 resolvers, a live and a dead case each) on the dev container, once before and once after the change, minutes apart.
 
 | Run | Passed | Failed live cases |
 |---|---|---|

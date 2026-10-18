@@ -40,7 +40,7 @@ poetry run python scripts/prodctl.py logs --since 1h --grep hoster_state_       
 - Records are cut to 400 characters; `--width 0` prints them whole, for a traceback's last lines (`--fields exception --width 0`).
 - `--grep` is a case-insensitive regex over the raw JSON record.
 
-A start logs what it restored of the run before ([State across restarts](../features/hoster-resolvers.md#registry-features)):
+A start logs what it restored of the run before ([State across restarts](../current/hoster-resolvers.md#caches-and-state-across-restarts)):
 
 - `hoster_state_restored` with the resolutions, redirects and breakers restored and the snapshot's `age_s` (zeros on the first start);
 - or `hoster_state_discarded` with its `reason` (`version`, `malformed`, `unreadable`); a read that fails ends as `unreadable` and the snapshot is deleted;

@@ -95,7 +95,7 @@ Scavengarr includes a full Stremio addon that provides catalog browsing, search,
 | Stremio search cache | [x] Implemented | Title-matching search results per title (`cache.search_ttl_seconds`), stale-while-revalidate (one refresh at a time), single-flight; requests read a running search's results as they arrive, plugins still running at the answer fill the cache |
 | Playback check | [x] Implemented | `verify_streams`: resolved URLs must return video/playlist bytes |
 | Measured quality and size | [x] Implemented | The playback check reads an HLS master playlist's largest resolution and a file's size; they replace the site's quality and fill a missing size, and the answer ranks by them |
-| Resolver state across restarts | [x] Implemented | Unexpired resolutions, redirects and the circuit breakers that are not closed go into one snapshot in the cache backend (`hoster_state:v1`, every 30 s when changed and at shutdown) and come back at the start, shortened by the downtime ([hoster-resolvers.md](hoster-resolvers.md#registry-features)) |
+| Resolver state across restarts | [x] Implemented | Unexpired resolutions, redirects and the circuit breakers that are not closed go into one snapshot in the cache backend (`hoster_state:v1`, every 30 s when changed and at shutdown) and come back at the start, shortened by the downtime ([Hoster resolvers](../current/hoster-resolvers.md#caches-and-state-across-restarts)) |
 | Scored plugin selection | [x] Implemented | Optional top-N plugin selection by score (`stremio.scoring_enabled`) |
 | Early-stop resolve | [x] Implemented | Resolution during the search; the answer goes out once `resolve_target_count` (default 5) hosters have a video |
 
@@ -175,7 +175,7 @@ These resolvers confirm the embed URL is alive and return it unchanged.
 | Live contract tests | [x] Implemented | Opt-in live checks of every resolver (`tests/live/test_resolver_live.py`): one hoster page per resolver from an untracked list that `scripts/probes/resolver_urls.py` builds; the module skips without it |
 | Live Stremio use case | [x] Implemented | Opt-in end-to-end run of the in-process app: stream list for a film and a series episode, then playlist + first segment of a stream like a player (`tests/live/test_stremio_e2e_live.py`) |
 
-**Detailed docs:** [Hoster Resolvers](./hoster-resolvers.md)
+**Detailed docs:** [Hoster Resolvers](../current/hoster-resolvers.md)
 
 ---
 

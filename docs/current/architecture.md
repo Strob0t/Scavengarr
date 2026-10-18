@@ -152,7 +152,7 @@ Hoster resolvers:
 | `infrastructure/hoster_resolvers/xfs.py` | `XFSResolver`, `XFSConfig`, `create_all_xfs_resolvers` | The XFileSharingPro hosters, one config constant each. |
 | `infrastructure/hoster_resolvers/generic_ddl.py` | `GenericDDLResolver`, `GenericDDLConfig`, `create_all_ddl_resolvers` | The generic direct-download hosters, one config constant each. |
 
-The other modules of `infrastructure/hoster_resolvers/` hold one dedicated resolver each; the list is in [`docs/features/hoster-resolvers.md`](../features/hoster-resolvers.md).
+The other modules of `infrastructure/hoster_resolvers/` hold one dedicated resolver each; the list is in [`docs/reference/resolvers.md`](../reference/resolvers.md).
 
 Plugins, scoring and the Stremio processing:
 

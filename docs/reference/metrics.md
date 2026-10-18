@@ -103,7 +103,7 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 - `hoster_challenge_completion` times a capture the resolve bound cut after a challenge, run on in the background, from the cut to its end.
 - Its outcomes: `stream` (judged and cached under its link), `none` (no stream, an error, or a stream the judgement refused) and `cancelled` (the 20 s deadline or shutdown).
 - A `none` or a `cancelled` while the challenge stands steps the hoster's challenge cooldown up; no stream past the challenge is a dead link, cached as one.
-- `hoster_pass_keep` times Filemoon's pass keeper: the capture of a cached Filemoon link once the kept captcha pass has gone, from its start to the resolution's end ([Browser capture](../features/hoster-resolvers.md#browser-capture)).
+- `hoster_pass_keep` times Filemoon's pass keeper: the capture of a cached Filemoon link once the kept captcha pass has gone, from its start to the resolution's end ([Filemoon's pass keeper](../current/hoster-resolvers.md#filemoons-pass-keeper)).
 - Its outcomes: `stream`, `none` (no stream within the bound; a capture the bound cut after the captcha runs on as a `hoster_challenge_completion`), *`busy`* (no page stays free beside its own: it looks again 30 s later), *`no_link`* (no cached Filemoon stream) and *`idle`* (no request looked up a Filemoon link within 48 h).
 - The pass keeper's capture counts as a `hoster_resolve` too.
 
@@ -142,7 +142,7 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 - the plugin statistics, from the same metrics;
 - the event-loop lag of the last 5 minutes (p50, p99, max);
 - the plugin circuit breakers (the hoster breakers only in `/metrics`);
-- `unresolved_hosters`: the 20 hosters probed most often for want of a resolver, an open set of names and so no Prometheus label ([Hoster resolvers](../features/hoster-resolvers.md#architecture));
+- `unresolved_hosters`: the 20 hosters probed most often for want of a resolver, an open set of names and so no Prometheus label ([Hoster resolvers](../current/hoster-resolvers.md#dispatch));
 - `hoster_state`: what the start restored of the run before (`restored_at`, the snapshot's `age_s`, `resolutions`, `redirects`, `breakers`);
 - the concurrency pool and the shutdown state.
 

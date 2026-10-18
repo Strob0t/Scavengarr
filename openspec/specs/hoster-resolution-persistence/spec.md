@@ -1,7 +1,7 @@
 # hoster-resolution-persistence Specification
 
 ## Purpose
-Let a restart keep what the hoster resolver registry learned: the resolution outcomes, the redirect map and the open circuit breakers go to one snapshot in the cache backend and come back before the app reports ready, their lifetimes shortened by the downtime. How it behaves: `docs/features/hoster-resolvers.md`.
+Let a restart keep what the hoster resolver registry learned: the resolution outcomes, the redirect map and the open circuit breakers go to one snapshot in the cache backend and come back before the app reports ready, their lifetimes shortened by the downtime. How it behaves: `docs/current/hoster-resolvers.md`.
 
 ## Requirements
 

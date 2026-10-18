@@ -147,7 +147,7 @@ poetry run python scripts/generate_plugin_list.py
 
 ## Adding a hoster resolver
 
-Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters built on XFileSharing or a generic direct-download pattern only need a new config constant (`XFSConfig` in `xfs.py`, `GenericDDLConfig` in `generic_ddl.py`) — no new tests or wiring. Everything else gets its own resolver with `respx`-based tests. JDownloader's open-source hoster plugins are a good reference for how a hoster works. Guide: [docs/features/hoster-resolvers.md → Adding a New Resolver](docs/features/hoster-resolvers.md).
+Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters built on XFileSharing or a generic direct-download pattern only need a new config constant (`XFSConfig` in `xfs.py`, `GenericDDLConfig` in `generic_ddl.py`) — no new tests or wiring. Everything else gets its own resolver with `respx`-based tests. JDownloader's open-source hoster plugins are a good reference for how a hoster works. Guide: [docs/how-to/new-resolver.md](docs/how-to/new-resolver.md); the registered resolvers: [docs/reference/resolvers.md](docs/reference/resolvers.md).
 
 ---
 

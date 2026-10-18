@@ -353,7 +353,9 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
 | Plugin domains | [docs/current/plugin-domains.md](docs/current/plugin-domains.md) |
 | Writing a plugin | [docs/how-to/new-plugin.md](docs/how-to/new-plugin.md) |
-| Hoster resolvers | [docs/features/hoster-resolvers.md](docs/features/hoster-resolvers.md) |
+| Resolver list | [docs/reference/resolvers.md](docs/reference/resolvers.md) |
+| Hoster resolvers | [docs/current/hoster-resolvers.md](docs/current/hoster-resolvers.md) |
+| Writing a resolver | [docs/how-to/new-resolver.md](docs/how-to/new-resolver.md) |
 | Link validation | [docs/current/link-validation.md](docs/current/link-validation.md) |
 | Architecture | [docs/current/architecture.md](docs/current/architecture.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |

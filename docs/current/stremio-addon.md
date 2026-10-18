@@ -10,7 +10,7 @@ It also serves two catalogs, plays its streams through `/play` and its proxies, 
 This document describes the endpoints, how a request turns into streams (titles, matching, the search cache, ranking) and how a stream plays.
 The request's sequence in full is in [the architecture](architecture.md#the-stremio-stream-request), and the plugins' slots and timeouts are in [the Stremio search timing](architecture.md#the-stremio-search-timing).
 How the plugins are selected and how they place an episode is in [Plugins](plugins.md).
-How a link resolves is in [Hoster resolvers](../features/hoster-resolvers.md), and the browser pages and challenges are in [Browser and challenges](browser-and-challenges.md).
+How a link resolves is in [Hoster resolvers](hoster-resolvers.md), and the browser pages and challenges are in [Browser and challenges](browser-and-challenges.md).
 Running the addon with a streaming server of its own, behind a VPN container or behind AIOStreams is in [Deploying the Stremio addon](../how-to/stremio-deployment.md).
 
 ## How it works
@@ -214,7 +214,7 @@ After the cooldown one probe request is allowed (half-open), and the concurrent 
 A probe that never reports is replaced by the next request after one more cooldown.
 A success closes the breaker and resets its cooldown, and a failure opens it again with twice the cooldown, up to 1 h.
 The values are fixed in the composition root.
-The open breakers outlive a restart in the hoster state snapshot, their cooldowns shortened by the downtime ([Hoster resolvers](../features/hoster-resolvers.md#registry-features)).
+The open breakers outlive a restart in the hoster state snapshot, their cooldowns shortened by the downtime ([Hoster resolvers](hoster-resolvers.md#caches-and-state-across-restarts)).
 The hoster resolvers have a breaker of their own per resolver, described there.
 
 ### Episode filter
@@ -268,7 +268,7 @@ Each batch of results is ranked with the ones before, and among the top `stremio
 The streams of one hoster and language resolve in rank order: the next one only after the better one failed, and none while one runs or after one resolved.
 A better-ranked link that arrives later resolves too, and each URL resolves once.
 A link that better ones push out of the top `stremio.max_probe_count` is cancelled, and its slot frees.
-With `stremio.verify_streams` every resolved URL must also pass the playback check ([Hoster resolvers](../features/hoster-resolvers.md#playback-check)).
+With `stremio.verify_streams` every resolved URL must also pass the playback check ([Hoster resolvers](hoster-resolvers.md#cdn-checks)).
 Each hoster and language thus contributes its best working stream (`hoster_key()`: dub and sub on one hoster are different content), and a hoster whose best link is dead still contributes its next one.
 A stream whose link does not resolve, only echoes the embed page, lies beyond `stremio.max_probe_count` or is cancelled at the answer is left out.
 `ResolveFlow` decides when the answer is due, by the answer rule of [the architecture](architecture.md#the-stremio-stream-request).
