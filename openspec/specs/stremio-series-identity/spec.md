@@ -9,11 +9,11 @@ Keep other series of the same name out of a Stremio answer (an anime, its live-a
 The title resolution SHALL read the request's Cinemeta meta (`/meta/<type>/<imdb>.json`) once per request, cached for 7 days, and SHALL set `TitleMatchInfo.imdb_id` to the request's IMDb id and `TitleMatchInfo.animation` to whether the meta's genres name "Animation"; without a meta `animation` SHALL be `None`. The lookup SHALL be recorded as a `stremio_phase` stage with `phase="series_meta"`.
 
 #### Scenario: An animated series
-- **WHEN** the meta of `tt0388629` lists the genres Animation, Action and Adventure
-- **THEN** the reference's `animation` is `True` and its `imdb_id` is `tt0388629`
+- **WHEN** the meta of `<Anime A>` lists the genres Animation, Action and Adventure
+- **THEN** the reference's `animation` is `True` and its `imdb_id` is `<Anime A>`
 
 #### Scenario: A live-action series
-- **WHEN** the meta of `tt11737520` lists Action, Adventure and Comedy
+- **WHEN** the meta of `<Anime A (live action)>` lists Action, Adventure and Comedy
 - **THEN** the reference's `animation` is `False`
 
 #### Scenario: Cinemeta does not answer
@@ -24,7 +24,7 @@ The title resolution SHALL read the request's Cinemeta meta (`/meta/<type>/<imdb
 The title matcher SHALL drop a result whose year is known and differs from the reference's year by more than the tolerance (3 years for a series, 1 for a movie), whatever its title score; a year within the tolerance SHALL keep today's bonus. The result's year SHALL come from its title, its release name, guessit, or `metadata["year"]` (an int or a string of digits), in that order.
 
 #### Scenario: The live-action release against the anime
-- **WHEN** the reference is "One Piece" (1999, series) and a result's release name is `One.Piece.2023.S01E01.GERMAN.DL.720p.WEB.h264-SAUERKRAUT`
+- **WHEN** the reference is "Anime A" (1999, series) and a result's release name is `Anime.A.2023.S01E01.GERMAN.DL.720p.WEB.h264-SAUERKRAUT`
 - **THEN** the result is dropped with the reason `year`
 
 #### Scenario: The year sits in the metadata
@@ -32,7 +32,7 @@ The title matcher SHALL drop a result whose year is known and differs from the r
 - **THEN** the year 2023 is compared like a year from the title
 
 #### Scenario: A remake of a film
-- **WHEN** the reference is "Dune" (2021, movie) and a result's title is "Dune (1984)"
+- **WHEN** the reference is "Movie A" (2021, movie) and a result's title is "Movie A (1984)"
 - **THEN** the result is dropped
 
 #### Scenario: No year on either side
@@ -40,18 +40,18 @@ The title matcher SHALL drop a result whose year is known and differs from the r
 - **THEN** the text rules alone decide
 
 #### Scenario: A year that is part of the title
-- **WHEN** the reference is "Blade Runner 2049" (2017, movie) and a result's title is "Blade Runner 2049"
+- **WHEN** the reference is "Movie I" (2017, movie) and a result's title is "Movie I"
 - **THEN** 2049 is not compared as a release year and the result is kept
 
 ### Requirement: An IMDb Id In The Result Decides
 When a result's `metadata` carries `imdb` or `imdb_id` that normalises to `tt` plus digits, the matcher SHALL keep the result if it equals the reference's `imdb_id` and drop it if it differs, without regard to the title score.
 
 #### Scenario: Same id
-- **WHEN** the reference's `imdb_id` is `tt0388629` and the result's `metadata["imdb"]` is `tt0388629`
+- **WHEN** the reference's `imdb_id` is `<Anime A>` and the result's `metadata["imdb"]` is `<Anime A>`
 - **THEN** the result is kept with the score 1.2
 
 #### Scenario: Other id
-- **WHEN** the result's `metadata["imdb_id"]` is `tt11737520` for the same reference
+- **WHEN** the result's `metadata["imdb_id"]` is `<Anime A (live action)>` for the same reference
 - **THEN** the result is dropped with the reason `imdb`
 
 ### Requirement: Category Against The Reference's Kind
@@ -87,8 +87,8 @@ The matcher SHALL read a result's kind from its label and genres: 5070 means ani
 ### Requirement: A Year Suffix Is Not A Title Word
 `relevant_hits` SHALL ignore a trailing `(YYYY)` of a hit's title when it counts the hit's words, so a hit with the suffix is as exact as one without.
 
-#### Scenario: Both One Piece pages are scraped
-- **WHEN** a site's search lists "One Piece" and "One Piece (2023)" for the query "One Piece" with a single-title limit
+#### Scenario: Both Anime A pages are scraped
+- **WHEN** a site's search lists "Anime A" and "Anime A (2023)" for the query "Anime A" with a single-title limit
 - **THEN** both hits are kept
 
 ### Requirement: The Year Penalty Setting Is Removed

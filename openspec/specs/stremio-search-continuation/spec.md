@@ -103,15 +103,15 @@ A plugin whose domain check finds no reachable domain during a search SHALL rais
 For a series request the episode filter SHALL read season and episode from the result's metadata (`season`, `episode`) before the release-name guess, SHALL pass a result without an episode number only through the links labelled with the requested episode, SHALL pass a result with an episode but no season only for season 1 or a metadata season, and SHALL count the dropped results per plugin in the plugin record (`dropped`).
 
 #### Scenario: Show page without labelled links
-- **WHEN** a result's title is `Severance` with no episode and none of its links carries an `SxxExx` label
+- **WHEN** a result's title is `Series H` with no episode and none of its links carries an `SxxExx` label
 - **THEN** the result is dropped and the plugin record counts one `dropped`
 
 #### Scenario: Season pack with labelled links
-- **WHEN** a result's title is `Severance S01` and its links carry `S01E04` and `S01E05` labels, for a request of S01E05
+- **WHEN** a result's title is `Series H S01` and its links carry `S01E04` and `S01E05` labels, for a request of S01E05
 - **THEN** the result passes with the `S01E05` link only
 
 #### Scenario: Episode without season for season 2
-- **WHEN** a result's title is `Severance E05` with no season and no metadata, for a request of S02E05
+- **WHEN** a result's title is `Series H E05` with no season and no metadata, for a request of S02E05
 - **THEN** the result is dropped
 
 #### Scenario: Metadata trusted
@@ -119,7 +119,7 @@ For a series request the episode filter SHALL read season and episode from the r
 - **THEN** the result passes
 
 ### Requirement: Series Hit Audit
-`scripts/probes/series_episodes.py` SHALL run the plugin searches for the series of `docs/plans/round-titles.txt` plus Severance S01E05 and S02E05 and print per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, and leaks (kept results whose labels name another episode). The audit SHALL run before and after the filter change, with both tables recorded in `docs/plans/series-episodes.md`.
+`scripts/probes/series_episodes.py` SHALL run the plugin searches for the series of `docs/plans/round-titles.txt` plus Series H S01E05 and S02E05 and print per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, and leaks (kept results whose labels name another episode). The audit SHALL run before and after the filter change, with both tables recorded in `docs/plans/series-episodes.md`.
 
 #### Scenario: Audit before the change
 - **WHEN** the audit runs on the dev server with today's filter

@@ -38,8 +38,8 @@ A page that got past its challenge (an interstitial that cleared, a widget whose
 After a `challenge` whose challenge stood the registry SHALL skip the hoster's links for 1 minute, and for 5, 15 and then 30 minutes after each further consecutive one, staying at 30. A stream from the hoster SHALL end the cooldown and reset its steps; a passed challenge SHALL NOT end it. A skipped link SHALL be logged as `hoster_resolve_challenge_cooldown`, counted, and not cached. The cooldown SHALL be checked before the breaker and SHALL NOT outlive a restart.
 
 #### Scenario: The first challenge
-- **WHEN** Filemoon's resolution ends as `challenge` at 12:00:00
-- **THEN** Filemoon's links are skipped until 12:01:00
+- **WHEN** Filemoon's resolution ends as `challenge`
+- **THEN** Filemoon's links are skipped until then
 - **AND** the next one after that is resolved
 
 #### Scenario: The steps

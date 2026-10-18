@@ -103,7 +103,7 @@ parser fixes themselves (they follow from the audit as their own steps).
 7. **The hit-rate condition.** `scripts/probes/series_episodes.py` runs the
    plugin searches of a dev server (or the plugins directly through the
    registry) for the series ids of `docs/plans/round-titles.txt` plus
-   Severance S01E05 and S02E05, and prints per plugin: results, with season
+   Series H S01E05 and S02E05, and prints per plugin: results, with season
    and episode, with episode only, without either, kept, narrowed, dropped,
    and the kept results whose labels name another episode (leaks). It runs
    before the filter change (baseline) and after it; both tables go to

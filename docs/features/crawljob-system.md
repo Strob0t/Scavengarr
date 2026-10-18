@@ -164,8 +164,8 @@ class Priority(str, Enum):
 
 text=https://hoster1.example/file/abc
 https://hoster2.example/file/def
-packageName=Iron Man
-filename=Iron.Man.2008.1080p.BluRay.x264
+packageName=Movie O
+filename=Movie.O.2008.1080p.BluRay.x264
 comment=Size: 4.2 GB | Source: https://indexer.example/movie/123
 autoStart=TRUE
 autoConfirm=UNSET
@@ -322,7 +322,7 @@ Live smoke (one grab per plugin, opt-in): `tests/live/test_grab_resolve_live.py`
 ```json
 {
   "job_id": "a1b2c3d4-...",
-  "package_name": "Iron Man",
+  "package_name": "Movie O",
   "created_at": "2025-01-15T12:00:00+00:00",
   "expires_at": "2025-01-15T13:00:00+00:00",
   "is_expired": false,

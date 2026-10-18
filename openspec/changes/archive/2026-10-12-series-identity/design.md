@@ -29,13 +29,13 @@ through the Anime Kitsu addon, else Fribb's list; after that the sites are
 assumed to count as IMDb does.
 
 Verified on 2026-10-09 (read-only): Cinemeta's series meta carries `genres`
-(One Piece 1999: Animation, Action, Adventure; One Piece 2023: Action,
+(Anime A 1999: Animation, Action, Adventure; Anime A 2023: Action,
 Adventure, Comedy) and `videos` with `season`, `episode`, `name` and
 `released`; aniworld's season pages list each episode as
 `<td class="seasonEpisodeTitle"><a href=".../staffel-2/episode-1"><strong>
 German title</strong> - <span>English title [Episode 062]</span></a>`, with
-the absolute number only for long-runners (One Piece yes, Demon Slayer no);
-the Anime Kitsu addon numbers One Piece absolutely (video 62 → S5E2, 1089 →
+the absolute number only for long-runners (Anime A yes, Anime H no);
+the Anime Kitsu addon numbers Anime A absolutely (video 62 → S5E2, 1089 →
 S22E4) and its titles equal Cinemeta's names.
 
 ## Goals / Non-Goals
@@ -48,7 +48,7 @@ nothing; every drop names its reason; no new configuration.
 Non-goals: Torznab search is untouched (the gates live in the Stremio
 matcher); no title-only search for Kitsu ids without an IMDb id (the spike's
 decision stands); no new sources; a site that shows neither year nor genre
-nor IMDb id for its "One Piece" page stays ambiguous, and the follow-up for
+nor IMDb id for its "Anime A" page stays ambiguous, and the follow-up for
 such plugins (store the detail page's year) is listed from the probe, not
 built here.
 
@@ -82,7 +82,7 @@ scores exactly the threshold, and any smaller penalty keeps it, any larger one
 also drops near-exact titles with the right year's bonus missing. The
 tolerances stay (series 3 years, movies 1 year), so a site's start year off by
 one or two passes. A year that is a token of the reference title itself
-("Blade Runner 2049" for the 2017 film, "2001: A Space Odyssey") is no release
+("Movie I" for the 2017 film, "2001: A Space Odyssey") is no release
 year and is not compared; today's penalty kept such results at exactly the
 threshold, and the gate would drop them. The result's year comes from the
 title, the release name,
@@ -90,7 +90,7 @@ guessit, and now `metadata["year"]` (int, or a string of digits), which
 kinoger, megakino, streamkiste, hdfilme, streamcloud, movie2k, moflix, cine,
 serienfans, filmfans, animeloads and fireani already store. Rollout is
 measured: the title probe over the series set of `docs/plans/title-matching.md`
-and the three One Piece ids runs before and after; a result the year rule
+and the three Anime A ids runs before and after; a result the year rule
 drops that the old rule kept is listed, and a plugin whose stored year is not
 the series' start year (a long-runner labelled with its latest season) gets
 its `metadata["year"]` excluded from the rule by name until it stores the
@@ -131,7 +131,7 @@ evidence.
 ### A year suffix is not a title word
 
 `relevant_hits` strips a trailing `(YYYY)` from a hit's title before counting
-its words, so "One Piece (2023)" has no extra word next to "One Piece": both
+its words, so "Anime A (2023)" has no extra word next to "Anime A": both
 hits are scraped, both results reach the matcher, and the year decides. The
 plugin keeps the suffix in the result title (sto does), so
 `_extract_result_year` sees it.
@@ -143,13 +143,13 @@ plugin keeps the suffix in the result title (sto does), so
 (`released[:10]`), `absolute: int | None`. The use case builds it after the
 title lookup: `title` and `aired` from the Cinemeta list's entry for the
 request's season and episode; `absolute` is the entry's position in the
-list's regular seasons ordered by season and episode (One Piece S5E2 → 62,
+list's regular seasons ordered by season and episode (Anime A S5E2 → 62,
 exact; S22E4 → 1088 where aniworld reads 1089, so the number is an estimate
 the title confirms); a `kitsu:` request's episode number replaces it when it
 lies within 5 of the position, or when the list lacks the episode. A Kitsu
-entry that spans the whole series counts as the sites do (One Piece,
-`kitsu:12`: 1089 → S22E4), but Kitsu has an entry per season for most anime
-(Attack on Titan), whose numbers count from that season's first episode and
+entry that spans the whole series counts as the sites do (Anime A,
+`kitsu:<Anime A>`: 1089 → S22E4), but Kitsu has an entry per season for most anime
+(Anime G), whose numbers count from that season's first episode and
 would place the episode in season 1; the position check tells the two apart. A reference needs a title or an absolute number: without a
 Cinemeta meta, and for an episode the list lacks (the newest episode of a
 running anime, which the catalog adds with a delay) when no Kitsu number is
@@ -167,7 +167,7 @@ With a reference, `aniworld.py` reads the series page's season links and
 every season page's rows (bounded by the plugin's detail-page semaphore),
 keeps `(season, episode, german, english, absolute)` per row, and caches the
 index for 7 days under `aniworld:episodes:v1:<slug>` in the plugin's cache
-(One Piece: 23 pages once a week; most anime: one to five). Locate order:
+(Anime A: 23 pages once a week; most anime: one to five). Locate order:
 
 1. `absolute` given and the index has numbers: the row with that number and
    its neighbours within 5; of those, the best title match
@@ -211,12 +211,11 @@ answer shows the episode fields (number, title).
 - The aniworld index costs one page per season on first use; the semaphore
   bounds it and the cache keeps it weekly. A series page without season links
   (a film) gets no index and answers as today.
-- Title variants (One Piece S1E1: "...Who Will Become the Pirate King!" against
+- Title variants (Anime A S1E1: "...Who Will Become the Pirate King!" against
   Cinemeta's "...Who's Gonna Be King of the Pirates!") are why rule 1 confirms
   by a low bar (0.6) and rule 3 demands a high one (0.85).
 - A number-only site (s.to's anime rows) is placed by the catalog's position
-  alone, which can differ from the site's count by one for a long-runner (One
-  Piece: 1088 where the site reads 1089); `site_episode` and
+  alone, which can differ from the site's count by one for a long-runner (Anime A: 1088 where the site reads 1089); `site_episode` and
   `episode_located_by="number"` make it visible, and the 7.2 probe reports it.
 - A specials request (season 0) builds a reference without an absolute number
   (the position counts regular seasons only), so a number-only site cannot

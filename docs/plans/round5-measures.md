@@ -127,7 +127,7 @@ The backend saves about a quarter of the proxy's CPU (15–27% across the runs).
 
 ## 9. Answer at 5 streams, when done, at most 60 s
 
-**Problem.** The first answer goes out at the soft deadline (7 s) plus the resolve grace, also when slow plugins would deliver (kinoking about 8.5 s, s.to's gate about 20 s, kinoger with a Cloudflare solve): in the fifth round 6 of 17 titles had fewer than 5 streams in the first answer (Good Bye Lenin, Breaking Bad, Dark and Haus des Geldes 1 each, Stranger Things and The Last of Us 4), 4 still after the late plugins. Titles with many streams wait for the deadline all the same.
+**Problem.** The first answer goes out at the soft deadline (7 s) plus the resolve grace, also when slow plugins would deliver (kinoking about 8.5 s, s.to's gate about 20 s, kinoger with a Cloudflare solve): in the fifth round 6 of 17 titles had fewer than 5 streams in the first answer (Movie L, Series D, Series C and Series E 1 each, Series F and Series G 4), 4 still after the late plugins. Titles with many streams wait for the deadline all the same.
 
 **Design.**
 - The answer goes out when 5 playable streams of different hosters are resolved (`stremio.resolve_target_count`, default 5), or when every plugin and every resolution is done, at the latest at `stremio.stream_deadline_seconds` (60 s).

@@ -77,7 +77,7 @@ Live, Patchright headful under Xvfb:
 - Links per release and episode: `POST /ajax/captcha` with `enc=base64(["media",<slug>,"downloads",<release>,<episode index | "cnl">])` and `response=nocaptcha` → `{"code":"error","message":"noadblock"}`, i.e. captcha required.
 - Captcha: `POST /files/captcha {cID:0, rT:1}` → 5 image hashes (48×48 PNG, `GET /files/captcha?cid=0&hash=<h>`); the odd one out has ~4× the pixel difference of the others (7448 vs ~1888). Comparing the images on a canvas inside the page solves it without Python image libraries; `{cID:0, pC:<hash>, rT:2}` → `"1"`; then `POST /ajax/captcha {enc, response:"captcha", captcha-idhf:0, captcha-hf:<hash>}` → `{"code":"success", "content":{…{"hoster":"rapidgator","cnl":{"jk","crypted"}}}}`. Solved on the first try in 1.5 s.
 - The requests must run in the page's main world with the site's jQuery (`page.evaluate(..., isolated_context=False)`; Patchright isolates `evaluate` by default).
-- Links come as Click'n'Load: AES-128-CBC, key = IV = `unhexlify(jk)` (some clients swap hex chars 15/16), zero padding → `https://rapidgator.net/file/…/onepunchman.1080p.e01.rar.html`.
+- Links come as Click'n'Load: AES-128-CBC, key = IV = `unhexlify(jk)` (some clients swap hex chars 15/16), zero padding → `https://rapidgator.net/file/…/Anime N.1080p.e01.rar.html`.
 - Error messages: `slowdown` (rate limit), `wrong_captcha`, `cnl_login`.
 
 Follow-up findings: the whole-release request (`"cnl"`) needs a login (`cnl_login`); anonymously every episode needs its own captcha. Rapid captcha bursts get `wrong_captcha` or rejected answers, so grabs pace ~6 s per episode.

@@ -25,7 +25,7 @@ The CUII (Clearingstelle Urheberrecht im Internet) list of domains that German I
 | megakino, megakino1–17 | 99 | megakino21.com (44), 16 NXDOMAIN, rest timeouts or empty pages | `megakino` |
 | hdfilme | 10 | hdfilme.ceo (5); hdfilme.app NXDOMAIN | `hdfilme` |
 | filmpalast | filmpalast.to | filmpalast.to | `filmpalast` |
-| filmpalast | filmpalast.one, .pro | filmpalast.one: **not filmpalast**, a fourth theme of the hdfilme database (Oppenheimer is news id 23684, as on hdfilme, streamcloud, streamkiste) | (hdfilme mirror group) |
+| filmpalast | filmpalast.one.pro | filmpalast.one: **not filmpalast**, a fourth theme of the hdfilme database (Movie B is news id 23684, as on hdfilme, streamcloud, streamkiste) | (hdfilme mirror group) |
 | streamcloud | 5 | streamcloud.download (.forum, .plus, .press, .uno redirect there); **streamcloud.my is a gambling site** | `streamcloud` |
 | serienstream | serienstream.to, .cx | serienstream.to | `sto` |
 | s | s.to | NXDOMAIN worldwide (gone, not blocked) | (`sto`) |
@@ -82,7 +82,7 @@ Every other film or series site on the list has a plugin. The rest of the list i
 | Streamtape, Vidoza | cine | `streamtape`, `vidoza` | cine serves downloads only |
 | Rapidgator, DDownload, 1fichier, Katfile, Turbobit, Uploaded, Filer.net | serienjunkies, serienfans, filmfans (the latter two in filecrypt containers) | all registered (DDL validation) | Torznab only |
 | gxplayer (watch.gxplayer.xyz) | megakino ("Stream in HD", the second link of each film) | `gxplayer` (since 2026-10-02) | HLS master from the watch page's video object (port of JDownloader's `GxplayerXyz`); 5 of 5 films play |
-| kinoger.pw | kinoger ("Stream HD" tab; the only one on some series such as "Dune: Prophecy") | `strmup` (since 2026-10-02) | a white-label Vidara player (`POST /api/stream`); claimed by host, since kinoger.ru links redirect to VOE; 4 of 4 play |
+| kinoger.pw | kinoger ("Stream HD" tab; the only one on some series such as "Movie A: Prophecy") | `strmup` (since 2026-10-02) | a white-label Vidara player (`POST /api/stream`); claimed by host, since kinoger.ru links redirect to VOE; 4 of 4 play |
 | fsst (fsst.online) | kinoger (first player tab; the only one on its single-player pages) | `fsst` (stream extraction since 2026-10-02) | Kernel Video Sharing player, Playerjs quality list, best `get_file` MP4; 8 of 8 play. The former DDL config matched no kinoger link |
 | kinoger.p2pplay.pro | none (0 of 19 current kinoger pages) | none, not built | an obfuscated single-page app with AES-encrypted API answers and ad gating; the only known id (`#n6lc6`, from old plugin docs) starts no stream in a browser |
 | **rubyvidhub** (rubyvidhub.com) | kinoger ("go" player tab, 1 of 26 collected links) | **none** | origin down: Cloudflare 522 on two probes an hour apart (2026-10-02), streamruby.com as well; not analysable, not built |

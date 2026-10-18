@@ -25,7 +25,7 @@ As of 2026-09-29 (the status line has what changed since): the code is in good s
 |---|---|
 | Code | `src/` ~21k lines, 41 plugins ~18k lines, tests ~61k lines; largest modules ~700–800 lines (megakino, animeloads, sto, config schema, Stremio stream use case) |
 | Tests | 4547 tests pass (from 3611 unit, 172 E2E and 37 integration test functions), 94 % line coverage of `src/` and `plugins/`; pre-commit green |
-| Live | Stremio end-to-end passes (Oppenheimer and Breaking Bad S01E01 each play a stream); 20 of 35 plugin smoke tests return results ([details](#live-smoke-run-2026-09-29)) |
+| Live | Stremio end-to-end passes (Movie B and Series D S01E01 each play a stream); 20 of 35 plugin smoke tests return results ([details](#live-smoke-run-2026-09-29)) |
 | Release | `main` is at `a08ed04` "test claude" (2026-02-09), `staging` is 536 commits ahead; version `0.1.0`; ~860 CHANGELOG lines under "Unreleased", v0.1.0 still dated `2025-XX-XX` |
 | Production | `https://scavengarr.example.lan` answers 502 on every path (the reverse proxy up, backend down; also earlier that day) |
 | Automation | No CI (no `.github/workflows/`; added 2026-09-30, see item 2); pre-commit runs ruff and hygiene hooks only; basedpyright runs in the editor only (`.vscode/settings.json`, `standard`) |

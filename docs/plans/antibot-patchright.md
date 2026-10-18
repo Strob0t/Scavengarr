@@ -86,8 +86,8 @@ Conclusions:
 |---|---|---|
 | filmfans | cleared after 1 click ("FilmFans") | blocked after 3 clicks |
 | kinoger | cleared after 1 click ("Website-Suche") | blocked after 3 clicks |
-| serienfans (detail) | cleared after 1 click ("Breaking Bad \| SerienFans") | blocked after 3 clicks |
-| ddlspot | cleared after 1 click ("Iron Man (30 Downloads)") | blocked after 3 clicks |
+| serienfans (detail) | cleared after 1 click ("Series D \| SerienFans") | blocked after 3 clicks |
+| ddlspot | cleared after 1 click ("Movie O (30 Downloads)") | blocked after 3 clicks |
 | ddlvalley | cleared after 1 click (search results) | blocked after 3 clicks |
 | scnsrc | cleared after 1 click (search results) | blocked after 3 clicks |
 
@@ -179,12 +179,12 @@ Done on `staging`: pools in `infrastructure/browser/` with one Chromium; `turnst
 
 | Plugin | Live result (headful) | Was |
 |---|---|---|
-| ddlspot | 30 results for "Iron Man" in 8 s | 0 |
+| ddlspot | 30 results for "Movie O" in 8 s | 0 |
 | ddlvalley | 250 results (full scrape) | 0 |
 | scnsrc | 37 of 42 posts | 0 |
 | filmfans | 13 releases, filecrypt links, ~140 s (429 backoff) | 0 |
 | kinoger | 4 streams in 7 s | 0 |
-| serienfans | 35 releases for "Breaking Bad", ~146 s (429 backoff) | 0 |
+| serienfans | 35 releases for "Series D", ~146 s (429 backoff) | 0 |
 
 Findings beyond the plan:
 - Several failures were not the challenge itself: `_navigate_and_wait()` aborted on the challenge's 403 before solving; ddlspot detail pages answer plain HTTP with an empty 200; scnsrc moved links to post pages; ddlvalley/scnsrc (nginx 503) and filmfans/serienfans (429) rate-limit bursts.
@@ -219,7 +219,7 @@ Design:
 
 Tests: `test_httpx_browser_fallback.py` (`TestBrowserSessionReuse`: session reused, redirects too, rejected session → memo, expired → solved again, no session → memo), `test_stealth_pool.py` (`TestStealthPoolSession`), `test_solver_fetcher.py` (solution session, chain). Live in dev: moflix's API, challenged from a residential IP, solved in 2 s; the next request went through httpx (origin 401 without moflix's API headers, so the challenge was passed).
 
-moflix (1.2.0) moved from `PlaywrightPluginBase` to `HttpxPluginBase`: it loads the homepage once for the site's Laravel session and calls its API with `_fetch_text(..., headers=...)` (`Accept: application/json`, the site as `Referer`, the `XSRF-TOKEN` cookie as `X-XSRF-TOKEN`; 401 without them). A challenged API call goes through the browser once, the rest through httpx with its session. Live in dev (API challenged from a residential IP): "Matrix" 4 results/28 links in 4.3 s including the 2 s solve, then "Dune" 6/24 in 0.9 s. Before, every search ran in the browser behind a lock (`_serialize_search`).
+moflix (1.2.0) moved from `PlaywrightPluginBase` to `HttpxPluginBase`: it loads the homepage once for the site's Laravel session and calls its API with `_fetch_text(..., headers=...)` (`Accept: application/json`, the site as `Referer`, the `XSRF-TOKEN` cookie as `X-XSRF-TOKEN`; 401 without them). A challenged API call goes through the browser once, the rest through httpx with its session. Live in dev (API challenged from a residential IP): "Movie J" 4 results/28 links in 4.3 s including the 2 s solve, then "Movie A" 6/24 in 0.9 s. Before, every search ran in the browser behind a lock (`_serialize_search`).
 
 ### Research (2026-10-04): clearance reuse, alternatives, papers
 

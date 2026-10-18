@@ -17,14 +17,14 @@ First requests (the plugins search), production, fifth round (`stremio-latency.m
 
 ## Since the fourth round
 
-**Fixed, in production since 2026-10-05** (each with tests; found in the fourth round and in the production logs of the same evening):
+**Fixed, in production since 2026-10-05** (each with tests; found in the fourth round and in the production logs of the same day):
 
 | Commit | Finding | Fifth round |
 |---|---|---|
 | fb3ad00 | The circuit breaker counted the early answer's cut against plugins that run on (kinox opened for movies). | Late plugins added results to 8 of 17 cache entries; kinox's breaker stayed closed. |
 | fa2e58f | Circuit breaker per hoster resolver: 50 DoodStream and Dropload browser captures in an hour, none delivered. | Dropload and Filemoon open (52 skipped links in two passes); Chromium per cached answer 2.6 s instead of 10.1 s. Filemoon's probes are a trade-off (below). |
 | 7600a06, 4af38f5 | moflix's own players failed 15 of 15: moflix-stream.click has no `/e/` route and packs its URLs as `links={"hls2":…}`; moflix-stream.link is a Byse (Filemoon) player. | moflix: 10 streams (VidHide, FireStream, StreamUp, Veev; 6 in the fourth round); the Byse player none. |
-| e9b1ba1 | moflix fetched title details for people (19 of 20 hits for "Oppenheimer"; 184 answers 404 in three hours). | No 404 from moflix's title API. |
+| e9b1ba1 | moflix fetched title details for people (19 of 20 hits for "Movie B"; 184 answers 404 in three hours). | No 404 from moflix's title API. |
 | 65077ba | FireStream ids with `-` were rejected; their pages play. | FireStream streams from filmpalast and moflix. |
 | 5bd2e43 | Playmate player-frame links (`/embed/`) were rejected. | 2 Playmate streams (filmpalast). |
 | c4a6b6c | veev redirects links to another file code; the API answered the old one "malformed request" (3 of 3 failed links resolve now). | 1 resolved, 3 offline files, no "malformed request". |

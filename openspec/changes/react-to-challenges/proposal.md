@@ -7,7 +7,7 @@ On the production host a hoster capture that meets a challenge outlasts producti
 
 The registry cuts the cold capture and counts the cut as a breaker failure. The breaker then skips the hoster for up to an hour. One cut trial on 2026-10-11 was followed by 63 refused Filemoon links within five minutes. The cold path that would warm the browser context never completes, so every trial after a restart is cold again. A capture that returns no stream within the bound is cached as a dead link for 15 minutes, although the link is alive.
 
-The maintainer's decision of 2026-10-12 07:02 UTC: R1 with R7 (backlog row 89) and R2 (row 90). R4 with R5 (row 91) follow in a change of their own, once row 91's measurement shows which state warms a capture.
+The maintainer's decision: R1 with R7 (backlog row 89) and R2 (row 90). R4 with R5 (row 91) follow in a change of their own, once row 91's measurement shows which state warms a capture.
 
 ## What Changes
 

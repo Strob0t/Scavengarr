@@ -1,6 +1,6 @@
 # sto link-outs from production
 
-Finding 16 of `ideas-backlog.md`: in production sto's episode links reach the serienstream resolver as sto's own link-outs (`/r?t=<token>`) and fail there (`serienstream_invalid_url`, 13 times in the three hours around the seventh round); *Haus des Geldes* S01E01 lost its only matching result to it ([title-matching.md](title-matching.md)). The question: is the link-out gate unsolved on the production host only, always, or does the resolver reject a link the plugin could have resolved? This file holds the evidence; the fix (plugin, resolver, or the gate solving) is assigned from it.
+Finding 16 of `ideas-backlog.md`: in production sto's episode links reach the serienstream resolver as sto's own link-outs (`/r?t=<token>`) and fail there (`serienstream_invalid_url`, 13 times in the three hours around the seventh round); *Series E* S01E01 lost its only matching result to it ([title-matching.md](title-matching.md)). The question: is the link-out gate unsolved on the production host only, always, or does the resolver reject a link the plugin could have resolved? This file holds the evidence; the fix (plugin, resolver, or the gate solving) is assigned from it.
 
 ## How sto resolves a link-out
 
@@ -10,11 +10,11 @@ An episode page lists one button per hoster with a link-out `/r?t=<token>`. The 
 
 `scripts/probes/sto_linkout.py` creates the sto plugin from the app's registry, finds the series with the plugin's own search, reads the episode page's hoster buttons without resolving them and follows the first two link-outs with the plugin's client, headers and `Referer`, one hop at a time; then it asks the plugin's own `_resolve_redirect` for the same link. No browser, no cache writes; it prints hosts only.
 
-### Dev container (residential connection, 2026-10-07 ~10:20)
+### Dev container (residential connection, 2026-10-07 ~)
 
 ```
 site serienstream.to
-series 'Haus des Geldes' (3 search hits)
+series 'Series E' (3 search hits)
 episode S01E01: 2 hoster buttons (VOE, Doodstream)
 - VOE: hops 302 | final host voe.sx (left the site) | gate markers: none | body 0 B | 0.1 s
   plugin resolution: voe.sx (0.1 s)
@@ -26,7 +26,7 @@ episode S01E01: 2 hoster buttons (VOE, Doodstream)
 
 ```
 site serienstream.to
-series 'Haus des Geldes' (3 search hits)
+series 'Series E' (3 search hits)
 episode S01E01: 2 hoster buttons (VOE, Doodstream)
 - VOE: hops 200 | final host serienstream.to (stayed on the site) | gate markers: none | body 936 B | 0.1 s
   page: title '' | loads nothing | words window.top
@@ -36,14 +36,14 @@ episode S01E01: 2 hoster buttons (VOE, Doodstream)
   plugin resolution: unresolved (0.1 s)
 ```
 
-### Gate passes in production (log, 07:00–10:30)
+### Gate passes in production (log, 3 h 30 min)
 
 | time | event |
 |---|---|
-| 07:12:32 | `sto_link_gate_unsolved` |
-| 09:04:39 | `sto_link_gate_unsolved` |
-| 09:05:36 | *Haus des Geldes* request: no pass attempted (within 300 s of the failed one), link-outs kept, both `serienstream_invalid_url` |
-| 10:02–10:03 | 3 × `sto_link_gate_passed`, 1 × `sto_link_gate_unsolved` |
+| +0 s | `sto_link_gate_unsolved` |
+| +1 h 52 min | `sto_link_gate_unsolved` |
+| +1 h 53 min | *Series E* request: no pass attempted (within 300 s of the failed one), link-outs kept, both `serienstream_invalid_url` |
+| +2 h 49 min to +2 h 50 min | 3 × `sto_link_gate_passed`, 1 × `sto_link_gate_unsolved` |
 
 ## Reading
 

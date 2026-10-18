@@ -120,10 +120,10 @@ Runs the plugin's search and returns the results as a Torznab RSS 2.0 feed.
     <link>http://localhost:7979/</link>
     <language>en-us</language>
     <item>
-      <title>Iron.Man.2008.1080p.BluRay.x264</title>
+      <title>Movie.O.2008.1080p.BluRay.x264</title>
       <guid isPermaLink="false">https://hoster.example/file/abc</guid>
       <link>http://localhost:7979/api/v1/download/3f2b...-uuid</link>
-      <description>Iron.Man.2008.1080p.BluRay.x264</description>
+      <description>Movie.O.2008.1080p.BluRay.x264</description>
       <pubDate>Mon, 01 Jan 2025 12:00:00 +0000</pubDate>
       <torznab:attr name="category" value="2000"/>
       <torznab:attr name="size" value="4831838208"/>
@@ -256,7 +256,7 @@ Returns CrawlJob metadata as JSON for debugging. Expired jobs are still returned
 ```json
 {
   "job_id": "3f2b...-uuid",
-  "package_name": "Iron Man",
+  "package_name": "Movie O",
   "created_at": "2025-01-01T12:00:00+00:00",
   "expires_at": "2025-01-01T13:00:00+00:00",
   "is_expired": false,

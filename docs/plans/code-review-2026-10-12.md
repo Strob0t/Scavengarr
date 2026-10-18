@@ -1,6 +1,6 @@
 # Code review of 2026-10-12
 
-The maintainer's `/code-review` at maximum effort over `origin/main...HEAD` at about 11:23 UTC: the 39 staging commits since v0.4.0, rows 87 to 93 (row 94 came later). Ten finder angles, one verifier per candidate and a final sweep gave 15 findings. 13 were confirmed by a reproduction with the real code (only pages, sites or times faked), 2 are plausible: the mechanism is real, but no real trigger was shown (findings 8 and 10). Findings 1 and 3 were also checked against the live sites. The review measured no production frequency. Its reproduction scripts stayed in the reviewer's `/tmp` and are not kept.
+The maintainer's `/code-review` at maximum effort over `origin/main...HEAD`: the 39 staging commits since v0.4.0, rows 87 to 93 (row 94 came later). Ten finder angles, one verifier per candidate and a final sweep gave 15 findings. 13 were confirmed by a reproduction with the real code (only pages, sites or times faked), 2 are plausible: the mechanism is real, but no real trigger was shown (findings 8 and 10). Findings 1 and 3 were also checked against the live sites. The review measured no production frequency. Its reproduction scripts stayed in the reviewer's `/tmp` and are not kept.
 
 ## Rows
 
@@ -12,11 +12,11 @@ The maintainer's `/code-review` at maximum effort over `origin/main...HEAD` at a
 | 98 | 4, 10, 11 | Ultracode, after row 95 (the same title semantics) |
 | 99 | 13, 14, and the conventions and probe items below | Mr. Normal, after the live suite's lost resolver cases |
 
-## Production check (Mr. Fable, 2026-10-12 13:30 UTC, 8a1f1db since 13:16:26)
+## Production check (Mr. Fable, 8a1f1db)
 
 - Finding 1 holds in the code: `AnimeIdLists.whole_series()` answers `None` while Fribb's list is not in memory (it never waits; the first call starts the load), so `kitsu_episode()` gives no number, `TitleResolver.episode_ref()` sets the Cinemeta position as `absolute`, and `locate()` takes the row that shows it, whatever its title.
 - Finding 3 has not shown in production yet: DoodStream since the start 7 streams, 2 cuts, 4 dead and no `challenge` (`scavengarr_hoster_resolve_total`), and its successes logged `challenge=None`. The review saw the Turnstile frame from the dev container.
-- The restore of 13:16:32 went through: no `capture_state_restore_failed` since the start (the `capture_state_restored` line alone would not prove it, see below).
+- The restore went through: no `capture_state_restore_failed` since the start (the `capture_state_restored` line alone would not prove it, see below).
 
 ## Findings
 
@@ -25,7 +25,7 @@ The maintainer's `/code-review` at maximum effort over `origin/main...HEAD` at a
 `src/scavengarr/infrastructure/plugins/episode_index.py:245`
 
 - **Defect:** locate() now takes the row that shows ref.absolute by 'number' with no title check. When no Kitsu number is known, title_resolution sets absolute to the Cinemeta position, which is off on long runners. origin/main sent a titled row to the neighbour and title rules instead.
-- **Failure:** Right after every start (the Fribb id list loads lazily, so kitsu_episode() is None), or for an hour after a failed list download, One Piece tt0388629:22:4 gets absolute=1088, the Cinemeta position. locate() returns aniworld's #1088 'Luffy's Dream' (staffel-21/episode-197) by 'number', and aniworld labels it S22E4. The episode filter keeps it, the answer is cached under the :1088 key, and the user plays the previous episode. A read-only live run on 2026-10-12 covered the 311 episodes from position 590: HEAD placed 0 correctly, origin/main 297. The test that pinned this case was rewritten to delete row 1088 (tests/unit/infrastructure/test_episode_index.py:137-144).
+- **Failure:** Right after every start (the Fribb id list loads lazily, so kitsu_episode() is None), or for an hour after a failed list download, <Anime A>:22:4 gets absolute=1088, the Cinemeta position. locate() returns aniworld's #1088 '<episode title>' (staffel-21/episode-197) by 'number', and aniworld labels it S22E4. The episode filter keeps it, the answer is cached under the:1088 key, and the user plays the previous episode. A read-only live run on 2026-10-12 covered the 311 episodes from position 590: HEAD placed 0 correctly, origin/main 297. The test that pinned this case was rewritten to delete row 1088 (tests/unit/infrastructure/test_episode_index.py:137-144).
 
 ### 2. A passed challenge stays a challenge (row 96, confirmed)
 
@@ -46,14 +46,14 @@ The maintainer's `/code-review` at maximum effort over `origin/main...HEAD` at a
 `src/scavengarr/application/stremio/search_progress.py:147`
 
 - **Defect:** Partial matches are held and dropped per result source_plugin. A mirror standby's results carry its own name, but its runs end under the member's name. So plugin_done() (line 120) never releases the standby's partials, which wait for finish(), and the member's full match never drops them.
-- **Failure:** A request for 'Naruto Shippuden' S1E1 goes to mirror group hdfilme/streamcloud. hdfilme delivers 'Naruto Shippuden' on the full query but errors on the base query 'Naruto', so streamcloud stands in for that query and finds only the parent 'Naruto'. The final entry is ['hdfilme:Naruto Shippuden', 'streamcloud:Naruto']; without the group the partial is dropped. The completion search asks only the member, so streamcloud:Naruto stays cached until a stale refresh. In the other direction, a standby's legitimate partial ('Bleach' for 'Bleach: Thousand-Year Blood War') misses the budget answer and appears only after every group ends. Reproduced with the real TitleSearch, PluginSearchRunner and SearchProgress.
+- **Failure:** A request for 'Anime C: Sequel' S1E1 goes to mirror group hdfilme/streamcloud. hdfilme delivers 'Anime C: Sequel' on the full query but errors on the base query 'Anime C', so streamcloud stands in for that query and finds only the parent 'Anime C'. The final entry is ['hdfilme:Anime C: Sequel', 'streamcloud:Anime C']; without the group the partial is dropped. The completion search asks only the member, so streamcloud:Anime C stays cached until a stale refresh. In the other direction, a standby's legitimate partial ('Anime E' for 'Anime E: Sequel') misses the budget answer and appears only after every group ends. Reproduced with the real TitleSearch, PluginSearchRunner and SearchProgress.
 
 ### 5. The cooldown refuses a play-time re-resolution (row 96, confirmed)
 
 `src/scavengarr/infrastructure/hoster_resolvers/registry.py:626`
 
 - **Defect:** The challenge cooldown in _guarded also refuses play-time re-resolutions (refresh=True from after_refusal and current()). origin/main refused them only while the breaker was open. The cooldown starts on the first challenge, with no threshold.
-- **Failure:** A Filemoon link meets a challenge and starts the 60 s cooldown (900 s after repeated misses). Meanwhile the user starts or re-opens a stored Filemoon stream whose video URL has expired. The CDN refuses it, stremio_links calls _resolve_again(refresh=True), and _guarded returns None without calling the resolver, so playback fails at once. origin/main resolved it again and played; reproduced with the real registry against origin/main's. In production at 11:16 (challenge-reactions.md:111), Dropload's completion failed its playback check, which neither ends nor steps up the cooldown, so warm Dropload links were skipped for about 15 min.
+- **Failure:** A Filemoon link meets a challenge and starts the 60 s cooldown (900 s after repeated misses). Meanwhile the user starts or re-opens a stored Filemoon stream whose video URL has expired. The CDN refuses it, stremio_links calls _resolve_again(refresh=True), and _guarded returns None without calling the resolver, so playback fails at once. origin/main resolved it again and played; reproduced with the real registry against origin/main's. In production (challenge-reactions.md:111), Dropload's completion failed its playback check, which neither ends nor steps up the cooldown, so warm Dropload links were skipped for about 15 min.
 
 ### 6. Saving the state walks the live context (row 97, confirmed)
 
@@ -87,15 +87,15 @@ The maintainer's `/code-review` at maximum effort over `origin/main...HEAD` at a
 
 `src/scavengarr/domain/entities/stremio.py:220`
 
-- **Defect:** is_partial_title compares raw word sets. A site name that only drops an article or writes '&' ('Walking Dead', 'Rick & Morty') counts as a partial (parent-series) match. SearchProgress drops it as soon as the same plugin returns any non-partial match, such as a spin-off.
-- **Failure:** A request for 'The Walking Dead' S1E1 (2010) reaches a DDL or forum plugin without the relevant_hits() pre-filter. It returns 'Walking Dead - S01E01' (score 1.0) and 'The Walking Dead: World Beyond - S01E01' (0.711, year unknown). HEAD files the real series as partial and the spin-off as matching, so in every arrival order the spin-off is served and the real series dropped; origin/main kept both. 'Rick & Morty' against 'Rick and Morty: The Anime' behaves the same. PLAUSIBLE: no captured page shows such a pair, and a known year more than 3 years off or an IMDb id in the metadata avoids it.
+- **Defect:** is_partial_title compares raw word sets. A site name that only drops an article or writes '&' ('Series I', 'Series J') counts as a partial (parent-series) match. SearchProgress drops it as soon as the same plugin returns any non-partial match, such as a spin-off.
+- **Failure:** A request for 'Series I' S1E1 (2010) reaches a DDL or forum plugin without the relevant_hits() pre-filter. It returns 'Series I - S01E01' (score 1.0) and 'Series I: Spin-off - S01E01' (0.711, year unknown). HEAD files the real series as partial and the spin-off as matching, so in every arrival order the spin-off is served and the real series dropped; origin/main kept both. 'Series J' against 'Series J: The Anime' behaves the same. PLAUSIBLE: no captured page shows such a pair, and a known year more than 3 years off or an IMDb id in the metadata avoids it.
 
 ### 11. Two title sets judge one site name (row 98, confirmed)
 
 `src/scavengarr/application/use_cases/stremio_stream.py:300`
 
 - **Defect:** EpisodeRef.titles is built from the union of all selected plugins' languages, while the title matcher scores each language group with its own reference. So locate()'s is_partial_series and the matcher's partial flag judge the same site name differently. The matcher also lacks the html.unescape that episode_index applies.
-- **Failure:** With TMDB titles and the default selection (scoring off, union ['de','en']): de 'Yu-Gi-Oh! Duel Monsters', en 'Yu-Gi-Oh!', and aniworld names the series 'Yu-Gi-Oh!'. EpisodeRef.titles contains 'Yu-Gi-Oh!', so is_partial_series is False and locate() places by number. The matcher's ('de',) reference scores the same result 1.0 with partial=True, holds it until aniworld ends and drops it beside any other aniworld match. With the selection [aniworld, sto], the index's verdict flips to partial. The search cache key leaves the titles out, so the first request's titles decide for joined requests. docs/features/python-plugins.md:75 says both use the same titles.
+- **Failure:** With TMDB titles and the default selection (scoring off, union ['de','en']): de 'Anime D', en 'Anime D', and aniworld names the series 'Anime D'. EpisodeRef.titles contains 'Anime D', so is_partial_series is False and locate() places by number. The matcher's ('de',) reference scores the same result 1.0 with partial=True, holds it until aniworld ends and drops it beside any other aniworld match. With the selection [aniworld, sto], the index's verdict flips to partial. The search cache key leaves the titles out, so the first request's titles decide for joined requests. docs/features/python-plugins.md:75 says both use the same titles.
 
 ### 12. Completions can hold every page (row 96, confirmed)
 

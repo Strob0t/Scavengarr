@@ -8,12 +8,12 @@ Find an anime request's episode on sites that number episodes their own way: the
 ### Requirement: The Request Carries An Episode Reference
 For a series request with a season and an episode, the use case SHALL build an `EpisodeRef` with the request's season and episode, the English title and release date of that episode from the Cinemeta list, and an absolute number: a Kitsu episode number when it lies within 5 of the episode's position or the list lacks the episode, else the position.
 
-#### Scenario: An IMDb request for One Piece S5E2
-- **WHEN** the request is `tt0388629:5:2` and Cinemeta lists 8, 22, 17 and 13 episodes for seasons 1 to 4
-- **THEN** the reference has the title "The First Line of Defense? The Giant Whale Laboon Appears!" and the absolute number 62
+#### Scenario: An IMDb request for Anime A S5E2
+- **WHEN** the request is `<Anime A>:5:2` and Cinemeta lists 8, 22, 17 and 13 episodes for seasons 1 to 4
+- **THEN** the reference has the title "<episode title>? <episode title>!" and the absolute number 62
 
 #### Scenario: A Kitsu request
-- **WHEN** the request came as `kitsu:12` episode 1089 and was translated to `tt0388629:22:4`
+- **WHEN** the request came as `kitsu:<Anime A>` episode 1089 and was translated to `<Anime A>:22:4`
 - **THEN** the reference's absolute number is 1089 (the position is 1088)
 
 #### Scenario: A Kitsu entry that spans one season
@@ -24,14 +24,14 @@ For a series request with a season and an episode, the use case SHALL build an `
 For an IMDb series request the use case SHALL look up the episode's Kitsu number when one Kitsu entry counts the series from its start: Fribb's id list maps the IMDb id to a Kitsu entry without a season, and the Anime Kitsu addon's record of that entry places its episode 1 at S1E1 and the requested episode exactly once. A `kitsu:` request keeps its own number.
 
 #### Scenario: An IMDb request for a long-running anime
-- **WHEN** the request is `tt0388629:22:4`, and Fribb's list maps `tt0388629` to the Kitsu entry 12 without a season, whose addon record places episode 1 at S1E1 and episode 1089 at S22E4
+- **WHEN** the request is `<Anime A>:22:4`, and Fribb's list maps `<Anime A>` to the Kitsu entry 12 without a season, whose addon record places episode 1 at S1E1 and episode 1089 at S22E4
 - **THEN** the reference's absolute number is 1089, Kitsu's (the position is 1088)
 
 ### Requirement: The Position Skips Episode 0 Entries
 The position SHALL count the Cinemeta list's entries of season 1 and up with an episode number of 1 and up, ordered by season and episode; an episode 0 entry of a regular season SHALL have no position.
 
 #### Scenario: An episode 0 entry in a regular season
-- **WHEN** Cinemeta lists S2E0 of `tt0249327` before S2E1, after 49 episodes in season 1
+- **WHEN** Cinemeta lists S2E0 of `<Anime D>` before S2E1, after 49 episodes in season 1
 - **THEN** S2E1's position is 50, and S2E0 itself has no position
 
 ### Requirement: A Reference Needs A Title Or A Number
@@ -42,11 +42,11 @@ A reference SHALL carry a title or an absolute number; without a Cinemeta meta, 
 - **THEN** the plugins are searched without a reference, as today
 
 #### Scenario: An episode the list lacks
-- **WHEN** the request is `tt0388629:23:30` and Cinemeta's list ends before it, and the request did not come as a `kitsu:` id
+- **WHEN** the request is `<Anime A>:23:30` and Cinemeta's list ends before it, and the request did not come as a `kitsu:` id
 - **THEN** the plugins are searched without a reference, as today
 
 #### Scenario: An episode the list lacks with a Kitsu number
-- **WHEN** the same request came as `kitsu:12` episode 1180
+- **WHEN** the same request came as `kitsu:<Anime A>` episode 1180
 - **THEN** the reference has the absolute number 1180 and no title
 
 ### Requirement: Plugins Declare Episode Location
@@ -60,26 +60,26 @@ A plugin that locates episodes by the reference SHALL declare `locates_episodes 
 With a reference, aniworld SHALL read the series' season pages into an index of rows (season, episode, German title, English title, absolute number when the row shows one), cached for 7 days per series.
 
 #### Scenario: A long-runner's season page
-- **WHEN** the index is built from One Piece's `staffel-2` page
+- **WHEN** the index is built from Anime A's `staffel-2` page
 - **THEN** it holds 16 rows numbered 62 to 77 with their English titles
 
 #### Scenario: A series without numbers
-- **WHEN** the index is built from Demon Slayer's `staffel-3` page
+- **WHEN** the index is built from Anime H's `staffel-3` page
 - **THEN** it holds 11 rows with titles and no absolute numbers
 
 ### Requirement: aniworld Locates The Episode
 aniworld SHALL locate the row by the absolute number and its neighbours within 5 confirmed by a title match of at least 0.6, else by the exact normalised English title, else by the best fuzzy title of at least 0.85; without a row it SHALL answer no result for that series and SHALL never build the page from the request's numbers; without a reference it SHALL answer as today.
 
 #### Scenario: Located by number
-- **WHEN** the reference is S5E2 with the absolute number 62 and the index's row 62 is `staffel-2/episode-1` "The First Line of Defense? The Giant Whale Laboon Appears!"
+- **WHEN** the reference is S5E2 with the absolute number 62 and the index's row 62 is `staffel-2/episode-1` "<episode title>? <episode title>!"
 - **THEN** the hoster links come from `staffel-2/episode-1`
 
 #### Scenario: The number is one off and the title confirms the neighbour
-- **WHEN** the reference is S22E4 "Entering a New Chapter! Luffy and Sabo's Paths!" with the absolute number 1088 and that title is the row numbered 1089
+- **WHEN** the reference is S22E4 "<episode title>" with the absolute number 1088 and that title is the row numbered 1089
 - **THEN** the hoster links come from the row numbered 1089
 
 #### Scenario: Located by title where the site shows no numbers
-- **WHEN** the reference is Demon Slayer S4E1 "Someone's Dream" and the index has no absolute numbers
+- **WHEN** the reference is Anime H S4E1 "Someone's Dream" and the index has no absolute numbers
 - **THEN** the hoster links come from the row with the English title "Someone's Dream" (`staffel-3/episode-1`)
 
 #### Scenario: Not located
@@ -115,5 +115,5 @@ sto SHALL locate the episode of its anime results (category 5070) by the same ru
 The Stremio search cache key SHALL carry the version `v2`, so entries cached before the change are not answered.
 
 #### Scenario: Old entries
-- **WHEN** the cache holds `stremio:search:series:tt0388629:5:2` from before the change
-- **THEN** the request reads `stremio:search:v2:series:tt0388629:5:2` and searches anew
+- **WHEN** the cache holds `stremio:search:series:<Anime A>:5:2` from before the change
+- **THEN** the request reads `stremio:search:v2:series:<Anime A>:5:2` and searches anew

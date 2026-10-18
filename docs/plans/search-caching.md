@@ -29,7 +29,7 @@ Key files:
 > **Replaced in part on 2026-10-05:** the search now runs to its end (at most `plugin_timeout_seconds`, 30 s), each plugin's results reach `SearchProgress` as they arrive, the answer goes out at 5 streams, when everything is done, or at 60 s, and a search holds its pool share until it ends ([round5-measures.md](round5-measures.md) §9). The "Late plugins", "Early answer", "Concurrency slots" and "Circuit breaker" paragraphs below, and the soft-deadline parts of the affected files and tests, describe the 2026-10-04 design.
 
 **Problem:**
-- Stremio requests were not cached. Production served the same title twice within 17–18 s (Avengers: Endgame, Severance), each time a full fan-out of ~15 s and 50–270 outbound requests.
+- Stremio requests were not cached. Production served the same title twice within 17–18 s (Movie P: Endgame, Series H), each time a full fan-out of ~15 s and 50–270 outbound requests.
 - A plugin cut by the request deadline lost all its results, even when its search finished seconds later (kinoking, kinoger or moflix while solving a challenge).
 - The answer waited for the slowest plugin up to the 10 s search budget (`docs/plans/pi-performance.md`).
 

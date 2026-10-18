@@ -10,7 +10,7 @@
 
 The stealth browser (`StealthPool`) loads at most 2 pages at a time through one FIFO semaphore (`fetch_concurrency = min(max_concurrent_playwright, 2)`). Plugin pages (kinoger binds its Cloudflare clearance to the browser, so every kinoger page goes through it), hoster captures (Filemoon, Dropload, SuperVideo, DoodStream's fallback, Vixeo) and link-outs share these pages. Since links resolve while plugins search, the sixth round (2026-10-06) found:
 
-1. **kinoger starves.** 13 of 13 kinoger searches hit the 30 s plugin timeout; alone in the production container, with a browser of its own, the same searches took 7.9–17.3 s. Each of its page loads queues behind the captures that came first. Titles with few streams (Good Bye Lenin, Lola rennt, Dark, ...) waited the full 30 s for it.
+1. **kinoger starves.** 13 of 13 kinoger searches hit the 30 s plugin timeout; alone in the production container, with a browser of its own, the same searches took 7.9–17.3 s. Each of its page loads queues behind the captures that came first. Titles with few streams (Movie L, Movie H, Series C...) waited the full 30 s for it.
 2. **The resolve clock runs while waiting.** A resolution gets `resolve_timeout` (10 s in production) from its start, including the wait for a page. A capture that waited 9 s has 1 s left, times out, and the timeout counts for the hoster's circuit breaker: the breakers of Filemoon, Dropload and SuperVideo opened in the sixth round although the hosters were healthy.
 3. **Work runs that cannot finish.** A page is opened for work whose request is cut seconds later.
 4. **The page count is fixed.** 2 pages on every host; a larger host cannot use its CPUs, the production host under the load of other containers has no brake.

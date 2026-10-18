@@ -4,7 +4,7 @@ Revised 2026-10-07 after the spike (`docs/plans/anime-ids-spike.md`): the source
 
 ## Why
 
-Anime is on the maintainer's focus list and four plugins serve it (aniworld, fireani, animeloads, haschcon), but the Stremio manifest accepts `tt` and `tmdb:` ids only. The anime catalogs people use in Stremio (the Anime Kitsu addon and the list addons built on it: MyAnimeList, AniList, Anime Catalogs) open a title as `kitsu:<anime id>` (movies) or `kitsu:<anime id>:<episode>` (series), so Stremio never asks Scavengarr for such a title: no streams, although the sites have them. Kitsu entries are one season or cour each, episodes count within the entry, and long-runners (One Piece) are one entry with absolute numbers, while the German sites list seasons and episodes as IMDb and TheTVDB count them. Reaching them needs an id and numbering translation in front of the pipeline that exists.
+Anime is on the maintainer's focus list and four plugins serve it (aniworld, fireani, animeloads, haschcon), but the Stremio manifest accepts `tt` and `tmdb:` ids only. The anime catalogs people use in Stremio (the Anime Kitsu addon and the list addons built on it: MyAnimeList, AniList, Anime Catalogs) open a title as `kitsu:<anime id>` (movies) or `kitsu:<anime id>:<episode>` (series), so Stremio never asks Scavengarr for such a title: no streams, although the sites have them. Kitsu entries are one season or cour each, episodes count within the entry, and long-runners (Anime A) are one entry with absolute numbers, while the German sites list seasons and episodes as IMDb and TheTVDB count them. Reaching them needs an id and numbering translation in front of the pipeline that exists.
 
 ## What Changes
 

@@ -8,7 +8,7 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 
 ## 1. Audit baseline
 
-- [x] 1.1 `scripts/probes/series_episodes.py`: runs the plugin searches for the series ids of `docs/plans/round-titles.txt` plus Severance (`tt11280740`) S01E05 and S02E05 against a dev server or through the plugin registry; per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, leaks. Markdown table; `--json`.
+- [x] 1.1 `scripts/probes/series_episodes.py`: runs the plugin searches for the series ids of `docs/plans/round-titles.txt` plus Series H (`<Series H>`) S01E05 and S02E05 against a dev server or through the plugin registry; per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, leaks. Markdown table; `--json`.
 - [x] 1.2 Baseline run on the dev server with today's filter, table into `docs/plans/series-episodes.md` ("Before").
 
 ## 2. Runner: no cut at the deadline
@@ -56,4 +56,4 @@ audit's baseline (7.1) must run before the filter change (6) ships.
 ## 9. Docs and production check
 
 - [x] 9.1 `docs/features/stremio-addon.md`: the flow (budget, continuation, partial entries, completion, retry at once, headers); the sentence about cut plugins' results replaced. `docs/features/observability.md`: outcomes `late` and `unreachable`, counters `dropped` and `unreachable`, the `stremio_search_completion` event, `complete` in the response log. `docs/features/configuration.md`: `plugin_timeout_seconds` is also the answer budget. `AGENTS.md` §3: the search invariant sentence. `CHANGELOG.md`.
-- [x] 9.2 (done 2026-10-09 on production's 0d7d833: Severance S1E1 partial with `X-Search-Complete: false`, the retry complete with 2 streams; the digest shows Dropped and Unreachable) After the next deploy: `prodctl.py logs --grep stremio_search_complete` shows a search with `missing` emptied by late plugins; `prodctl.py digest` shows `dropped` and `unreachable`; a Severance episode request answered from a partial entry carries `X-Search-Complete: false` and the retry a minute later more streams. Record the numbers in `docs/plans/ideas-backlog.md` (Order row 21).
+- [x] 9.2 (done 2026-10-09 on production's 0d7d833: Series H S1E1 partial with `X-Search-Complete: false`, the retry complete with 2 streams; the digest shows Dropped and Unreachable) After the next deploy: `prodctl.py logs --grep stremio_search_complete` shows a search with `missing` emptied by late plugins; `prodctl.py digest` shows `dropped` and `unreachable`; a Series H episode request answered from a partial entry carries `X-Search-Complete: false` and the retry a minute later more streams. Record the numbers in `docs/plans/ideas-backlog.md` (Order row 21).

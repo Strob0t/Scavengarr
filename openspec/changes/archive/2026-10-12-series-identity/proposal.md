@@ -2,39 +2,39 @@
 
 ## Why
 
-The maintainer reported on 2026-10-09 that One Piece streams mix the 1999
+The maintainer reported on 2026-10-09 that Anime A streams mix the 1999
 anime, the 2023 live-action series and the 2027 remake, and that anime
 requests get the wrong episode. The title probe (`scripts/probes/
 title_match.py`, dev container, `staging` b8da78f) reproduces the first
-report: for the anime (`series/tt0388629:1:1`) filmpalast's release
-`One.Piece.2023.S01E01` is kept at 0.70 against the threshold 0.7; for the
-live action (`series/tt11737520:1:1`) aniworld's and sto's anime pages are
-kept at 1.00; every site answers the one query "One Piece" with one page,
+report: for the anime (`series/<Anime A>:1:1`) filmpalast's release
+`Anime.A.2023.S01E01` is kept at 0.70 against the threshold 0.7; for the
+live action (`series/<Anime A (live action)>:1:1`) aniworld's and sto's anime pages are
+kept at 1.00; every site answers the one query "Anime A" with one page,
 and only a year or a genre could tell them apart. The trace of the pipeline
 (2026-10-09) names the gaps: the reference carries title, year and alternative
 titles only; the year is a penalty of 0.3, never decisive, and compared only
 when the result's title string carries one (the `year` that kinoger, megakino,
 streamkiste, hdfilme and others store in `metadata` is never read); no type,
 genre or IMDb id reaches the matcher; a plugin's relevance filter drops
-"One Piece (2023)" next to the exact hit "One Piece" before any page is
+"Anime A (2023)" next to the exact hit "Anime A" before any page is
 scraped, so the live-action page is never even seen.
 
 The second report has a different cause. IMDb's season numbers, which
 Cinemeta and the Stremio request use, go straight into the anime sites'
-URLs: Cinemeta counts One Piece in arcs (season 1 = 8 episodes, season 2 =
+URLs: Cinemeta counts Anime A in arcs (season 1 = 8 episodes, season 2 =
 22), aniworld in sagas (Staffel 1 = 61, Staffel 2 = 16); `aniworld.py`
 builds `/staffel-{season}/episode-{episode}` and `fireani.py` calls
 `GetEpisode(slug, season, episode)` with the request's numbers, both write
 those numbers into the result's `metadata`, and the episode filter, which
 compares exactly those fields, cannot see the mismatch. Live on 2026-10-09:
-Cinemeta S5E2 "The First Line of Defense? The Giant Whale Laboon Appears!" is
+Cinemeta S5E2 "<episode title>? <episode title>!" is
 aniworld `staffel-2/episode-1`, whose row reads "[Episode 062]"; Cinemeta
-S22E4 "Entering a New Chapter! Luffy and Sabo's Paths!" is
-`staffel-22/episode-1`, "[Episode 1089]"; Demon Slayer (tt9335498) S4E1
+S22E4 "<episode title>" is
+`staffel-22/episode-1`, "[Episode 1089]"; Anime H (<Anime H>) S4E1
 "Someone's Dream" is `staffel-3/episode-1`, because aniworld's Staffel 2
 merges Cinemeta's seasons 2 and 3 (18 rows, no absolute numbers). The English
 episode titles agree between Cinemeta and aniworld (TheTVDB feeds both)
-except for translation variants such as One Piece S1E1, where aniworld's
+except for translation variants such as Anime A S1E1, where aniworld's
 absolute number decides.
 
 ## What Changes
@@ -54,8 +54,8 @@ absolute number decides.
   own is dropped for an animation reference. Each drop logs its reason.
   `stremio.title_year_penalty` is removed.
 - **A year suffix is not a title word.** `relevant_hits` counts a trailing
-  "(2023)" neither as an extra word nor as a mismatch, so "One Piece (2023)"
-  is scraped next to "One Piece" and the matcher decides by the year.
+  "(2023)" neither as an extra word nor as a mismatch, so "Anime A (2023)"
+  is scraped next to "Anime A" and the matcher decides by the year.
 - **Anime sites locate the episode.** The use case builds an `EpisodeRef`
   (season, episode, English title, release date, absolute number) from the
   Cinemeta list, and from the Kitsu number for a `kitsu:` request; a plugin
@@ -70,10 +70,10 @@ absolute number decides.
 - **Observability.** `title_match_filtered` carries `reason`; the Cinemeta
   lookup is a `stremio_phase` stage (`phase="series_meta"`); a located or
   unlocated episode logs `<plugin>_episode_located` / `_not_located`.
-- **Acceptance.** The title probe for the three One Piece ids and the series
+- **Acceptance.** The title probe for the three Anime A ids and the series
   set of `docs/plans/title-matching.md` before and after (no new wrong drop);
-  `scripts/probes/series_episodes.py` for One Piece S1E1, S5E2 and S22E4 and
-  Demon Slayer S2E1 and S4E1 names the located pages.
+  `scripts/probes/series_episodes.py` for Anime A S1E1, S5E2 and S22E4 and
+  Anime H S2E1 and S4E1 names the located pages.
 
 ## Impact
 

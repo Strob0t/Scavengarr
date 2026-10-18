@@ -11,13 +11,13 @@ Row 91 measured the premise on 2026-10-12, in the dev container and on the produ
 - Filemoon: the player host's cookies, its localStorage and IndexedDB.
 - Dropload: the hoster's cookies and the Turnstile frame's localStorage.
 
-The maintainer's decision of 2026-10-12 07:02 UTC: R4 with R5 (backlog row 91). R5 is needed only where a kept state turns out to expire.
+The maintainer's decision: R4 with R5 (backlog row 91). R5 is needed only where a kept state turns out to expire.
 
-**The first capture after a start waits for the browser** (production, 2026-10-12, after R4's deploy at 08:54:40; backlog row 93). The shared browser launches at the first search's warm-up, so the first capture pays the launch inside its 10 s resolve bound:
-- 08:55:26: the first request (the post-deploy check) starts the launch.
-- 08:55:27: Filemoon's breaker trial starts, with a link of a stored search.
-- 08:55:35: the browser is up (`shared_browser_launched`), about 9 s after the launch began.
-- 08:55:37: the trial times out at the bound, and Filemoon's breaker reopens for 3600 s. Dropload and SuperVideo reopened in the same minute.
+**The first capture after a start waits for the browser** (production, 2026-10-12, after R4's deploy; backlog row 93). The shared browser launches at the first search's warm-up, so the first capture pays the launch inside its 10 s resolve bound:
+- +0 s: the first request (the post-deploy check) starts the launch.
+- +1 s: Filemoon's breaker trial starts, with a link of a stored search.
+- +9 s: the browser is up (`shared_browser_launched`), about 9 s after the launch began.
+- +11 s: the trial times out at the bound, and Filemoon's breaker reopens for 3600 s. Dropload and SuperVideo reopened in the same minute.
 
 A kept state cannot help a capture that has 2 s left. The browser is never closed when idle (only recycled after 200 pages), so starting it with the app costs nothing in steady state.
 

@@ -6,16 +6,16 @@
 
 ```bash
 poetry run python scripts/prodctl.py probe vidhide_segments          # the production host
-PORT=7981 PYTHONPATH=src poetry run python -P scripts/probes/vidhide_segments.py --imdb tt1375666  # dev server
+PORT=7981 PYTHONPATH=src poetry run python -P scripts/probes/vidhide_segments.py --imdb <Movie K>  # dev server
 ```
 
 ## Reading (2026-10-07)
 
 | Where | Link | Stream / variant / segment, all six header sets | Segment proxied? |
 |---|---|---|---|
-| production (VPN address) | stored *Inception* link, moflix-stream.click, 27 min old | 200 / 200 / 200 `video/MP2T` | no |
+| production (VPN address) | stored *Movie K* link, moflix-stream.click, 27 min old | 200 / 200 / 200 `video/MP2T` | no |
 | production | the same hoster URL resolved again | 200 / 200 / 200 | no |
-| dev container, with the fix | stored and fresh *Inception* link | 200 / 200 / 200 | yes |
+| dev container, with the fix | stored and fresh *Movie K* link | 200 / 200 / 200 | yes |
 
 **The headers do not matter.** Every set, no headers included, gets the playlists and the segment from both addresses.
 

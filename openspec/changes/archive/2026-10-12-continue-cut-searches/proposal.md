@@ -6,7 +6,7 @@ A Stremio request's plugin search is cut at `stremio.plugin_timeout_seconds`
 (30 s from the request start): every plugin still running is cancelled and
 contributes nothing, and the results of the plugins that finished are cached
 as if they were the whole answer, for `cache.search_ttl_seconds` (30 minutes
-in production). Production, 2026-10-07, Severance S01E05: the dead domains of
+in production). Production, 2026-10-07, Series H S01E05: the dead domains of
 kinoger, megakino_to and movie4k held search slots for up to 26 s, sto was
 cancelled at the 30 s mark, the entry was stored with 2 results and 1 stream,
 and every request for that episode in the following minutes was answered from
