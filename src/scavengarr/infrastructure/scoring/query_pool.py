@@ -136,6 +136,11 @@ class QueryPoolBuilder:
         self._cache = cache
         self._clock = clock
         self._unavailable_until = 0.0
+        # the last pool built per cache key, with the time it was built: a
+        # cache that answers nothing (Redis down) made every scheduler tick
+        # rebuild every cell's pool (114 builds in 6 minutes, 10 requests
+        # each); a copy within the cache's TTL answers instead
+        self._copies: dict[str, tuple[float, list[str]]] = {}
 
     async def get_queries(
         self,
@@ -176,7 +181,8 @@ class QueryPoolBuilder:
         return shuffled[:count]
 
     async def _get_pool(self, category: int, bucket: AgeBucket) -> list[str]:
-        """Fetch title pool, with 24h caching."""
+        """Fetch title pool, with 24h caching; when the cache has nothing,
+        the last pool built for the cell within those 24 h (in memory)."""
         media = self._media_type(category)
         cache_key = f"querypool:{media}:{bucket}"
 
@@ -187,8 +193,12 @@ class QueryPoolBuilder:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        copy = self._copies.get(cache_key)
+        if copy is not None and self._clock() - copy[0] < _CACHE_TTL:
+            return copy[1]
         titles = await self._fetch_pool(media, bucket)
         if titles:
+            self._copies[cache_key] = (self._clock(), titles)
             await self._cache.set(cache_key, json.dumps(titles), ttl=_CACHE_TTL)
         return titles
 

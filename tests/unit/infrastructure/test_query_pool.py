@@ -315,6 +315,68 @@ class TestUnavailable:
         assert len([e for e in logs if e["event"] == "query_pool_unavailable"]) == 1
 
 
+class TestPoolCopy:
+    """A cache that answers nothing (Redis down, the network up) made every
+    scheduler tick rebuild every cell's pool: 114 builds in 6 minutes of the
+    dev proof, 10 IMDb requests each. A fresh copy of the last pool answers
+    instead."""
+
+    async def test_a_fresh_copy_answers_when_the_cache_has_nothing(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        clock = _Clock()
+        builder = _make_builder(mock_cache, clock)
+        now = datetime.now(timezone.utc)
+
+        with respx.mock:
+            route = respx.get(url__startswith=_SUGGEST_BASE).respond(
+                200, json=_suggest_response([_movie_entry("Dune", now.year)])
+            )
+            first = await builder.get_queries(2000, "current")
+            clock.now += 3600
+            again = await builder.get_queries(2000, "current")
+            other = await builder.get_queries(2000, "y1_2")
+
+        assert first == again == ["Dune"]
+        # one build for the cell, one for the other cell (no copy of it yet)
+        assert route.call_count == 20
+        assert other != ["Dune"]
+
+    async def test_a_copy_past_the_cache_ttl_is_built_again(
+        self, mock_cache: AsyncMock
+    ) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        clock = _Clock()
+        builder = _make_builder(mock_cache, clock)
+        now = datetime.now(timezone.utc)
+
+        with respx.mock:
+            route = respx.get(url__startswith=_SUGGEST_BASE).respond(
+                200, json=_suggest_response([_movie_entry("Dune", now.year)])
+            )
+            await builder.get_queries(2000, "current")
+            clock.now += 86_401
+            await builder.get_queries(2000, "current")
+
+        assert route.call_count == 20
+
+    async def test_a_cached_pool_still_comes_first(self, mock_cache: AsyncMock) -> None:
+        mock_cache.get = AsyncMock(return_value=None)
+        clock = _Clock()
+        builder = _make_builder(mock_cache, clock)
+        now = datetime.now(timezone.utc)
+
+        with respx.mock:
+            respx.get(url__startswith=_SUGGEST_BASE).respond(
+                200, json=_suggest_response([_movie_entry("Dune", now.year)])
+            )
+            await builder.get_queries(2000, "current")
+        mock_cache.get = AsyncMock(return_value=json.dumps(["Cached"]))
+
+        assert await builder.get_queries(2000, "current") == ["Cached"]
+
+
 class TestDateRanges:
     def test_y1_2_range(self) -> None:
         lo, hi = _date_range_y1_2()
