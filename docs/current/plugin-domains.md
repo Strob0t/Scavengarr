@@ -106,7 +106,7 @@ Any HTTP answer counts as reachable; only a network error reports `false`.
 ## Configuration
 
 The domain check has no settings: the timeouts and the recheck interval are constants of `infrastructure/plugins/constants.py`.
-A plugin's domains are code (`_domains`, `domain_list_url`, `domain_marker`); the per-plugin overrides of [the configuration reference](../features/configuration.md) (section Plugins) can disable a plugin whose site is gone.
+A plugin's domains are code (`_domains`, `domain_list_url`, `domain_marker`); the per-plugin overrides of [the configuration reference](../reference/configuration.md#plugins) can disable a plugin whose site is gone.
 
 ## Observability
 

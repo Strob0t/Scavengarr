@@ -219,11 +219,11 @@ A plugin that returns nothing usually means the site changed, not the parser's t
 Triage in three steps:
 
 1. Request each domain of `_domains` with a browser User-Agent and note the status, the redirect target and any Cloudflare or DDoS-Guard markers.
-2. Run the plugin's `search()` directly with debug logging and read its warnings (the script below).
+2. Run the plugin's `search()` directly with debug logging and read its warnings: save the script below outside the repository (for example as `/tmp/triage.py`).
 3. For zero results without an error, fetch the search URL and check whether the query term is in the HTML: if it is, the parser no longer matches; if not, the search itself moved (a new endpoint, a form token, a script).
 
 ```python
-# poetry run python <job tmp>/triage.py <plugin> "<query>"
+# poetry run python /tmp/triage.py <plugin> "<query>"
 from __future__ import annotations
 
 import asyncio

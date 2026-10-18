@@ -30,6 +30,6 @@ accepted
 
 - `src/scavengarr/application/stremio/plugin_search.py`: the timeout per plugin.
 - `src/scavengarr/application/stremio/resolution.py`: when the answer is due.
-- [`docs/features/configuration.md`](../../features/configuration.md): the settings.
+- [`docs/reference/configuration.md`](../../reference/configuration.md): the settings.
 - [`docs/archive/plans/round5-measures.md`](../../archive/plans/round5-measures.md): the measures and the maintainer's decision.
 - [`docs/plans/stremio-latency.md`](../../plans/stremio-latency.md): the request times before and after.

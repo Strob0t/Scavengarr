@@ -36,7 +36,7 @@ Unit tests per change (use case with fake resolver/clock, circuit breaker backof
 
 ## Documentation
 
-`docs/features/stremio-addon.md`, `docs/features/configuration.md`, `CHANGELOG.md`, `data/config.yaml` comments, results recorded here.
+`docs/features/stremio-addon.md`, `docs/reference/configuration.md`, `CHANGELOG.md`, `data/config.yaml` comments, results recorded here.
 
 ## Results
 

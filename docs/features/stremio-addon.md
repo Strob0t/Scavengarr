@@ -342,7 +342,7 @@ Limits: the addon is a community service behind Cloudflare (it refuses httpx's d
 
 ## Configuration
 
-Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configuration](./configuration.md#stremio) for the full reference.
+Stremio settings live in `StremioConfig` (YAML section `stremio:`). See [Configuration](../reference/configuration.md#stremio) for the full reference.
 
 ### Stream Ranking
 
@@ -444,7 +444,7 @@ AIOStreams can include Scavengarr as a `custom` addon (`manifestUrl` = `<base>/a
 - Fair share per request: `max(1, total_slots // active_requests)`
 - A task reserves its share under the pool's condition before it waits for a global slot (a cancelled waiter gives the reservation back), so tasks queued behind a full pool cannot push their request above its share
 
-When `auto_tune_all` is enabled (default), slot counts are derived from container resources at startup. See [Configuration → Auto-Tune](./configuration.md#auto-tune-container-aware) for formulas and caps.
+When `auto_tune_all` is enabled (default), slot counts are derived from container resources at startup. See [Configuration: auto-tune](../reference/configuration.md#auto-tune) for formulas and caps.
 
 ### Multi-Language Search
 

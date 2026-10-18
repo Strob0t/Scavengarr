@@ -456,7 +456,7 @@ _REPO = Path(__file__).resolve().parents[2]
 
 def _production_env() -> dict[str, str]:
     """The ``environment:`` entries of the production example in the docs."""
-    doc = (_REPO / "docs/features/configuration.md").read_text(encoding="utf-8")
+    doc = (_REPO / "docs/reference/configuration.md").read_text(encoding="utf-8")
     block = doc.split("<!-- production-env:start -->")[1]
     block = block.split("<!-- production-env:end -->")[0]
     body = block.split("```yaml")[1].split("```")[0]

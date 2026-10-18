@@ -49,8 +49,8 @@ services:
       # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
       # Traces to Tempo (profile "tracing"); Prometheus scrapes /metrics anyway:
       # SCAVENGARR_TELEMETRY_TRACING_ENDPOINT: http://tempo:4318
-      # Every setting reads SCAVENGARR_<SECTION>_<KEY> (docs/features/
-      # configuration.md, "Application Variables"). The values of the default
+      # Every setting reads SCAVENGARR_<SECTION>_<KEY> (docs/reference/
+      # configuration.md, "Settings"). The values of the default
       # config file, as environment entries; they win over the seeded file:
       # SCAVENGARR_ENVIRONMENT: "prod"
       # SCAVENGARR_TMDB_API_KEY: ""

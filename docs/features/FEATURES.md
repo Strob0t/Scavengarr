@@ -57,7 +57,7 @@ Scavengarr is plugin-driven. Each plugin defines how to scrape a specific source
 | Captchas | [x] Implemented | Built-in ALTCHA proof-of-work and image captcha solvers (see [Captcha Solving](../archive/plans/captcha-solving.md)) |
 | Bounded concurrency | [x] Implemented | Semaphore-limited parallel detail-page scraping |
 | Custom HTML parsing | [x] Implemented | selectolax (lexbor) parsers with CSS selectors; pages through `parse_page()`, big ones in a worker thread |
-| Environment variable credentials | [x] Implemented | `SCAVENGARR_<PLUGIN>_USERNAME` / `_PASSWORD` (see [Configuration](./configuration.md#plugin-credentials)) |
+| Environment variable credentials | [x] Implemented | `SCAVENGARR_<PLUGIN>_USERNAME` / `_PASSWORD` (see [Configuration](../reference/configuration.md#plugin-credentials)) |
 | `HttpxPluginBase` | [x] Implemented | Shared base for httpx plugins (client, domain fallback, semaphore) |
 | `PlaywrightPluginBase` | [x] Implemented | Shared base for Playwright plugins (browser lifecycle, Cloudflare) |
 | Season/episode support | [x] Implemented | All plugins accept `season`/`episode` params for TV content |
@@ -209,7 +209,7 @@ CrawlJobs bundle multiple validated download links into `.crawljob` files for JD
 | Validate-first policy | [x] Implemented | Search-time links are validated (`validate_download_links`); grab-time links come from the plugin unchecked |
 | Grab-time resolution | [x] Implemented | Captcha or quota sites keep page URLs; the download endpoint resolves them when a release is grabbed |
 
-**Detailed docs:** [CrawlJob System](./crawljob-system.md)
+**Detailed docs:** [Torznab and CrawlJobs](../current/torznab-and-crawljobs.md)
 
 ---
 
@@ -229,7 +229,7 @@ Scavengarr exposes a Torznab-compatible API that integrates with Prowlarr, Sonar
 | Category mapping | [x] Implemented | Torznab standard category IDs |
 | Error responses | [x] Implemented | Torznab RSS error responses; in `prod` upstream/internal errors return empty RSS with HTTP 200 |
 
-**Detailed docs:** [Torznab API](./torznab-api.md)
+**Detailed docs:** [Torznab API](../reference/torznab-api.md)
 
 ---
 
@@ -247,7 +247,7 @@ Links are validated in parallel before inclusion in search results and CrawlJobs
 | Redirect following | [x] Implemented | Redirects are always followed |
 | Configurable timeouts | [x] Implemented | `validation_timeout_seconds` per request |
 
-**Detailed docs:** [Link Validation](./link-validation.md)
+**Detailed docs:** [Link Validation](../current/link-validation.md)
 
 ---
 
@@ -277,7 +277,7 @@ Configuration follows a strict precedence hierarchy with typed validation.
 | Pydantic-settings validation | [x] Implemented | Typed, validated settings |
 | Per-plugin overrides | [x] Implemented | `plugins.overrides.<name>`: `timeout`, `max_concurrent`, `max_results`, `enabled` |
 
-**Detailed docs:** [Configuration](./configuration.md)
+**Detailed docs:** [Configuration](../reference/configuration.md)
 
 ---
 

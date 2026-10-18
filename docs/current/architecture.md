@@ -60,7 +60,7 @@ The domain exceptions:
 - `CrawlJobResolveError`: the grab-time links of a CrawlJob could not be resolved.
 - `PluginUnreachableError`: no domain of a plugin's site answered.
 
-The interfaces layer maps them to HTTP status codes; the Torznab table is in [`docs/features/torznab-api.md`](../features/torznab-api.md).
+The interfaces layer maps them to HTTP status codes; the Torznab table is in [`docs/reference/torznab-api.md`](../reference/torznab-api.md).
 
 ### Application
 
@@ -267,7 +267,7 @@ The use case caches the plugin's results unvalidated under a key of plugin, quer
 It validates the results in chunks of `limit`, in order, until `offset + limit` valid ones exist, so a request validates only as far as its page needs.
 It saves the page's CrawlJobs in parallel and drops an item whose job was not saved, which would answer the grab with 404.
 In production an upstream or unexpected error answers HTTP 200 with an empty feed, because Prowlarr counts any other status as an indexer failure and may disable the indexer.
-The grab of an item requests `/api/v1/download/{job_id}`, which resolves the job's grab-time links when its plugin is a `GrabResolvingPlugin` and serves the `.crawljob` file (details: [`docs/features/crawljob-system.md`](../features/crawljob-system.md)).
+The grab of an item requests `/api/v1/download/{job_id}`, which resolves the job's grab-time links when its plugin is a `GrabResolvingPlugin` and serves the `.crawljob` file (details: [`docs/current/torznab-and-crawljobs.md`](torznab-and-crawljobs.md)).
 
 ### The Stremio stream request
 
@@ -435,7 +435,7 @@ In the container, `docker/entrypoint.sh` ends with `exec python -m scavengarr.in
 
 ## Configuration
 
-Every setting with its default and environment variable: [`docs/features/configuration.md`](../features/configuration.md).
+Every setting with its default and environment variable: [`docs/reference/configuration.md`](../reference/configuration.md).
 The settings that shape the flows above are `stremio.plugin_timeout_seconds`, `stremio.answer_budget_seconds`, `stremio.stream_deadline_seconds`, `stremio.resolve_target_count`, `stremio.max_concurrent_plugins`, `stremio.max_concurrent_playwright`, `cache.backend` and `cache.search_ttl_seconds`.
 
 ## Observability

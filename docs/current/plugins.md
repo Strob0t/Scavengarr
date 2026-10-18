@@ -270,7 +270,7 @@ Scored selection takes the `current` snapshots of the request's category; a miss
 
 ## Configuration
 
-The plugin directory, the per-plugin overrides, the plugin timeout and health check of Stremio searches, scored selection and the scoring probes are settings of [the configuration reference](../features/configuration.md): see its sections Plugins, Stremio and Scoring.
+The plugin directory, the per-plugin overrides, the plugin timeout and health check of Stremio searches, scored selection and the scoring probes are settings of the configuration reference: its sections [`plugins`](../reference/configuration.md#plugins), [`stremio`](../reference/configuration.md#stremio) and [`scoring`](../reference/configuration.md#scoring).
 Plugin credentials come from `SCAVENGARR_<PLUGIN>_USERNAME` and `SCAVENGARR_<PLUGIN>_PASSWORD`.
 
 ## Observability

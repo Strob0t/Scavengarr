@@ -8,7 +8,7 @@
 [![Python 3.12 – 3.14](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FStrob0t%2FScavengarr%2Fmain%2Fpyproject.toml&query=%24.tool.poetry.version&label=version&color=green)](CHANGELOG.md)
 [![Stremio addon](https://img.shields.io/badge/Stremio-addon-8A5AAB)](docs/features/stremio-addon.md)
-[![Torznab](https://img.shields.io/badge/Torznab-Prowlarr%20%7C%20Sonarr%20%7C%20Radarr-orange)](docs/features/torznab-api.md)
+[![Torznab](https://img.shields.io/badge/Torznab-Prowlarr%20%7C%20Sonarr%20%7C%20Radarr-orange)](docs/reference/torznab-api.md)
 
 [Quick Start](#quick-start) ·
 [Connect your apps](#connect-your-apps) ·
@@ -157,7 +157,7 @@ curl http://localhost:7979/api/v1/healthz
 
 The answer names the version, the commit and the build time.
 
-Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Configuration → Docker](docs/features/configuration.md#docker-configuration) has the details.
+Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Deploy Scavengarr](docs/how-to/deploy.md) has the details.
 
 Scavengarr reads `data/config.yaml` (mounted into the container; when the file is missing, the container writes the default there on its first start, if the directory is writable for its user, uid 1000). Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 
@@ -228,7 +228,7 @@ Each plugin is added as its own indexer:
 4. **Categories:** `2000` (Movies), `5000` (TV).
 5. **Test**, then **Save**. Prowlarr syncs the indexer to Sonarr and Radarr.
 
-Download plugins deliver direct-download links; send them to JDownloader (e.g. via the `.crawljob` bundles). Details: [Prowlarr integration](docs/features/prowlarr-integration.md), [Torznab API](docs/features/torznab-api.md).
+Download plugins deliver direct-download links; send them to JDownloader (e.g. via the `.crawljob` bundles). Details: [Connect Prowlarr](docs/how-to/connect-prowlarr.md), [Torznab API](docs/reference/torznab-api.md).
 
 ---
 
@@ -255,7 +255,7 @@ The settings you are most likely to change:
 | `http.api_rate_limit_rpm` | `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` | Requests per minute per client IP on the API |
 | `logging.level` | `SCAVENGARR_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
-Every setting can also come from the environment: a section's key as `SCAVENGARR_<SECTION>_<KEY>`, a dict-typed one as JSON (the older names in the table win over the sectioned ones). The answer does not wait for the whole search: it goes out once 5 streams resolve, or at its budget with what is known by then. The full reference is in [docs/features/configuration.md](docs/features/configuration.md).
+Every setting can also come from the environment: a section's key as `SCAVENGARR_<SECTION>_<KEY>`, a dict-typed one as JSON (the older names in the table win over the sectioned ones). The answer does not wait for the whole search: it goes out once 5 streams resolve, or at its budget with what is known by then. The full reference is in [docs/reference/configuration.md](docs/reference/configuration.md).
 
 ---
 
@@ -340,16 +340,18 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 |---|---|
 | All documents | [docs/README.md](docs/README.md) |
 | Stremio addon | [docs/features/stremio-addon.md](docs/features/stremio-addon.md) |
-| Torznab API | [docs/features/torznab-api.md](docs/features/torznab-api.md) |
-| Prowlarr integration | [docs/features/prowlarr-integration.md](docs/features/prowlarr-integration.md) |
-| Configuration reference | [docs/features/configuration.md](docs/features/configuration.md) |
+| Deployment | [docs/how-to/deploy.md](docs/how-to/deploy.md) |
+| Torznab API | [docs/reference/torznab-api.md](docs/reference/torznab-api.md) |
+| Torznab and CrawlJobs | [docs/current/torznab-and-crawljobs.md](docs/current/torznab-and-crawljobs.md) |
+| Connecting Prowlarr | [docs/how-to/connect-prowlarr.md](docs/how-to/connect-prowlarr.md) |
+| Configuration reference | [docs/reference/configuration.md](docs/reference/configuration.md) |
 | Observability | [docs/features/observability.md](docs/features/observability.md) |
 | Plugin list | [docs/reference/plugins.md](docs/reference/plugins.md) |
 | Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
 | Plugin domains | [docs/current/plugin-domains.md](docs/current/plugin-domains.md) |
 | Writing a plugin | [docs/how-to/new-plugin.md](docs/how-to/new-plugin.md) |
 | Hoster resolvers | [docs/features/hoster-resolvers.md](docs/features/hoster-resolvers.md) |
-| Link validation | [docs/features/link-validation.md](docs/features/link-validation.md) |
+| Link validation | [docs/current/link-validation.md](docs/current/link-validation.md) |
 | Architecture | [docs/current/architecture.md](docs/current/architecture.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 

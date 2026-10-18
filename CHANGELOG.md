@@ -6,6 +6,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Configuration, Torznab and Deployment Docs Follow the Document Contract
+- `docs/reference/configuration.md` (moved from `docs/features/configuration.md`) holds the precedence as a flowchart, the CLI, environment, YAML and `.env` rules and the generated settings tables; the hand-kept tables beside them are gone, their extra facts kept as one note per setting, and no setting is called YAML-only, since every one has its environment variable.
+- `scripts/generate_config_doc.py` writes the tables under H3 headings and adds the flat names the loader maps (`_FLAT_KEYS`), formerly a hand-kept table; `tests/unit/infrastructure/test_config_doc.py` checks them.
+- `docs/how-to/deploy.md` is the one description of the deployment: image tags, `docker run`, the Compose profiles, the image's environment (with `SCAVENGARR_PLAYWRIGHT_HEADLESS`), Redis, the VPN container, the reverse proxy, the build identity with the current base image, and the resolver caveat for German ISPs.
+- `docs/reference/torznab-api.md` (moved) lists every endpoint, `/api/v1/stats/plugins` included, owns the download endpoints and shows the caps with `<version>` and the search as a sequence diagram; `docs/current/torznab-and-crawljobs.md` replaces `crawljob-system.md`, `docs/current/link-validation.md` (moved) is rewritten, and `docs/how-to/connect-prowlarr.md` replaces `prowlarr-integration.md`.
+- `SCAVENGARR_CACHE_TTL_SECONDS` is recommended nowhere: no cache writer uses it (`data/config.yaml` says so).
+- Every citation of the old paths outside the CHANGELOG and the archived OpenSpec changes names the successor.
+
 ### Changed: The Architecture Has Its Rules, Its Current State and Its Decisions Apart
 - `docs/target/architecture.md` states the rules: the dependency rule as a table and as a Mermaid layer graph with the allowed edges only (`infrastructure/` never imports `application/`, which the old ring diagram left open), the layer contracts and the invariants of AGENTS.md §3.
 - `docs/current/architecture.md` holds the module map of every layer, with the modules the old docs missed (`SeriesMetaPort` and `CinemetaClient`, `release_guess.py`, the episode index, the domain list, `PassKeeper`, `ChallengeFlag`, `infrastructure/anime/`); the Torznab search and the Stremio stream request as sequence diagrams; the Stremio search timing as `plugin_search.py` has it (a plugin's timeout runs from its slot, the answer budget cuts no plugin, every timeout is a breaker failure); and the composition order and the shutdown sequence (Uvicorn's wait, then the app's 10 s drain and cleanup) as flowcharts.

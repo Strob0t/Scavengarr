@@ -64,12 +64,13 @@ Every new or moved document adds its own line here, and every document follows t
 | [`current/plugin-domains.md`](current/plugin-domains.md) | current | The domain check, site moves, official domain lists and mirror groups. |
 | [`how-to/new-plugin.md`](how-to/new-plugin.md) | how-to | Writing a new plugin, from the site analysis to the regenerated plugin list. |
 | [`features/hoster-resolvers.md`](features/hoster-resolvers.md) | current | The streaming, direct-download and XFS hoster resolvers and their registry. |
-| [`features/crawljob-system.md`](features/crawljob-system.md) | current | The CrawlJob that packages a result's links for JDownloader. |
-| [`features/link-validation.md`](features/link-validation.md) | current | The HEAD then GET validation of download links. |
+| [`current/torznab-and-crawljobs.md`](current/torznab-and-crawljobs.md) | current | How a Torznab search becomes a feed, and a CrawlJob's life from the search to the grab. |
+| [`current/link-validation.md`](current/link-validation.md) | current | The HEAD then GET check of download links, its host skip and its cache. |
 | [`features/observability.md`](features/observability.md) | current | The metrics, the optional tracing and the production diagnostics. |
-| [`features/configuration.md`](features/configuration.md) | reference | Every setting with its precedence of CLI, environment, YAML and default. |
-| [`features/torznab-api.md`](features/torznab-api.md) | reference | The Torznab and Newznab endpoints and their XML. |
-| [`features/prowlarr-integration.md`](features/prowlarr-integration.md) | how-to | Connecting Prowlarr to Scavengarr. |
+| [`reference/configuration.md`](reference/configuration.md) | reference | Every setting with its environment variable, the precedence of CLI, environment, YAML and defaults. |
+| [`reference/torznab-api.md`](reference/torznab-api.md) | reference | The Torznab and download endpoints, their parameters, XML and errors. |
+| [`how-to/deploy.md`](how-to/deploy.md) | how-to | Running the container image: tags, Compose profiles, Redis, a VPN container, a reverse proxy, the build identity. |
+| [`how-to/connect-prowlarr.md`](how-to/connect-prowlarr.md) | how-to | Connecting Prowlarr, Sonarr, Radarr and JDownloader to Scavengarr. |
 
 ## Reference and guidelines
 
