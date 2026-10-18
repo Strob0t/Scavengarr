@@ -346,10 +346,12 @@ class TestResolvePhase:
                 await asyncio.sleep(10)
             return resolved(url)
 
+        # 1 s, not less: as a worker's first test under xdist the search alone
+        # took longer than 0.2 s while the other workers collected
         uc = resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
             _resolve,
-            config=make_config(stream_deadline_seconds=0.2),
+            config=make_config(stream_deadline_seconds=1.0),
         )
 
         loop = asyncio.get_running_loop()
