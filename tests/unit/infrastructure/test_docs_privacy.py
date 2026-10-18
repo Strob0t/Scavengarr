@@ -1,6 +1,6 @@
 """The docs carry no traces of the maintainer's playbacks or network.
 
-The privacy rule of ``docs/plans/ideas-backlog.md`` (Working rules) keeps clock
+The privacy rule of ``docs/agents/orchestration.md`` (Working rules) keeps clock
 times of observations, request ids, LAN hostnames, network numbers and the
 maintainer's time zone out of the docs: durations, counts and build hashes carry
 the evidence instead. This test fails on the patterns a reviewer would otherwise
@@ -80,6 +80,6 @@ def test_no_private_traces(kind: str) -> None:
     else:
         found = _findings(_CODE, _ANY_PATTERNS, examples=False)
     assert not found, (
-        "private traces (see the privacy rule in docs/plans/ideas-backlog.md):\n"
+        "private traces (see the privacy rule in docs/agents/orchestration.md):\n"
         + "\n".join(found)
     )

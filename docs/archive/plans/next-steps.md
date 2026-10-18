@@ -57,7 +57,7 @@ From the dev container, `poetry run pytest -m live`: 24 passed, 10 failed, 7 ski
 ## 2. Safety net
 
 - **CI** (agent) — **Done 2026-09-30:** `.github/workflows/ci.yml` runs `poetry install --with dev`, `pre-commit run --all-files` and `pytest` without live tests on every push to `staging`, on pull requests to `staging` (where CONTRIBUTING.md sends contributors) and `main`, and on demand. Free for public repositories. No non-live test needs a real browser: in a clean clone with an empty `PLAYWRIGHT_BROWSERS_PATH`, a fresh `HOME` and no `SCAVENGARR_*` variables, install took 25 s, pre-commit 40 s and the 4547 tests 62 s, all green.
-- **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away. `/metrics` serves Prometheus metrics (dashboard: `docker/grafana-dashboard.json`); open: the Prometheus scrape job on the host (maintainer) and the alert rules ([ideas-backlog.md](../../plans/ideas-backlog.md) I8).
+- **Monitoring** (maintainer's host): the app already has `/api/v1/healthz`, `/api/v1/readyz`, `/api/v1/torznab/{plugin}/health` and `/api/v1/stats/plugin-scores`. A monitor on the host (for example Uptime Kuma) would have reported the 502 right away. `/metrics` serves Prometheus metrics (dashboard: `docker/grafana-dashboard.json`); open: the Prometheus scrape job on the host (maintainer) and the alert rules ([backlog-2026-10.md](../../archive/backlog-2026-10.md) I8).
 - **Scheduled live run** (maintainer's host): `pytest -m live` once a week from a residential network (about 13 min), with the result as a notification. Not on GitHub-hosted runners: they use datacenter IPs, which Cloudflare-protected sites challenge harder, so the results would not show what a residential network sees. No self-hosted runner either, since pull requests from forks of a public repository could run code on it.
 
 ## 3. Plugin round for Stremio
@@ -99,7 +99,7 @@ AGENTS.md requires fully typed code, but only the editor checks it.
 | Question | Recommendation |
 |---|---|
 | Keep the repository public? | Private, if it is for personal use: nobody follows it (0 stars, 0 forks), and a takedown notice against the sites named in `docs/reference/plugins.md` would hit the whole repository. |
-| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([ideas-backlog.md](../../plans/ideas-backlog.md) I16, **done** 2026-10-06); new changes use it (`add-observability` and the advisor review's changes). |
+| OpenSpec | **Decided 2026-10-06: keep it.** Archive `add-config-system` and `add-plugin-loader` ([backlog-2026-10.md](../../archive/backlog-2026-10.md) I16, **done** 2026-10-06); new changes use it (`add-observability` and the advisor review's changes). |
 | Torznab `cat=` with several ids | Pass all ids to the plugins (a port change); today `cat=5070,5000` becomes a strict 5070 request ([open observations](code-review-fixes.md#open-observations)). |
 | DDL hosters in Stremio | Decide whether validate-only DDL hosters may appear as Stremio streams; today the playback check drops them all. |
 | Forum credentials | Provide them as `SCAVENGARR_*` variables if the forum plugins should be checked live. |

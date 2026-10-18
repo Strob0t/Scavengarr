@@ -132,7 +132,7 @@ Open (`openspec list`):
 
 Archived after their release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`; on 2026-10-12, shipped in v0.4.0: `add-anime-ids` (`specs/stremio-anime-ids/`), `continue-cut-searches` (`specs/stremio-search-continuation/`), `series-identity` (`specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; its task 6.3, fireani's episode location, deferred while the site does not answer), `proxy-direct-streams` (`specs/stremio-file-proxy/`) and `persist-resolver-state` (`specs/hoster-resolution-persistence/`); on 2026-10-18: `add-stream-media-quality` (`specs/stremio-stream-quality/`) and `place-episodes-by-number-first` (its deltas merged into `specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; the search cache key and the unchecked position's title check were specified with the archiving).
 
-Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [ideas-backlog.md](../docs/plans/ideas-backlog.md) I16):
+Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [backlog-2026-10.md](../docs/archive/backlog-2026-10.md) I16):
 - `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it
 - `add-plugin-loader` – Plugin discovery and validation: Python part implemented under `domain/plugins` + `infrastructure/plugins`; YAML part superseded (removed in `42fced9`)
 

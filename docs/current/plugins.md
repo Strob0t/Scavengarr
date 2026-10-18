@@ -287,7 +287,7 @@ Both are described in [Observability](observability.md).
 
 ## Target
 
-- The open plugin work is listed in the backlog: [the Order table and the items carried over](../plans/ideas-backlog.md).
+- The open plugin work is listed in the backlog: [the open rows](../backlog.md).
 - The placement of anime episodes is specified in [`openspec/specs/stremio-anime-episodes/spec.md`](../../openspec/specs/stremio-anime-episodes/spec.md), and the episode placement by number first in [`openspec/changes/archive/2026-10-18-place-episodes-by-number-first/`](../../openspec/changes/archive/2026-10-18-place-episodes-by-number-first/proposal.md).
 
 ## References

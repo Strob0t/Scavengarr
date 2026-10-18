@@ -473,7 +473,7 @@ The anime ids log `anime_id_translated`, `anime_kitsu_number`, `anime_id_lookup_
 
 ## Target
 
-- The open Stremio work is in [the backlog](../plans/ideas-backlog.md).
+- The open Stremio work is in [the backlog](../archive/backlog-2026-10.md).
 - [The Stremio latency plan](../plans/stremio-latency.md) counts the stale answers without a stream, and its numbers will decide whether a stale answer needs a change.
 
 ## References

@@ -1,6 +1,6 @@
 ## Why
 
-Row 82 of `docs/plans/ideas-backlog.md` measured on 2026-10-11 where `locate()` puts each Cinemeta episode on aniworld's index: fourteen series and 6708 episodes, with the reference the app builds for an IMDb request (`docs/archive/plans/series-episodes.md` → Row 82).
+Row 82 of `docs/archive/backlog-2026-10.md` measured on 2026-10-11 where `locate()` puts each Cinemeta episode on aniworld's index: fourteen series and 6708 episodes, with the reference the app builds for an IMDb request (`docs/archive/plans/series-episodes.md` → Row 82).
 
 **Where aniworld shows absolute numbers, the number's row is the episode, and the title rules mislead.**
 - **Nothing despite the number's row.** 307 episodes get nothing although the row with their number is there (N26). That row was the episode in all 69 cases checked by eye.

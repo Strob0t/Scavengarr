@@ -122,7 +122,7 @@ The plugins' long-term record counts the site checks that found the site down (`
 ## Target
 
 - Plugins whose site died stay enabled and report themselves unreachable; the maintainer decides from their long-term record whether to keep, disable or remove them.
-- The open domain work is listed in the backlog: [the Order table and the items carried over](../plans/ideas-backlog.md).
+- The open domain work is listed in the backlog: [the open rows](../backlog.md).
 
 ## References
 

@@ -3,7 +3,7 @@
 > **Status:** archived
 > **Superseded by:** `docs/current/architecture.md` (row 112)
 
-Item I14 of `docs/plans/ideas-backlog.md`. Status 2026-10-06: done (outcome and deviations at the end). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
+Item I14 of `docs/archive/backlog-2026-10.md`. Status 2026-10-06: done (outcome and deviations at the end). Behaviour-preserving refactor; no OpenSpec change (no capability changes).
 
 ## Problem
 
@@ -26,7 +26,7 @@ Dependencies flow use case → collaborators → ports; no collaborator imports 
 
 ## Rules
 
-- **Exclusive access**: while this refactor is in flight, no other change touches `use_cases/stremio_stream.py` or `tests/unit/application/test_stremio_stream.py` (handoff rule in `docs/plans/ideas-backlog.md`). Land `add-stream-media-quality` first or put its merge step into `answer.py` as part of step 5.
+- **Exclusive access**: while this refactor is in flight, no other change touches `use_cases/stremio_stream.py` or `tests/unit/application/test_stremio_stream.py` (handoff rule in `docs/archive/backlog-2026-10.md`). Land `add-stream-media-quality` first or put its merge step into `answer.py` as part of step 5.
 - **No behaviour change**: every commit keeps all 85 use-case tests and the three e2e suites (`tests/e2e/test_stremio_endpoint.py`, `test_stremio_series_e2e.py`, `test_stremio_streamable_e2e.py`) green without edits to assertions. Tests move, they do not change meaning: the class that tested a phase moves to the collaborator's test file with its factory (e.g. `TestTitleMatchFiltering` → `tests/unit/application/test_title_resolution.py`), the use-case file keeps `TestExecute`, `TestResolvePhase`-level flow tests and the cached-answer tests, and `TestMirrorScores` (the pick is `PluginSearchRunner`'s), `TestTelemetry` and `TestWorkerThreads` stay with the flow tests.
 - **Log events and metrics**: names and fields stay (`stremio_search_complete`, `stremio_all_filtered`, `stremio_search_no_results`, `stage()` labels); `docs/current/observability.md` needs no change — if a field would move to another event, stop and record it in this plan first.
 - **One commit per extraction**, `refactor(stremio): extract <phase> from the stream use case`, each with `pre-commit` and `pytest -n auto` green; push after each so the parallel sessions see the shrinking file early.

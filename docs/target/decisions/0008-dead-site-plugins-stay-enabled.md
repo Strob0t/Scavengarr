@@ -33,5 +33,5 @@ accepted
 - `src/scavengarr/infrastructure/plugins/health_monitor.py`: the periodic domain check.
 - `src/scavengarr/application/stremio/plugin_search.py`: `_reachable()`.
 - `src/scavengarr/infrastructure/plugins/history.py`: the plugin history.
-- [`docs/plans/ideas-backlog.md`](../../plans/ideas-backlog.md): the maintainer's decision, in the Decisions section.
+- [`docs/archive/backlog-2026-10.md`](../../archive/backlog-2026-10.md): the maintainer's decision, in the Decisions section.
 - [`docs/archive/plans/plugin-domains.md`](../../archive/plans/plugin-domains.md): the domain checks and the sites' returns.

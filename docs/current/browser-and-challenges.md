@@ -243,7 +243,7 @@ The plugins' long-term record counts the searches with a challenge and those wit
 
 - The open production checks of [`openspec/changes/react-to-challenges/`](../../openspec/changes/react-to-challenges/tasks.md) and [`openspec/changes/keep-capture-state/`](../../openspec/changes/keep-capture-state/tasks.md) will compare the challenged hosters' outcomes with the baseline of [the challenge plan](../plans/challenge-reactions.md).
 - The plan's options still open (captures that pass widgets, fixes on the plugins' side, an HTTP client that impersonates a browser) wait for those numbers.
-- How long a kept capture state lasts and when Filemoon's captcha shows in a cold capture are open in [the backlog](../plans/ideas-backlog.md).
+- How long a kept capture state lasts and when Filemoon's captcha shows in a cold capture are open in [the backlog](../archive/backlog-2026-10.md).
 
 ## References
 

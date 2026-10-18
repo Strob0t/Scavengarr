@@ -38,4 +38,4 @@ accepted
 - [`openspec/specs/stremio-search-continuation/spec.md`](../../../openspec/specs/stremio-search-continuation/spec.md): the requirements.
 - [`openspec/changes/archive/2026-10-12-continue-cut-searches/design.md`](../../../openspec/changes/archive/2026-10-12-continue-cut-searches/design.md): the design.
 - [`docs/plans/stremio-latency.md`](../../plans/stremio-latency.md): the answer budget's effect on the first and the cached answer.
-- [`docs/plans/ideas-backlog.md`](../../plans/ideas-backlog.md): the maintainer's choice to keep the setting unset in production.
+- [`docs/archive/backlog-2026-10.md`](../../archive/backlog-2026-10.md): the maintainer's choice to keep the setting unset in production.

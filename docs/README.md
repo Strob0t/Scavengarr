@@ -99,7 +99,9 @@ Open plans stay in `docs/plans/`; a closed plan moves to the archive with its ou
 | Document | Status | What it holds |
 |---|---|---|
 | [`plans/docs-overhaul.md`](plans/docs-overhaul.md) | plan (open) | The target layout of these docs, the document contract and the steps to get there. |
-| [`plans/ideas-backlog.md`](plans/ideas-backlog.md) | plan (open) | The backlog: findings, ideas, decisions, the working rules and the order of the work. |
+| [`backlog.md`](backlog.md) | plan | The open rows of the work queue and the ideas not yet taken up; a coder's hashes and Mr. Fable's acceptance go on the row's line |
+| [`agents/orchestration.md`](agents/orchestration.md) | reference | The three sessions' roles, working rules, worktrees, production access and the maintainer's standing decisions |
+| [`archive/backlog-2026-10.md`](archive/backlog-2026-10.md) | archived | The backlog before the cut: findings, ideas, decisions, the working rules and the order of the work. |
 | [`plans/challenge-reactions.md`](plans/challenge-reactions.md) | plan (open) | What Scavengarr does once a page shows a challenge or a captcha. |
 | [`plans/stremio-latency.md`](plans/stremio-latency.md) | plan (open) | The Stremio response time and playable streams, with its open investigation. |
 

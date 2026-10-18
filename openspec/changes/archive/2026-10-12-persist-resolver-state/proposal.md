@@ -4,7 +4,7 @@
 
 The hoster resolver registry keeps what it learned in process memory: the outcome per hoster URL (a video URL for an hour, "dead" for 15 minutes, at most 10,000 entries), the redirect map, and the circuit breakers of hosters and plugins (open after five failures, closed again after a cooldown of 60 s that doubles up to an hour). A restart forgets all of it. A cached search answer goes out at once only when one of its hoster URLs is in that memory (`StremioStreamUseCase._resolve`); after a restart such titles wait for the resolve grace once more, and every dead hoster (Dropload, Filemoon, SuperVideo and Vixeo were open in production on 2026-10-06) costs five browser captures of 5–8 s each before its breaker opens again. The search cache and the stream links already live in the cache backend (Redis in production, diskcache otherwise); this change gives the resolver state the same home. With the container image pipeline (`add-container-image`) deploys become automatic, so restarts get more frequent.
 
-Honest limit: the entries live an hour at most, so the persisted resolutions help restarts during active use (test rounds, deploys while watching), not the next evening's first request. The breakers are the part with daily value. The maintainer chose both (variant B, `docs/plans/ideas-backlog.md`).
+Honest limit: the entries live an hour at most, so the persisted resolutions help restarts during active use (test rounds, deploys while watching), not the next evening's first request. The breakers are the part with daily value. The maintainer chose both (variant B, `docs/archive/backlog-2026-10.md`).
 
 ## What Changes
 

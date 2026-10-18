@@ -36,4 +36,4 @@ accepted
 - `AGENTS.md` §1: the rule for every change.
 - [`docs/README.md`](../../README.md): the documentation rules.
 - `tests/unit/infrastructure/test_docs_privacy.py`: the guard.
-- [`docs/plans/ideas-backlog.md`](../../plans/ideas-backlog.md): the rule in the Working rules.
+- [`docs/agents/orchestration.md`](../../agents/orchestration.md): the rule in the Working rules.
