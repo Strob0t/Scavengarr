@@ -861,6 +861,7 @@ The twelfth round's Series D S01E01 got no stream from a stale entry whose only 
 | 4357d6a | +9 min 57 s | 0 | 0 | none to fill; read before the rebuild signal for rows 103 and 104 |
 | 41d6958 | +1 h 26 min | 1 | 0 | none to fill; read before row 105's rebuild signal |
 | 4429aff | +44 min 23 s | 4 | 0 | none to fill; read before row 107's rebuild signal |
+| 85e9e5d | +1 h 29 min | 8 | 0 | none to fill; read before the rebuild signal for rows 106, 108 and 109 (four of the eight stale answers are the repeated post-deploy check's own requests) |
 
 ## AIOStreams
 
