@@ -241,6 +241,11 @@ def _codec_table(rows: list[Row]) -> list[str]:
 
 async def run(args: argparse.Namespace) -> str:
     """Measure every id of the ids file one after another; return the table."""
+    if not args.ids_file.exists():
+        raise SystemExit(
+            f"no ids file {args.ids_file} (local, untracked): one movie/<imdb id> or "
+            "series/<imdb id> per line, an optional '# title' after it"
+        )
     ids = read_ids(args.ids_file)
     if not ids:
         raise SystemExit(f"no ids in {args.ids_file}")

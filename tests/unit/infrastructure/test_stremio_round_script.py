@@ -61,11 +61,17 @@ def test_read_ids_takes_titles_from_comments(tmp_path: Path) -> None:
     ]
 
 
-def test_default_ids_file_lists_round_titles() -> None:
-    ids = _mod.read_ids(_mod.DEFAULT_IDS_FILE)
-    sids = [sid for sid, _ in ids]
-    assert len(sids) == len(set(sids)) == 19
-    assert {"movie/tt0816692", "series/tt0903747:1:2", "movie/tt0133093"} <= set(sids)
+def test_the_default_ids_file_is_the_local_list() -> None:
+    # the maintainer's titles stay out of the repository: the list is untracked
+    assert (
+        _mod.DEFAULT_IDS_FILE
+        == _SCRIPTS.parent / ".cache" / "live" / "round-titles.txt"
+    )
+
+
+def test_main_names_a_missing_ids_file(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="no ids file"):
+        _mod.main(["--base", _BASE, "--ids-file", str(tmp_path / "missing.txt")])
 
 
 @respx.mock
