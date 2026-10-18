@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Architecture Has Its Rules, Its Current State and Its Decisions Apart
+- `docs/target/architecture.md` states the rules: the dependency rule as a table and as a Mermaid layer graph with the allowed edges only (`infrastructure/` never imports `application/`, which the old ring diagram left open), the layer contracts and the invariants of AGENTS.md §3.
+- `docs/current/architecture.md` holds the module map of every layer, with the modules the old docs missed (`SeriesMetaPort` and `CinemetaClient`, `release_guess.py`, the episode index, the domain list, `PassKeeper`, `ChallengeFlag`, `infrastructure/anime/`); the Torznab search and the Stremio stream request as sequence diagrams; the Stremio search timing as `plugin_search.py` has it (a plugin's timeout runs from its slot, the answer budget cuts no plugin, every timeout is a breaker failure); and the composition order and the shutdown sequence (Uvicorn's wait, then the app's 10 s drain and cleanup) as flowcharts.
+- `docs/target/decisions/` holds one record per decision in force, from the dependency rule to the privacy rule, each with its context, the decision, its consequences and the archived plan or OpenSpec change with the evidence.
+- `docs/architecture/clean-architecture.md` and `docs/architecture/codeplan.md` are gone; AGENTS.md, CONTRIBUTING.md, README.md and the docs index point to the new docs.
+
 ### Changed: The Plugin Docs Follow the Document Contract
 - `docs/current/plugins.md` describes how plugins are discovered, loaded and called (the contract, the results, the base classes, the search stages, categories, episodes, the sto gate, the plugin selection of a Stremio request, scores and probes); `docs/current/plugin-domains.md` the domain check, site moves, official domain lists, boerse's own fallback and the mirror groups; `docs/how-to/new-plugin.md` the steps of a new plugin.
 - They replace `docs/features/plugin-system.md`, `python-plugins.md`, `multi-stage-scraping.md`, `plugin-scoring-and-probing.md` and `mirror-url-fallback.md`; the per-plugin overrides have one description, in `docs/current/plugins.md`, and the settings stay in the configuration reference.

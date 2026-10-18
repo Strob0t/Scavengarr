@@ -46,7 +46,7 @@ Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
 - Small, atomic commits; commit after each isolated subtask, never batch unrelated changes.
 - Commit messages follow Conventional Commits: `<type>(<scope>): <subject>` (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, ...), lower-case subject, no trailing period.
-- **Docs ship with the code**: if behavior, features, architecture or configuration change, update `CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `docs/plans/`, `AGENTS.md`, `README.md` or `openspec/changes/...` in the same commit. `tests/unit/infrastructure/test_docs_paths.py` fails when an instruction file or a feature or architecture doc names a repository path that does not exist.
+- **Docs ship with the code**: if behavior, features, architecture or configuration change, update `CHANGELOG.md`, `docs/features/`, `docs/current/`, `docs/target/`, `docs/plans/`, `AGENTS.md`, `README.md` or `openspec/changes/...` in the same commit. `tests/unit/infrastructure/test_docs_paths.py` fails when an instruction file or a feature or architecture doc names a repository path that does not exist.
 - **Docs and commit texts carry no private traces**: durations, counts and build hashes are the evidence, never clock times or dates of playbacks and observations, request ids, titles or IMDb/Kitsu ids of the maintainer's requests (a placeholder such as "Series A"), LAN hostnames (`*.example.lan` in examples), ISP, VPN or device names, or household references; test data and fixtures keep their titles. `tests/unit/infrastructure/test_docs_privacy.py` fails on clock times, request ids, LAN hostnames, network numbers and time zones in the docs (the full rule: `docs/plans/ideas-backlog.md` → Working rules).
 - Push after each successful change: `git push origin staging`.
 - Larger refactors: write a brief Markdown plan (problem, design, affected files, tests) first.
@@ -74,11 +74,13 @@ Scavengarr is a self-hosted Torznab/Newznab indexer for Prowlarr and other Arr a
 
 Torznab request flow: HTTP request → use case loads plugin from registry (lazy) → plugin runs multi-stage search (search page → detail pages → links; results cached) → links validated in parallel until the requested page is full → one `.crawljob` per item → presenter renders Torznab XML. Stremio stream flow: IMDb id (a `kitsu:` id of the anime catalogs is translated first: the Anime Kitsu addon's meta, Fribb's id list as the fallback; `infrastructure/anime/`) → title(s) and the Cinemeta meta (kind, episode list; the episode reference for plugins that locate episodes, numbered by Kitsu for an anime episode where one Kitsu entry counts the series) → cached or shared plugin search per title → title/episode filter, rank → each hoster's best link resolved (resolver cache) → play/proxy links.
 
-Docs index: `docs/README.md` (every document with its status, and the documentation rules). Architecture: `docs/architecture/clean-architecture.md`.
+Docs index: `docs/README.md` (every document with its status, and the documentation rules). Architecture: `docs/target/architecture.md` (the rules) and `docs/current/architecture.md` (the module map and the request flows).
 
 ---
 
 ## 3. Clean Architecture (dependency rule)
+
+The rules in full: `docs/target/architecture.md` (the layer graph; `infrastructure/` never imports `application/`), the decisions behind them in `docs/target/decisions/`, the module map and the request flows in `docs/current/architecture.md`.
 
 Layers under `src/scavengarr/`, outer depends on inner only:
 
@@ -189,6 +191,6 @@ Step-by-step guides:
 | Plugins | `plugins/` (generated list: `docs/reference/plugins.md`, `scripts/generate_plugin_list.py`) |
 | Contributor guide, Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
 | Production diagnostics | `scripts/prodctl.py`, `scripts/probes/`, `scripts/portainer.py`, `scripts/digest.py` |
-| Feature docs / architecture / plans | `docs/features/`, `docs/architecture/`, `docs/plans/` |
+| Feature docs / architecture / decisions / plans | `docs/features/`, `docs/current/architecture.md`, `docs/target/architecture.md`, `docs/target/decisions/`, `docs/plans/` |
 | Archive (closed plans, refactor history) | `docs/archive/` (index: `docs/archive/README.md`) |
 | OpenSpec change specs | `openspec/changes/` |
