@@ -2,8 +2,12 @@
 
 Usage (against a running server):
     poetry run python scripts/stremio_round.py --base https://scavengarr.example.lan \\
-        [--insecure] [--ids-file docs/plans/round-titles.txt] [--out FILE] \\
+        [--insecure] [--ids-file .cache/live/round-titles.txt] [--out FILE] \\
         [--no-playcheck] [--portainer [--container scavengarr]]
+
+The ids file is local and untracked (``.cache/`` is ignored): one ``movie/<imdb id>``
+or ``series/<imdb id>`` per line with an optional ``# title``, so the maintainer's
+titles stay out of the repository.
 
 Per id of the ids file (one after another, never in parallel): the stream
 request once (the first answer: wall time, streams and the ``X-Cache`` and
@@ -45,7 +49,7 @@ from stremio_measure import _source
 from stremio_playcheck import check_stream, verdict_codecs
 from stremio_profile import cpu_seconds
 
-DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / "docs/plans/round-titles.txt"
+DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / ".cache/live/round-titles.txt"
 
 # A first answer waits for the plugins' search (deadline 60 s in production)
 _STREAM_TIMEOUT = 120.0

@@ -1,6 +1,6 @@
 """Hoster page URLs for the live resolver tests (tests/live/test_resolver_live.py).
 
-Searches the titles of ``docs/plans/round-titles.txt`` through the plugin
+Searches the titles of ``.cache/live/round-titles.txt`` (local) through the plugin
 registry the way ``title_match.py`` does (the stream plugins, each title's
 queries per language group, the plugin timeout, the app's concurrency), maps
 every result link to its resolver with the hoster resolver registry
@@ -17,7 +17,7 @@ reads ``resolver-urls.json`` only).
 
 Usage (dev container):
     PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/resolver_urls.py
-    ... --plugins kinoger,sto --titles docs/plans/round-titles.txt --out <file>
+    ... --plugins kinoger,sto --titles .cache/live/round-titles.txt --out <file>
     ... --avoid .cache/live/resolver-urls.json --out .cache/live/resolver-urls-2.json
 """
 
@@ -58,7 +58,7 @@ from title_match import (  # noqa: E402  # pyright: ignore[reportMissingImports]
 )
 
 REPO = Path(__file__).resolve().parents[2]
-TITLES = REPO / "docs" / "plans" / "round-titles.txt"
+TITLES = REPO / ".cache" / "live" / "round-titles.txt"
 OUT = REPO / ".cache" / "live" / "resolver-urls.json"
 
 

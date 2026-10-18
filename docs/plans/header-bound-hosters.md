@@ -111,7 +111,7 @@ The header hypothesis explains the report for no measured hoster. What remains, 
 
 ## The Codecs of the Round's Streams (Row 66)
 
-Hypothesis 2, measured: the round of `docs/plans/round-titles.txt` against production, 6 min 6 s (`scripts/stremio_round.py` from the dev container, each title once, in sequence; no playback through the proxy in the 5 minutes before, by production's log; Mr. Normal, row 66's play check at 0a6deac). Headline: 18 of 19 titles with streams (Series D S01E02 none), 72 streams, 71 playable; the one failure is FIRESTREAM on Movie G (`FAIL hls codecs unread, 1272 segments: 502, 502`, the CDN's 502 as in row 64's proof). First answers: median 3.1 s, max 7.3 s (3 HIT, 15 STALE).
+Hypothesis 2, measured: the round of `.cache/live/round-titles.txt` against production, 6 min 6 s (`scripts/stremio_round.py` from the dev container, each title once, in sequence; no playback through the proxy in the 5 minutes before, by production's log; Mr. Normal, row 66's play check at 0a6deac). Headline: 18 of 19 titles with streams (Series D S01E02 none), 72 streams, 71 playable; the one failure is FIRESTREAM on Movie G (`FAIL hls codecs unread, 1272 segments: 502, 502`, the CDN's 502 as in row 64's proof). First answers: median 3.1 s, max 7.3 s (3 HIT, 15 STALE).
 
 | Hoster | Codecs | Streams |
 |---|---|---|
@@ -139,7 +139,7 @@ Limits:
 
 ## The Five Hosters Without a Measurement (Row 67)
 
-Dropload, RPMPlay, SuperVideo, UPNS and Vidoza resolved no link in row 59's sets. On 2026-10-11, 22 min, from the dev container only (Mr. Normal, `handoff-67`), every link the stream plugins gave for the titles of `docs/plans/round-titles.txt` (`scripts/probes/resolver_urls.py`'s search, keeping all links of the five) was resolved with the app's registry (up to 15 distinct links per hoster). One to four pages per hoster were opened in a headful Patchright Chromium under `xvfb` and in playwright-mcp. Hosts and statuses only; no URL is recorded.
+Dropload, RPMPlay, SuperVideo, UPNS and Vidoza resolved no link in row 59's sets. On 2026-10-11, 22 min, from the dev container only (Mr. Normal, `handoff-67`), every link the stream plugins gave for the titles of `.cache/live/round-titles.txt` (`scripts/probes/resolver_urls.py`'s search, keeping all links of the five) was resolved with the app's registry (up to 15 distinct links per hoster). One to four pages per hoster were opened in a headful Patchright Chromium under `xvfb` and in playwright-mcp. Hosts and statuses only; no URL is recorded.
 
 | Hoster | Links (plugins) | Resolver | The page in a browser | Verdict |
 |---|---|---|---|---|

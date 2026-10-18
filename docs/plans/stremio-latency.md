@@ -266,7 +266,7 @@ The fifth round's harness and 17 titles (none in the search cache) against produ
 
 ### Seventh round (2026-10-07, dev server on `staging` 11ca685)
 
-The first round written with `scripts/stremio_round.py` (one command; the title set `docs/plans/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, a residential connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the production host's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
+The first round written with `scripts/stremio_round.py` (one command; the title set `.cache/live/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, a residential connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the production host's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
 
 | Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|

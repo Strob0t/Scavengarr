@@ -119,7 +119,7 @@ For a series request the episode filter SHALL read season and episode from the r
 - **THEN** the result passes
 
 ### Requirement: Series Hit Audit
-`scripts/probes/series_episodes.py` SHALL run the plugin searches for the series of `docs/plans/round-titles.txt` plus Series H S01E05 and S02E05 and print per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, and leaks (kept results whose labels name another episode). The audit SHALL run before and after the filter change, with both tables recorded in `docs/plans/series-episodes.md`.
+`scripts/probes/series_episodes.py` SHALL run the plugin searches for the series of `.cache/live/round-titles.txt` plus Series H S01E05 and S02E05 and print per plugin: results, with season and episode, with episode only, without either, kept, narrowed, dropped, and leaks (kept results whose labels name another episode). The audit SHALL run before and after the filter change, with both tables recorded in `docs/plans/series-episodes.md`.
 
 #### Scenario: Audit before the change
 - **WHEN** the audit runs on the dev server with today's filter

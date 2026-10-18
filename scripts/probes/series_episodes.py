@@ -28,8 +28,8 @@ both sites list, sto alone and aniworld alone (row 71: does sto add streams
 where aniworld places the episode too?). The links stay in memory: the
 output names hosters and counts only.
 
-Without ids: the series of ``docs/plans/round-titles.txt`` plus Severance
-S01E05 and S02E05. Mirror groups are not collapsed: every member is asked.
+Without ids: the series of ``.cache/live/round-titles.txt`` (a local file) plus
+Severance S01E05 and S02E05. Mirror groups are not collapsed: every member is asked.
 Read-only: it searches the sites and writes nothing but a temporary cache.
 """
 
@@ -80,7 +80,7 @@ from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
 
 REPO = Path(__file__).resolve().parents[2]
-ROUND_TITLES = REPO / "docs" / "plans" / "round-titles.txt"
+ROUND_TITLES = REPO / ".cache" / "live" / "round-titles.txt"
 EXTRA_IDS = ("series/tt11280740:1:5", "series/tt11280740:2:5")  # Severance
 SERIES = 5000
 
