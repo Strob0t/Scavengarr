@@ -336,10 +336,12 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 ## Documentation
 
+The index [docs/README.md](docs/README.md) lists every document with its status and the rules the documents follow. By topic:
+
 | Topic | Link |
 |---|---|
-| All documents | [docs/README.md](docs/README.md) |
 | Stremio addon | [docs/current/stremio-addon.md](docs/current/stremio-addon.md) |
+| Deploying the Stremio addon (HTTPS, reverse proxy) | [docs/how-to/stremio-deployment.md](docs/how-to/stremio-deployment.md) |
 | Deployment | [docs/how-to/deploy.md](docs/how-to/deploy.md) |
 | Torznab API | [docs/reference/torznab-api.md](docs/reference/torznab-api.md) |
 | Torznab and CrawlJobs | [docs/current/torznab-and-crawljobs.md](docs/current/torznab-and-crawljobs.md) |
@@ -348,6 +350,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Observability | [docs/current/observability.md](docs/current/observability.md) |
 | Metrics reference | [docs/reference/metrics.md](docs/reference/metrics.md) |
 | Operating production | [docs/how-to/operations.md](docs/how-to/operations.md) |
+| Measuring a change | [docs/how-to/performance-measurement.md](docs/how-to/performance-measurement.md) |
 | Known issues | [docs/current/known-issues.md](docs/current/known-issues.md) |
 | Plugin list | [docs/reference/plugins.md](docs/reference/plugins.md) |
 | Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
@@ -357,8 +360,17 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 | Hoster resolvers | [docs/current/hoster-resolvers.md](docs/current/hoster-resolvers.md) |
 | Writing a resolver | [docs/how-to/new-resolver.md](docs/how-to/new-resolver.md) |
 | Link validation | [docs/current/link-validation.md](docs/current/link-validation.md) |
-| Architecture | [docs/current/architecture.md](docs/current/architecture.md) |
+| Browser and challenges | [docs/current/browser-and-challenges.md](docs/current/browser-and-challenges.md) |
+| Architecture as built | [docs/current/architecture.md](docs/current/architecture.md) |
+| Architecture rules | [docs/target/architecture.md](docs/target/architecture.md) |
+| Coding guidelines | [docs/target/coding-guidelines.md](docs/target/coding-guidelines.md) |
+| Decision records | [docs/target/decisions/](docs/target/decisions/) |
+| Plans in work | [docs/plans/](docs/plans/) |
+| The work queue | [docs/backlog.md](docs/backlog.md) |
+| How the coding assistants work | [docs/agents/orchestration.md](docs/agents/orchestration.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
+
+`tests/unit/infrastructure/test_readme.py` keeps this table and the counts above current: every document under `docs/current/`, `docs/how-to/` and `docs/reference/` is linked here, and the plugin and resolver counts are those of the generated lists.
 
 ---
 
@@ -366,7 +378,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 Most of Scavengarr's code was written with AI coding assistants — it is, openly, a largely vibe-coded project. It is not an unreviewed one: every change was directed, reviewed and accepted by an experienced software developer, and the project follows rules that keep the generated code honest:
 
-- **Test-driven development.** Tests come first; the suite has about 6,500 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
+- **Test-driven development.** Tests come first; the suite has about 7,000 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
 - **Clean Architecture.** Strict layers (domain, application, infrastructure, interfaces) with a dependency rule, ports as protocols and a single composition root.
 - **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code, pre-commit hooks and the full test suite before anything is committed.
 - **Written plans and measurements.** Larger changes start with a plan in [`docs/plans/`](docs/plans), and performance changes are measured against real requests before and after.

@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The README Stays Current
+
+- The README's documentation table links every document under `docs/current/`, `docs/how-to/` and `docs/reference/` and the rules, decisions, plans, the work queue and the assistants' working rules; its test count reads about 7,000.
+- `tests/unit/infrastructure/test_readme.py` keeps it so: a document under those three folders that the table does not link, or a plugin, browser-plugin or resolver count that differs from the generated lists, fails the suite.
+- The rule in AGENTS.md §1 and `docs/agents/orchestration.md`: a change of a feature, a setting, the setup, the deployment, a count the README names or the document layout updates `README.md` in the same commit, and the review of every row checks it.
+
 ### Changed: AGENTS.md Keeps the Rules, the Feature Handbook Becomes the Index's Feature List
 
 - AGENTS.md §3, §7 and §9 keep the rules and link the current docs for the mechanics: §3 keeps the layer table and the invariants that are rules and links `docs/current/` (link validation, the Stremio addon, the architecture, the hoster resolvers, observability, Torznab and CrawlJobs) and `docs/reference/configuration.md`; §7 keeps the plugin MUST rules, the XFS and DDL rule and the resolvers' declaration flags and links `docs/current/plugins.md`, `docs/current/plugin-domains.md`, `docs/current/hoster-resolvers.md` and `docs/current/browser-and-challenges.md`; §9's production diagnostics link `docs/how-to/operations.md`. §1's docs line names `docs/current/`, `docs/target/`, `docs/how-to/` and `docs/reference/`, and §10 no longer names `docs/features/`.

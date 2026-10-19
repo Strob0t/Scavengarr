@@ -29,6 +29,9 @@ The work queue is [`docs/backlog.md`](../backlog.md); the rows done before the q
   Test data and fixtures keep their titles.
   `tests/unit/infrastructure/test_docs_privacy.py` guards the docs; [decision 0015](../target/decisions/0015-privacy-rule.md) holds the rule.
 - **Each row:** TDD, pre-commit and the full suite (AGENTS.md §1 and §6), docs in the same commit (CHANGELOG and the document the row names), one commit per row or per isolated subtask.
+- **`README.md` stays current.**
+  The README is the project's front page, and the maintainer reads it as the state of the project: a row that changes a feature, a setting, the setup, the deployment, a count the README names (plugins, resolvers, tests) or the document layout updates the README in the same push, and the review of every row checks it.
+  `tests/unit/infrastructure/test_readme.py` fails when a document under `docs/current/`, `docs/how-to/` or `docs/reference/` is missing from the README's documentation table or a count is stale.
 - **OpenSpec changes** (`openspec/changes/<id>/`) follow Stage 2 of `openspec/AGENTS.md`: read proposal, design and tasks, implement in order, tick the tasks, archive after the release that ships them.
 
 ## Rows and worktrees
