@@ -1,13 +1,13 @@
 # Torznab and CrawlJobs
 
-> **Purpose:** Prowlarr and the Arr apps expect a Torznab indexer whose items link to a downloadable file.
+> **Purpose:** Scavengarr answers Prowlarr and the Arr apps as a Torznab indexer whose items each link to a CrawlJob: a stored bundle of the result's validated links that the download endpoint serves as a JDownloader `.crawljob` file.
 > **Status:** current
 > **As of:** 4bb4aaa2
 
 ## Purpose
 
-Prowlarr and the Arr apps expect a Torznab indexer whose items link to a downloadable file.
-Scavengarr's sites offer streaming and one-click hoster links, not torrents, so each item links to a CrawlJob: a stored bundle of the result's validated links that the download endpoint serves as a JDownloader `.crawljob` file.
+Scavengarr answers Prowlarr and the Arr apps as a Torznab indexer whose items each link to a CrawlJob: a stored bundle of the result's validated links that the download endpoint serves as a JDownloader `.crawljob` file.
+The apps expect an item to link to a downloadable file, and Scavengarr's sites offer streaming and one-click hoster links, not torrents.
 This document describes how a Torznab search becomes a feed and how a CrawlJob lives from the search to the grab; the endpoints themselves are listed in the [Torznab API reference](../reference/torznab-api.md).
 
 ## How it works

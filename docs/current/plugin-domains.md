@@ -1,13 +1,12 @@
 # Plugin domains
 
-> **Purpose:** Sites move between domains, keep mirrors and get blocked by name.
+> **Purpose:** A plugin lists its genuine domains in `_domains`, in fallback order, and the plugin base picks the one that serves the site, because sites move between domains, keep mirrors and get blocked by name.
 > **Status:** current
 > **As of:** 5b4303e4
 
 ## Purpose
 
-Sites move between domains, keep mirrors and get blocked by name.
-A plugin lists its genuine domains in `_domains`, in fallback order, and the plugin base picks the one that serves the site.
+A plugin lists its genuine domains in `_domains`, in fallback order, and the plugin base picks the one that serves the site, because sites move between domains, keep mirrors and get blocked by name.
 This document describes that domain check, the site moves the httpx base follows, the official domain lists some sites publish, and the mirror groups of sites that front one database.
 
 ## How it works

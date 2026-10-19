@@ -1,13 +1,13 @@
 # Link validation
 
-> **Purpose:** Sites often list dead, expired or blocked download URLs.
+> **Purpose:** Link validation checks the download links of the plugins' results in parallel, because sites often list dead, expired or blocked download URLs.
 > **Status:** current
 > **As of:** bdd3f0c4
 
 ## Purpose
 
-Sites often list dead, expired or blocked download URLs.
-Before a Torznab page is answered, and as each plugin's results arrive in a Stremio search, their download links are checked in parallel; dead links go, a dead primary link gives way to a live alternative, and a result without a live link is dropped.
+Link validation checks the download links of the plugins' results in parallel, because sites often list dead, expired or blocked download URLs.
+It runs before a Torznab page is answered and as each plugin's results arrive in a Stremio search; dead links go, a dead primary link gives way to a live alternative, and a result without a live link is dropped.
 
 ## How it works
 

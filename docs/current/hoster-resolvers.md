@@ -1,13 +1,12 @@
 # Hoster resolvers
 
-> **Purpose:** A plugin's search delivers hoster links: the embed pages of streaming hosters and the file pages of direct-download hosters.
+> **Purpose:** A hoster resolver checks a hoster link of a plugin's result, the embed page of a streaming hoster or the file page of a direct-download hoster, and for a streaming hoster turns it into a playable video URL with the headers its CDN wants.
 > **Status:** current
 > **As of:** 54ee500c
 
 ## Purpose
 
-A plugin's search delivers hoster links: the embed pages of streaming hosters and the file pages of direct-download hosters.
-A hoster resolver checks such a link and, for a streaming hoster, turns it into a playable video URL with the headers its CDN wants.
+A hoster resolver checks a hoster link of a plugin's result, the embed page of a streaming hoster or the file page of a direct-download hoster, and for a streaming hoster turns it into a playable video URL with the headers its CDN wants.
 `HosterResolverRegistry` dispatches each link to its resolver, judges and caches the answer, and keeps a hoster that keeps failing out of the way.
 
 Every registered resolver with its domains is in [the resolver list](../reference/resolvers.md), and adding one is in [Add a hoster resolver](../how-to/new-resolver.md).
