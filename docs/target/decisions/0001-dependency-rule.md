@@ -25,7 +25,7 @@ One composition root in `interfaces/` must build the adapters and wire them to t
 - State or a rule that the application and an adapter both need must live in the domain: shared context variables, shared predicates and the null objects of optional ports.
 - Infrastructure behaviour that no port covers reaches the application as an injected callable.
 - Plugins and hoster resolvers are infrastructure: they import only `domain/` and `infrastructure/`.
-- No test checks the imports, so a breach of the rule shows up only in a review.
+- When the rule was decided no test checked the imports, so a breach showed up only in a review; `tests/unit/test_dependency_rule.py` has failed on an import against the layer graph since.
 
 ## Alternatives
 
