@@ -24,6 +24,11 @@ What holds, stated as a rule.
 
 What follows for the code, the tests and the operation, including what the decision rules out.
 
+## Alternatives
+
+The options not taken, one line each with the reason it lost.
+Where no other option was on record, say so; never invent one afterwards.
+
 ## Status
 
 accepted

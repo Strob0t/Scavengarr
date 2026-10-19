@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why a challenge is an outcome of its own, outside the circuit breaker.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -28,6 +28,15 @@ A page that got past its challenge gives its verdict: no stream there is a dead 
 - A hoster that never passes its challenge still costs one capture per cooldown step.
 - A capture resolver whose hoster runs a captcha of its own names its requests (`challenge_requests` of `capture_stream()`), so the capture can mark the challenge.
 - A player whose captcha widget does not gate the stream declares it (`passive_widget=True`), so the widget alone makes no challenge.
+
+## Alternatives
+
+- A longer resolve bound for every resolver: every resolver would wait longer, and the cold path found nothing in some runs even with twice the time.
+- A new return type or an exception for a challenged capture: a cut capture is cancelled and returns nothing.
+- The cooldown as a breaker state: the breaker's failure count, doubling, persistence and alert mean "the hoster is broken".
+- A cooldown that outlives a restart: the browser starts cold, so a kept cooldown would only delay the first capture that can warm it.
+- Paid solvers and a human in the loop: the maintainer decided against both, and Stremio has no way to show a captcha.
+- A solver container for the hosters: it returns the page and its cookies, not the player's traffic.
 
 ## Status
 

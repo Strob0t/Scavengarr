@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why the answer budget bounds the answer, not the plugins.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -27,6 +27,11 @@ A request that joins a running search after its answer budget, a retry, must ans
 - A budget below the plugin timeout gives a sooner first answer with fewer streams, and the next request has the rest.
 - The production deployment keeps the setting unset, the maintainer's choice: the first answer waits up to the plugin timeout.
 - The plugin timeout stays the only bound on a plugin's search (see [0007](0007-plugin-timeout-of-30-s.md)).
+
+## Alternatives
+
+- A retry past the answer budget that waits for the continuation: the maintainer chose the immediate answer.
+- A check of each plugin's site before its search: the plugin's own first request already makes it.
 
 ## Status
 

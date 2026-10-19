@@ -2,7 +2,7 @@
 
 > **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** 317d12f8
+> **As of:** 01a39f90
 
 The one index of the documentation: one line per document with its status.
 
@@ -232,7 +232,7 @@ Sections in a fixed order per kind:
 |---|---|
 | `current/` | Purpose · How it works (with a Mermaid diagram where a flow or state machine exists) · Configuration (a link into `reference/configuration.md`, no copied tables) · Observability (a link into `reference/metrics.md`) · Limits · Target (the open rows and specs, as links) · References (modules, specs, archive files) |
 | `target/` | Rule · Rationale · Consequences · Exceptions · References |
-| `target/decisions/` | Context · Decision · Consequences · Status (accepted, superseded by NNNN) · References (the archive file with the evidence) |
+| `target/decisions/` | Context · Decision · Consequences · Alternatives (the options not taken and why, or that none is on record) · Status (accepted, superseded by NNNN) · References (the archive file with the evidence) |
 | `how-to/` | Goal · Prerequisites · Steps · Verify · Troubleshooting |
 | `reference/` | generated tables where possible; otherwise the lookup tables with one line per entry |
 

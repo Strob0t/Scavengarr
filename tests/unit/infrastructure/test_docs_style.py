@@ -13,7 +13,8 @@ contract's own list of banned ids) stay allowed, and code fences are not read.
 Covered: every document under ``docs/`` outside the archive, which stays exempt.
 Every document outside the archive carries the header; plans keep their ids and
 history by the contract (``docs/plans/`` checks the header only), and
-``docs/backlog.md`` cites its ids.
+``docs/backlog.md`` cites its ids. A decision record has the sections of
+``docs/target/decisions/_template.md`` in their order, its alternatives included.
 """
 
 from __future__ import annotations
@@ -34,6 +35,15 @@ _DOCS = [
 _ID_EXEMPT = (_DOCS_DIR / "backlog.md",)
 # Plans keep their ids and their history: only the header is checked
 _PLANS = _DOCS_DIR / "plans"
+_DECISIONS = sorted((_DOCS_DIR / "target" / "decisions").glob("*.md"))
+_DECISION_SECTIONS = [
+    "Context",
+    "Decision",
+    "Consequences",
+    "Alternatives",
+    "Status",
+    "References",
+]
 
 _PURPOSE = re.compile(r"^> \*\*Purpose:\*\* \S")
 _STATUS = re.compile(r"^> \*\*Status:\*\* (current|target|how-to|reference|plan)\b")
@@ -115,6 +125,37 @@ def test_the_docs_follow_the_contract(doc: Path) -> None:
     )
 
     assert not problems, "\n".join(problems)
+
+
+def decision_problems(doc: Path, root: Path = _ROOT) -> list[str]:
+    """Where a decision record's sections differ from the template's."""
+    lines = doc.read_text(encoding="utf-8").splitlines()
+    sections = [line[3:].strip() for _, line in _prose(lines) if line.startswith("## ")]
+    if sections == _DECISION_SECTIONS:
+        return []
+    name = doc.relative_to(root).as_posix()
+    return [f"{name}: sections {sections}, not {_DECISION_SECTIONS}"]
+
+
+@pytest.mark.parametrize("doc", _DECISIONS, ids=lambda doc: str(doc.relative_to(_ROOT)))
+def test_a_decision_record_names_its_alternatives(doc: Path) -> None:
+    problems = decision_problems(doc)
+
+    assert not problems, "\n".join(problems)
+
+
+def test_a_decision_without_alternatives_is_named(tmp_path: Path) -> None:
+    body = "## Context\n\n## Decision\n\n## Consequences\n\n"
+    tail = "## Status\n\naccepted\n\n## References\n"
+    complete = _write(tmp_path, "0001-a.md", body + "## Alternatives\n\n" + tail)
+    missing = _write(tmp_path, "0002-b.md", body + tail)
+
+    assert decision_problems(complete, tmp_path) == []
+    assert decision_problems(missing, tmp_path) == [
+        "0002-b.md: sections ['Context', 'Decision', 'Consequences', 'Status',"
+        " 'References'], not ['Context', 'Decision', 'Consequences', 'Alternatives',"
+        " 'Status', 'References']"
+    ]
 
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:

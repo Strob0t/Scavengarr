@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why the HLS proxy reads three segments ahead.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -22,6 +22,13 @@ A CDN that is fast on one connection needs no depth of its own: the read-ahead c
 - The read-ahead is bounded per process: `_MAX_PLAYBACKS` playbacks read ahead at once, and a segment above `_MAX_AHEAD_BYTES` is left to the player's own request.
 - A CDN that answers a fetch ahead with 429 gets no fetches ahead for its host for `_THROTTLE_SECONDS`.
 - A CDN that carries less per connection than the rule assumes can still stall a playback; a deeper or adaptive depth needs a new record.
+
+## Alternatives
+
+- A depth per playback from its fetch times: the fastest CDN needs no depth of its own, and a deeper read-ahead costs it only one more segment in memory.
+- Parallel byte ranges per segment: a first range per segment must arrive before the rest can start, nothing is gained on CDNs that ignore ranges, and the read-ahead delivered more.
+- Both together: nine connections per viewer for nothing beyond the read-ahead.
+- Nothing: the stutter would have stayed, documented as a limit of the client.
 
 ## Status
 

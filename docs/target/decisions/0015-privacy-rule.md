@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why docs and commit texts tell nothing about what the maintainer watches.
 > **Status:** target
-> **As of:** ee46af83
+> **As of:** 01a39f90
 
 ## Context
 
@@ -27,6 +27,12 @@ Durations, counts and build hashes are allowed, and test data and fixtures keep 
 - `tests/unit/infrastructure/test_docs_privacy.py` fails on what a pattern can find: clock times with seconds or in UTC, request ids, local host names, private network numbers, autonomous system numbers, named time zones and the production machine's device name, and the last three in the code too.
 - What no pattern finds, a title, a date or a habit, stays the writer's and the reviewer's duty.
 - A production reading in a doc names a placeholder, durations and counts instead of a title and a time.
+
+## Alternatives
+
+No other form of the rule is on record.
+
+- Rewriting the git history to remove the traces already published: not taken; the rule keeps them out of every new commit instead.
 
 ## Status
 

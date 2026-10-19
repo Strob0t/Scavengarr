@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Every Decision Record Names Its Alternatives
+
+- The 15 decision records in `docs/target/decisions/` and their template have `## Alternatives` between Consequences and Status: the options the maintainer did not take, one line each with the reason on record, taken from the archived backlog's decisions and the plans they cite before the archive goes. Where no option or no reason is on record, the record says so instead of inventing one.
+- `tests/unit/infrastructure/test_docs_style.py` requires the template's sections in their order in every record, and the contract in `docs/README.md` names the section.
+
 ### Changed: AGENTS.md Holds the Rules, the Dev Container Its Own How-To
 
 - `AGENTS.md` is under 3,000 words (from 3,697): §9 keeps one rule line per item and links `docs/how-to/dev-container.md`, which holds the details (git access, what the setup script installs, the dev server for the LAN, checks in a worktree, line endings and executable bits, the editor and the formatter, the Claude Code hooks, code intelligence, the production diagnostics, a Verify list and a troubleshooting table).

@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why captures that opt in load only their page's own scripts.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -23,6 +23,13 @@ The Filemoon and Vixeo resolvers opt in, and the other captures load every scrip
 - The rule needs no list of ad domains and follows the ad network to any new domain.
 - A player that needs a script from a foreign CDN breaks under the rule, so a resolver opts in only on evidence.
 - Each aborted script is logged at debug level with its domain (`stealth_capture_script_blocked`), never as a metric label.
+
+## Alternatives
+
+- A list of ad domains: the ad network can switch domains.
+- A DNS blocklist: it belongs to the maintainer's network configuration, and such lists also block hoster domains.
+- Allowing the whole `cloudflare.com` site: `cdnjs.cloudflare.com` serves any library and stays foreign.
+- Every capture opted in: the other captures are measured on the production host first.
 
 ## Status
 

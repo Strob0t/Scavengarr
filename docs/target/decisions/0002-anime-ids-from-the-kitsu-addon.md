@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why anime ids come from the Anime Kitsu addon, with Fribb's list as the fallback.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -26,6 +26,13 @@ The translated request is the search's cache key, and its content type comes fro
 - Fribb's list loads in the background at the app's start or on the first look-up, reduced to the entries with a Kitsu and an IMDb id, held in memory and cached for 7 days.
 - While the addon is down, the list's placements answer, and they miss the season count of a long-running series.
 - An entry that neither source maps answers without streams rather than with a guessed IMDb id.
+
+## Alternatives
+
+- The Kitsu mappings first, then TMDB: Kitsu's mappings place no season, and TMDB's lookup needs a key that no deployment here has.
+- The Anime Kitsu addon alone: the maintainer wanted a fallback for the addon's outages.
+- The public id lists alone, with Kitsu's API for the titles of unlisted entries: they leave the long-running series in absolute numbers and cost a large download every week.
+- Kitsu ids and absolute numbers taught to the anime plugins: every anime plugin would need it again, and the other plugins that list anime would stay blind.
 
 ## Status
 

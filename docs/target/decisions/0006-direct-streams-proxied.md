@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why address-bound direct files go through Scavengarr's proxy.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -25,6 +25,12 @@ HLS keeps its playlist proxy, and every other direct file and VEEV keep `/play`.
 - The production host carries these files' bytes, bounded by one connection per player request and the shared CDN semaphore.
 - A file response in progress delays the app's stop until its connection ends (the shutdown limits of [`docs/current/architecture.md`](../../current/architecture.md)).
 - Proxying every direct file is ruled out: the flag is set hoster by hoster, on evidence.
+
+## Alternatives
+
+- Resolving these hosters per player, as the client-bound ones are, or ranking them last for players outside Stremio's streaming server: the maintainer chose the proxy; no reason against them is on record.
+- A list of hoster names in the router: the resolver owns what its CDN does.
+- Proxying every direct file: the flag is set by evidence, hoster by hoster.
 
 ## Status
 

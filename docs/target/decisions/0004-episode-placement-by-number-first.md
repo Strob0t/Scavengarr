@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why a located episode is placed by its number first.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -24,6 +24,12 @@ When no row matches, the plugin must answer nothing for the series, never a row 
 
 - A wrong number places a wrong row, so the number's sources carry the placement: the Kitsu number for IMDb anime requests, and a position in Cinemeta's list that skips the episode 0 entries of regular seasons.
 - Every plugin that locates episodes uses the shared index of `infrastructure/plugins/episode_index.py`, so one rule set serves them all.
+
+## Alternatives
+
+- Narrower rules that let the number's row win only where no nearby row matched the title well enough, or only where it was also the best title match: they left episodes without a row that this rule places.
+- Titles first: a title whose words are a subset of another's scores as an equal match, so a part number does not count.
+- No change: the episodes without a row would have stayed without a result from the plugin.
 
 ## Status
 

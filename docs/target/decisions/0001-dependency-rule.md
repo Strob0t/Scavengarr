@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why source code depends inward only.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -26,6 +26,14 @@ One composition root in `interfaces/` must build the adapters and wire them to t
 - Infrastructure behaviour that no port covers reaches the application as an injected callable.
 - Plugins and hoster resolvers are infrastructure: they import only `domain/` and `infrastructure/`.
 - No test checks the imports, so a breach of the rule shows up only in a review.
+
+## Alternatives
+
+No other architecture is on record; the alternatives are the states the rule replaced.
+
+- Pydantic models as domain entities: convenient, but they broke the dependency rule.
+- The composition root in the infrastructure layer: it belongs in `interfaces/`, the outermost layer that knows every concrete type.
+- Infrastructure drawn as a ring around the application layer: under "dependencies point inward" it would let infrastructure import application, which the rule table and the code forbid.
 
 ## Status
 

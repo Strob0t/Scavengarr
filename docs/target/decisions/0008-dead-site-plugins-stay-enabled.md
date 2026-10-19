@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why a plugin whose site is down stays enabled.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -23,6 +23,13 @@ Keeping, disabling or removing a plugin whose site died is the maintainer's call
 - The plugin history counts the checks that found the site down and the searches that found no domain, per plugin and day: the maintainer's evidence.
 - A site that returns on one of the plugin's domains serves again after its next health check, without a code change.
 - Proposing to disable or remove such a plugin is not the agents' call.
+
+## Alternatives
+
+- Disabling a dead site's plugin in the configuration: a site that comes back stays off until someone turns it on again.
+- A reaction of the plugin to its site's verification wall, or a demotion by its yield: not chosen; no reason is on record.
+- A fixed threshold, such as 30 days without results: the maintainer wants a long observation and decides from the plugin history.
+- Removing the plugins: the maintainer keeps them.
 
 ## Status
 

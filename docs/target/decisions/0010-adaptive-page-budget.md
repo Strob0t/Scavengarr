@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why browser pages go by their work's claim, and their count adapts.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -28,6 +28,12 @@ The count stays between one page and `stremio.max_concurrent_playwright`, which 
 - The count falls back to its start value after two quiet minutes, so an old burst leaves no large limit behind.
 - Background work, the pass keeper's capture among it, waits while requests need the pages.
 - The waits for a page and the work on it are recorded per kind (`browser_page_wait`, `browser_page`).
+
+## Alternatives
+
+- Two pages on every host: a larger host could not use its CPUs, and the production host under the load of other containers had no brake.
+- A page timeout of its own for plugin pages: the plugin's own wait cancels its page at the search deadline anyway, and the one page that outlives it on purpose must keep its time.
+- Keeping a capture's page open between captures: deferred until a probe measures it.
 
 ## Status
 

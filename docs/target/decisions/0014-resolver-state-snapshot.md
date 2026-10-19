@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why the resolver registry's state outlives a restart as one snapshot.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -27,6 +27,14 @@ A snapshot of another format version must be discarded and deleted.
 - A breaker opened before a deploy that fixed its resolver stays open until its probe.
 - The snapshot's age never counts below zero, so a wrong wall clock can expire entries but never extend them.
 - A stop that skips the shutdown (SIGKILL) leaves the last periodic snapshot, which misses at most the last 30 s of changes.
+
+## Alternatives
+
+- One cache entry per resolution, written through: more code, a write per resolution and a scan at startup.
+- Writes from the registry on every change: they couple the registry to the cache backend and multiply the writes.
+- An expired open breaker restored as closed: it lost the doubled cooldown and let every call through.
+- Failure counts below the threshold kept too: noise that would open a healthy hoster sooner after a restart.
+- The breakers alone, without the resolutions: the maintainer chose both; no reason is on record.
 
 ## Status
 

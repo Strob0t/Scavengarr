@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why mirror sites form a group, and a Stremio request asks one of them.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -21,6 +21,12 @@ The next member is the standby and must take a query the asked member gives noth
 - With no member's breaker closed, all members stay in and their breakers decide, so a half-open probe can bring one back.
 - The parsers stay per theme, so a theme change breaks one plugin, and the real-page tests catch it.
 - A Torznab search asks every member, since each one is a separate indexer.
+
+## Alternatives
+
+- One plugin for all the sites of a database: not chosen, each site stays a Torznab indexer of its own; no further reason is on record.
+- Asking every member in a Stremio request: it triples the work for the same streams.
+- A shared base for the sites' backend now: deferred until the next fix touches their search request, since the real-page tests catch a theme change.
 
 ## Status
 

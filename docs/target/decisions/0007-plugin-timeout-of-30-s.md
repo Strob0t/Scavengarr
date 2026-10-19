@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why a plugin's search gets 30 s, and the answer waits for its target.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -22,6 +22,13 @@ At the latest the answer goes out `stremio.stream_deadline_seconds` (60 s by def
 - The plugins still running at the answer go on and fill the search cache for the next request.
 - A slow site holds its plugin's slot for up to the plugin timeout.
 - The answer budget decides when a player gets the first answer, the plugin timeout how long a site may take (see [0003](0003-answer-budget-beside-the-plugin-timeout.md)).
+
+## Alternatives
+
+The other options weighed are not on record; only the setup this decision replaced is.
+
+- A soft deadline after which the answer went out, with a resolve grace for the streams: the first answer often carried few streams while slow plugins were still delivering.
+- Holding back the plugins predicted to miss the soft deadline, or a shorter resolve grace: both went with the soft deadline.
 
 ## Status
 

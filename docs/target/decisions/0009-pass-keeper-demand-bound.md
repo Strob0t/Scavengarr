@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why Filemoon's captcha pass is kept only while there is demand.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 01a39f90
 
 ## Context
 
@@ -25,6 +25,14 @@ One capture per pass: a capture that brings no new pass ends the keeping until a
 - The keeper starts only while one of the stealth browser's pages stays free beside its own, so it takes no page a request waits for.
 - Without a cached Filemoon stream there is no link to capture, and the keeper waits for a request's.
 - A request between the pass's end and the keeper's capture still meets the captcha.
+
+## Alternatives
+
+- Keeping the pass without end: it would capture around the clock for links nobody plays.
+- Refreshing the pass before its span ends: a capture with a valid pass does not renew it.
+- A warm-up capture per hoster after a start: it needs a recent link and costs captures right after the start.
+- The keeper's capture under the request's bound: that bound cut it before the captcha showed, so the keeper has a bound of its own.
+- A first capture of the newest looked-up link when no stream is cached: not chosen; no reason is on record.
 
 ## Status
 
