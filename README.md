@@ -365,6 +365,7 @@ The index [docs/README.md](docs/README.md) maps the document groups, states what
 | Architecture rules | [docs/target/architecture.md](docs/target/architecture.md) |
 | Coding guidelines | [docs/target/coding-guidelines.md](docs/target/coding-guidelines.md) |
 | Tech stack and the reasons for it | [docs/reference/tech-stack.md](docs/reference/tech-stack.md) |
+| Glossary of the codebase's terms | [docs/reference/glossary.md](docs/reference/glossary.md) |
 | Decision records | [docs/target/decisions/](docs/target/decisions/) |
 | Plans in work | [docs/plans/](docs/plans/) |
 | The work queue | [docs/backlog.md](docs/backlog.md) |

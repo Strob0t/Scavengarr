@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Glossary of the Codebase's Terms
+
+- `docs/reference/glossary.md` says in one sentence each what a term means here (plugin, mirror group, episode reference and placement, CrawlJob, grab-time link, the search cache entry's states, answer budget, read-ahead, address-bound and client-bound streams, hoster, resolver, breaker, half-open probe, cooldown, pass, keeper, capture, challenge, mark, page gate, stealth context, clearance and more) and links the section that holds it.
+- `docs/README.md` lists it, its map names it, and its state paragraph no longer counts the glossary and the purpose lines as open; the root `README.md`'s documentation table links it.
+
 ### Fixed: A Capture That Met the Hoster's Captcha Waits for It
 
 - A Byse capture (Filemoon) on the production host used up the player's clicks before its stream: of four cold captures, two ran out after 29 and 32 s, the pass keeper's own among them, so the keeping ended after one pass. The player solves a proof of work between its `captcha` and `captcha/verify` requests and requests the stream after the verify. With Chromium's CPU throttled sixfold in the dev container, the verify came 0.5 to 9.9 s after the captcha in 11 cold captures. On the production host the stream came 8.1 s after the verify, after the third click.
