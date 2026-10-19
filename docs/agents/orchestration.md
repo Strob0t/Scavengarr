@@ -50,6 +50,7 @@ The work queue is [`docs/backlog.md`](../backlog.md); the rows done before the q
 - Production is read-only for every session: `scripts/prodctl.py` (`ps`, `stats`, `logs`, `metrics`, `state`, `probe`, `digest`, `check`) within its request budget; rebuilds, restarts and the Compose stay with the maintainer ([`docs/how-to/operations.md`](../how-to/operations.md)).
 - A deploy: Mr. Fable reads the numbers the open rows ask for before it and gives the rebuild signal with the `staging` commit; the maintainer rebuilds from `staging`; pushes wait until Mr. Fable's "rebuild done" after the post-deploy check (`prodctl.py check`, repeated when the container was replaced again).
 - Searches and plays against production for a proof wait for Mr. Fable's window, so one session's requests do not disturb another session's reading.
+- A proof that needs a playback is the maintainer's: they play the title in their own Stremio client, and the sessions read logs and metrics; the post-deploy check's standing requests are the one exception, run by Mr. Fable.
 - Every larger row carries a live proof: the resolver live suite, a site probe from the dev container, or a production reading after the deploy; its numbers go into the row's line and the plan it belongs to.
 
 ## Standing decisions
