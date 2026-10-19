@@ -168,6 +168,11 @@ class PluginHistory:
             log.warning("plugin_history_save_failed", error=str(exc))
             return
         self._saved = changes
+        log.info(
+            "plugin_history_saved",
+            plugins=len(self._plugins),
+            days=sum(len(days) for days in self._plugins.values()),
+        )
 
     def _trim(self) -> None:
         """Drop the days outside the window and the plugins without a day."""

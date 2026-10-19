@@ -271,6 +271,27 @@ class TestWrites:
 
         assert [e["url"] for e in (await cache.get(_KEY))["results"]] == [_ALIVE]
 
+    async def test_a_write_logs_its_counts_once(self) -> None:
+        """The shutdown's write shows in the log; an unchanged state writes
+        nothing and logs nothing."""
+        cache = _backend()
+        process = _Process(cache)
+        await process.store.restore()
+        await process.registry.resolve(_ALIVE)
+        process.hoster_breaker.record_failure("filemoon")
+
+        with structlog.testing.capture_logs() as logs:
+            await process.store.aclose()
+            await process.store.aclose()
+
+        [event] = _events(logs, "hoster_state_saved")
+        assert (event["resolutions"], event["redirects"], event["breakers"]) == (
+            1,
+            0,
+            1,
+        )
+        assert event["log_level"] == "info"
+
     async def test_a_failed_write_is_tried_again(self) -> None:
         cache = _backend()
         process = _Process(cache)

@@ -1,7 +1,7 @@
 # Hoster resolvers
 
 > **Status:** current
-> **As of:** eb83019c
+> **As of:** 54ee500c
 
 ## Purpose
 
@@ -253,7 +253,7 @@ stateDiagram-v2
 
 `HosterStateStore` (`infrastructure/hoster_resolvers/state_store.py`) keeps the unexpired results and redirects, each resolver's demand and the circuit breakers that are not closed, the hoster's and the plugins', as one snapshot in the cache backend (`hoster_state:v1`, 24 h; [the decision](../target/decisions/0014-resolver-state-snapshot.md)):
 
-- It writes the snapshot every 30 s when something changed and at shutdown, after the half-open probes end and before the cache closes.
+- It writes the snapshot every 30 s when something changed and at shutdown, after the half-open probes end and before the cache closes; each write logs `hoster_state_saved` with the resolutions, redirects and breakers.
 - It restores the snapshot at the start, before the app reports ready, with every lifetime and cooldown shortened by the downtime; a clock set back counts as no downtime.
 - An entry that ran out meanwhile stays out, and a breaker whose cooldown ran out comes back open with its probe due, so a failed probe still doubles the cooldown.
 - A snapshot of another version or one that cannot be read is deleted (`hoster_state_discarded`), and the start goes on without it.

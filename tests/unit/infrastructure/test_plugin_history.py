@@ -306,6 +306,21 @@ class TestWrites:
         }
         assert cache.set.await_args_list[0].kwargs["ttl"] > 180 * _DAY_S
 
+    async def test_a_write_logs_its_counts_once(self) -> None:
+        cache = _backend()
+        history = _history(cache)
+        await history.restore()
+        history.count("sto", "searches")
+        history.count("aniworld", "results", 3)
+
+        with structlog.testing.capture_logs() as logs:
+            await history.aclose()
+            await history.aclose()
+
+        [event] = _events(logs, "plugin_history_saved")
+        assert (event["plugins"], event["days"]) == (2, 2)
+        assert event["log_level"] == "info"
+
     async def test_aclose_writes_the_last_counts(self) -> None:
         cache = _backend()
         history = _history(cache)

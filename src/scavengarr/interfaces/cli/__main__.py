@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -16,7 +17,10 @@ import structlog
 import uvicorn
 
 from scavengarr.infrastructure.config import load_config
-from scavengarr.infrastructure.logging.setup import configure_logging
+from scavengarr.infrastructure.logging.setup import (
+    configure_logging,
+    stop_async_logging,
+)
 from scavengarr.interfaces.app import create_app
 
 log = structlog.get_logger(__name__)
@@ -70,6 +74,20 @@ def _parse_args(argv: Iterable[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _stop_on_sigterm(signum: int, frame: object) -> None:
+    """Write the queued log lines, then end from the signal as before.
+
+    Uvicorn raises the stop signal again after its shutdown. Killed by the
+    default handler, the process skipped atexit, so the log listener thread
+    lost the last queued lines (the snapshots' writes,
+    ``app_shutdown_complete``). A normal exit instead waits in the event
+    loop's close for open DNS lookups (up to 5 s), past Docker's stop grace.
+    """
+    stop_async_logging()
+    signal.signal(signum, signal.SIG_DFL)
+    signal.raise_signal(signum)
+
+
 def start(argv: Iterable[str] | None = None) -> None:
     """
     Process entrypoint.
@@ -113,6 +131,7 @@ def start(argv: Iterable[str] | None = None) -> None:
     )
 
     configure_logging(config)
+    signal.signal(signal.SIGTERM, _stop_on_sigterm)
 
     # Resolved after load_config() so HOST/PORT from --dotenv take effect.
     host = args.host or os.getenv("HOST", "0.0.0.0")

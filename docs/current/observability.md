@@ -1,7 +1,7 @@
 # Observability
 
 > **Status:** current
-> **As of:** d8f375bc
+> **As of:** 54ee500c
 
 ## Purpose
 
@@ -150,6 +150,7 @@ Each request ends with one `http_request` line: method, path, query, status, dur
 The query keeps its values only for Torznab's own parameters on Torznab paths (`t`, `q`, `cat`, `extended`, `offset`, `limit`); every other value is logged as `***`.
 Prowlarr sends its `apikey`, and proxied HLS paths carry the CDN's tokens and the client's address (`i=`, the VPN's exit address in production), also under the names `t` and `q`.
 uvicorn's own access log is off (`access_log=False`): it repeated each request with its query unmasked.
+A playback the shutdown bound cancels logs Uvicorn's cancel line as a warning and no `Exception in ASGI application`; the stop's last lines are written before the process ends ([Shutdown](architecture.md#shutdown)).
 
 Log lines name a CDN by its second-level domain (`cdn=dropcdn`, `extract_domain()`), never by its URL: the path and the query of a video URL carry tokens and the client's address.
 That holds for the HLS proxy's CDN errors (`hls_proxy_cdn_error`, `hls_proxy_network_error`), a body the CDN cut (`hls_proxy_file_cut`, `hls_proxy_segment_cut`) and its resumes (`hls_proxy_file_resumed`, `hls_proxy_segment_resumed` with `how=range` or `how=restart`), the fetches ahead (`hls_readahead_retried`, `hls_readahead_failed`), `/play`'s redirect (`stremio_play_resolved`), the playback check (`playback_check_failed`) and the resolvers' results.
@@ -171,7 +172,7 @@ The metrics restart with the process, and the scoring snapshots age out in weeks
 - An unreachable site is checked again 5 min after the check that found it down, then at doubling pauses up to the interval, so a dead site costs one check per interval and a returning one is back within one pause.
 
 The record is one value `plugin_history:v1` in the cache backend (diskcache or Redis; a year's TTL renewed with every write).
-It is written every minute when it changed and at shutdown, with the days older than 180 dropped.
+It is written every minute when it changed and at shutdown, with the days older than 180 dropped; each write logs `plugin_history_saved` with the plugins and days.
 The start restores it and logs `plugin_history_restored` with the plugins and days, or `plugin_history_discarded` with a `reason` for another version or an unreadable record; `plugin_history_restore_failed` and `plugin_history_save_failed` report failures.
 `GET /api/v1/stats/plugins` reports it, and the production digest prints the same per plugin ([Operations](../how-to/operations.md)).
 The record is evidence, not a rule: the lifecycle decision for a dead site stays the maintainer's.

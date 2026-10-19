@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -20,6 +21,7 @@ def run_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     monkeypatch.setattr(cli, "configure_logging", MagicMock())
     run = MagicMock()
     monkeypatch.setattr(cli.uvicorn, "run", run)
+    monkeypatch.setattr(cli.signal, "signal", MagicMock())
     return run
 
 
@@ -64,3 +66,24 @@ def test_uvicorn_bounds_the_graceful_shutdown(run_mock: MagicMock) -> None:
     cli.start([])
 
     assert run_mock.call_args.kwargs["timeout_graceful_shutdown"] == 5
+
+
+def test_sigterm_writes_the_queued_log_lines_first(
+    run_mock: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Uvicorn raises the stop signal again after its shutdown: the default
+    # handler killed the process before the listener thread wrote the last
+    # queued lines; the process still ends from the signal
+    calls = MagicMock()
+    monkeypatch.setattr(cli, "stop_async_logging", calls.stop)
+    monkeypatch.setattr(cli.signal, "signal", calls.signal)
+    monkeypatch.setattr(cli.signal, "raise_signal", calls.raise_signal)
+    cli.start([])
+    [(sig, handler)] = [c.args for c in calls.signal.call_args_list]
+    assert sig == signal.SIGTERM
+
+    handler(signal.SIGTERM, None)
+
+    assert [c[0] for c in calls.mock_calls[1:]] == ["stop", "signal", "raise_signal"]
+    assert calls.signal.call_args.args == (signal.SIGTERM, signal.SIG_DFL)
+    calls.raise_signal.assert_called_once_with(signal.SIGTERM)

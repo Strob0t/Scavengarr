@@ -1,7 +1,7 @@
 # Architecture
 
 > **Status:** current
-> **As of:** f3edb532
+> **As of:** 54ee500c
 
 ## Purpose
 
@@ -398,23 +398,28 @@ flowchart TD
     subgraph app["The app: lifespan() cleanup"]
         drain["GracefulShutdown.wait_for_drain() for up to 10 s, readyz answers 503"] --> stop["The background work ends: Stremio searches and resolutions, anime ids, StremioLinks, segment read-ahead, pass keeper"]
         stop --> reg["The resolver registry's half-open probes and challenged captures end"]
-        reg --> snap["The last writes of HosterStateStore and PluginHistory"]
+        reg --> snap["The last writes of HosterStateStore and PluginHistory, each logged with its counts when something changed"]
         snap --> tasks["The scoring, health, loop-lag, page-budget and warm-up tasks are cancelled"]
         tasks --> res["The stealth pool, the shared browser, the resolvers, the HTTP client and the cache close"]
         res --> spans["Telemetry.close() in a worker thread, up to 3 s"]
     end
     spans --> done(["app_shutdown_complete"])
+    done --> exit(["The queued log lines are written, the process ends from SIGTERM"])
     signal -. "a second SIGINT" .-> force["force_exit: the waits end and the app's cleanup is skipped"]
 ```
 
 Uvicorn's two waits together last up to 5 s: the CLI sets `timeout_graceful_shutdown=5`.
-A connection still answering then, such as a proxied playback, is cancelled with the line `Cancel 1 running task(s), timeout graceful shutdown exceeded` and the cancelled task's `Exception in ASGI application` at error level.
+A connection still answering then, such as a proxied playback, is cancelled with the line `Cancel 1 running task(s), timeout graceful shutdown exceeded`.
+The log setup (`_ShutdownBoundFilter` in `infrastructure/logging/setup.py`) makes that line a warning and drops the cancelled task's `Exception in ASGI application` with its `CancelledError`, so a stop during a playback writes no error line; every other cancel and exception stays an error.
 Only after every connection has closed and every request task has ended or been cancelled does it send the lifespan shutdown event.
 So the app's cleanup ends inside Docker's default stop grace of 10 s, after which Docker would kill the process and the cleanup would not run.
 On the dev server a stop with a proxied file playback held open by a slow reader took 5.2 to 5.3 s from SIGTERM until the process was gone, the cleanup 0.03 to 0.13 s of it, and 0.25 s without an open connection; without the bound the process still waited for the connection after 20 s.
 The app then marks itself shutting down, so `/api/v1/readyz` answers 503, and waits up to 10 s for the requests it still counts in flight.
 The background work ends before the resources it uses: the searches and resolutions before the browser, the HTTP client and the cache.
 The snapshots are written last before the cache closes, and the telemetry closes after everything else so the last spans still go out.
+The snapshots log `hoster_state_saved` and `plugin_history_saved` with their counts when they wrote something.
+After its shutdown Uvicorn raises the stop signal again. The CLI's SIGTERM handler (`_stop_on_sigterm` in `interfaces/cli/__main__.py`) first stops the log listener thread once it has written every queued line, then ends the process from the signal: killed by the default handler, the process lost the last lines (`app_shutdown_complete` among them; once everything after `http_client_closed`), and a normal exit would wait in uvloop's close for open DNS lookups, up to 5 s, past Docker's grace.
+On the dev server a stop with an open proxied playback took 5.23 to 5.28 s with every line through `Finished server process`, the cancel a warning and no error line, a stop without one 0.21 to 0.26 s.
 In the container, `docker/entrypoint.sh` ends with `exec python -m scavengarr.interfaces.cli`, so the stop signal reaches the app; `docker-compose.yml` runs it with `init: true`.
 
 ### Cross-cutting runtime

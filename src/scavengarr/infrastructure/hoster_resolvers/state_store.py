@@ -180,3 +180,9 @@ class HosterStateStore:
             log.warning("hoster_state_save_failed", error=str(exc))
             return
         self._saved = changes
+        log.info(
+            "hoster_state_saved",
+            resolutions=len(snapshot["results"]),
+            redirects=len(snapshot["redirects"]),
+            breakers=sum(len(entries) for entries in snapshot["breakers"].values()),
+        )
