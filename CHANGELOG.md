@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Removed: Two Development Dependencies Nothing Used
+
+- `requests` and `pytest-mock` leave the dev group of `pyproject.toml`: no file imports `requests`, and no test takes pytest-mock's `mocker` fixture (the tests use `unittest.mock`). Both came with the first commits, with no recorded reason.
+- `poetry.lock` drops them and `charset-normalizer`, which only `requests` needed; `urllib3` stays as a runtime package (the OTLP exporter sends over it), and no version moved.
+- `redis` loses `extras = ["redis"]`: redis-py has no extra of that name, so the extra installed nothing.
+- The image never had either package, since both were in the dev group only; the OTLP exporter sends over urllib3 and imports `requests` only for a credential-provider session, which the app does not set up.
+
 ### Added: The Post-Deploy Check Shows Where an Answer's Time Goes
 
 - Each stream row of `prodctl.py check` ends with the client's time to the response headers and to the body's end (`stream_answers()` reads each answer through `httpx.Client.stream()`, the headers' time when the context opens) beside the server's `duration_ms` of the request's `http_request` record, which the check reads already. A client more than 5 s slower than the server turns a passed row into a warning that names the gap; a failed row stays failed. `Answer.headers_seconds` and `_timing()` in `scripts/deploy_check.py`.
