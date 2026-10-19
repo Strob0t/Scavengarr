@@ -469,7 +469,6 @@ The start logs `config_effective` and `app_startup_complete` with the build iden
 ## Target
 
 No open change targets the architecture itself.
-The docs overhaul will move the remaining feature docs into `docs/current/`, `docs/how-to/` and `docs/reference/`, with the links of this document: [`docs/plans/docs-overhaul.md`](../plans/docs-overhaul.md).
 
 ## References
 

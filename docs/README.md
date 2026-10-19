@@ -35,8 +35,8 @@ The `how-to` guides work with the `current` documents and look up the `reference
 ## The state
 
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
-Open in the hoster resolvers and the browser: Filemoon's cold capture on the production host, its captcha pass kept warm, and sto's link-outs through the resolvers.
-Open in the plugins: a search page's network failure that stays a failure in the plugin record, first in the base and then in the httpx plugins, and a plugin for the public broadcasters' media libraries.
+Open in the hoster resolvers and the browser: the production proof that Filemoon's captcha pass stays warm, read from the maintainer's use.
+Open in the plugins: the httpx plugins' first search pages in the plugin base's raising mode, and a plugin for the public broadcasters' media libraries.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
 
 ## Start here
@@ -167,7 +167,6 @@ Open plans stay in `docs/plans/`; a closed plan is deleted once its outcome is i
 
 | Document | Status | What it holds |
 |---|---|---|
-| [`plans/docs-overhaul.md`](plans/docs-overhaul.md) | plan (open) | The target layout of these docs, the document contract and the steps to get there. |
 | [`backlog.md`](backlog.md) | plan | The open rows of the work queue and the ideas not yet taken up; a coder's hashes and Mr. Fable's acceptance go on the row's line |
 | [`agents/orchestration.md`](agents/orchestration.md) | reference | The three sessions' roles, working rules, worktrees, production access and the maintainer's standing decisions |
 | [`plans/challenge-reactions.md`](plans/challenge-reactions.md) | plan (open) | What Scavengarr does once a page shows a challenge or a captcha. |
