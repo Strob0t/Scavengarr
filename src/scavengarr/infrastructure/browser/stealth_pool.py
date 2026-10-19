@@ -82,7 +82,7 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
 # ...and the time a submitted gate gets for its redirect, past the timeout:
-# on a Raspberry Pi behind a VPN the gate's widget took 28 of 30 s and the
+# on the production host behind a VPN the gate's widget took 28 of 30 s and the
 # redirect after its form came too late (2026-10-04)
 _SUBMIT_REDIRECT_S = 10.0
 # Ad layers some sites put over the page (s.to: random class names, laid out

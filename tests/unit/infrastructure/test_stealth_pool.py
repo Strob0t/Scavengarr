@@ -824,7 +824,7 @@ class TestStealthPoolClickThrough:
         passed.assert_awaited_once()
 
     async def test_submitted_gate_gets_time_for_its_redirect(self) -> None:
-        """On a Raspberry Pi the gate's widget used 28 of the 30 s budget, and
+        """On the production host the gate's widget used 28 of the 30 s budget, and
         the redirect after its form came later: the passed gate was thrown
         away (stealth_click_through_no_target, 2026-10-04)."""
         shared_pool, _, context = _mock_pool_stack()

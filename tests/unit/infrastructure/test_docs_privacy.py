@@ -6,7 +6,8 @@ production machine's device name and the maintainer's time zone out of the docs:
 durations, counts and build hashes carry the evidence instead. This test fails on
 the patterns a reviewer would otherwise have to spot by eye. Documented examples
 stay allowed: payload timestamps of 2025, the weekly schedule, ``*.example.lan``
-hosts and the private ranges the configuration docs explain.
+hosts and the private ranges the configuration docs explain. LAN hostnames, time
+zones and the device name stay out of the code, its comments and tests too.
 """
 
 from __future__ import annotations
@@ -45,10 +46,10 @@ _DOC_PATTERNS = {
     "request id": re.compile(r"request(?:_id=| )[0-9a-f]{12}\b"),
     "network number": re.compile(r"\b192\.168\.(?!0\.0\b|1\.\d+\b)\d+\.\d+\b"),
     "autonomous system": re.compile(r"\bAS\d{4,6}\b"),
-    # The production machine is "the production host" (decision 0015)
-    "device name": re.compile(r"\bRaspberry\b|\bPi\b"),
 }
 _ANY_PATTERNS = {
+    # The production machine is "the production host" (decision 0015)
+    "device name": re.compile(r"\bRaspberry\b|\bPi\b"),
     "LAN hostname": re.compile(r"(?<!example)(?<!\*)\.lan\b"),
     "time zone": re.compile(r"\bEurope/\w+"),
 }

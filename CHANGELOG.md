@@ -40,7 +40,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 ### Changed: The Production Machine Is "the Production Host" Everywhere
 
 - The production machine's device name gave way to "the production host" in 34 files: 13 code comments and docstrings in `src/` and `plugins/` (among them the HLS transcoding setting's description, so `docs/reference/configuration.md` is regenerated), 7 tests, 14 CHANGELOG lines, `README.md` (the image's platforms without an example device), `data/config.yaml`, `.github/workflows/image.yml`, 3 OpenSpec files (`add-container-image` and the archived `add-observability`), `docs/plans/docs-overhaul.md`, the backlog and 5 files of the archive (their text only; the archive goes as a whole later). A benchmark on another device of that kind reads "an arm64 board", and the arm64 platform stays where it is the point.
-- `tests/unit/infrastructure/test_docs_privacy.py` fails on the device name in every doc, so it cannot return; decision 0015 names it in its rule. Code comments follow once the two mentions in the stealth pool and its test change (backlog row 123, part 2).
+- `tests/unit/infrastructure/test_docs_privacy.py` fails on the device name in every doc, so it cannot return; decision 0015 names it in its rule. The stealth pool's comment and its test's docstring followed, and the guard checks the code for the device name too.
 
 ### Changed: The Skill Set Drops `code-review`, graphify Stays User-Wide
 

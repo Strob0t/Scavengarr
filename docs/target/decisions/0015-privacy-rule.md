@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why docs and commit texts tell nothing about what the maintainer watches.
 > **Status:** target
-> **As of:** 6786e014
+> **As of:** ee46af83
 
 ## Context
 
@@ -24,7 +24,7 @@ Durations, counts and build hashes are allowed, and test data and fixtures keep 
 
 ## Consequences
 
-- `tests/unit/infrastructure/test_docs_privacy.py` fails on what a pattern can find: clock times with seconds or in UTC, request ids, local host names, private network numbers, autonomous system numbers, named time zones and the production machine's device name (in the docs; in code comments once its last two mentions there are gone).
+- `tests/unit/infrastructure/test_docs_privacy.py` fails on what a pattern can find: clock times with seconds or in UTC, request ids, local host names, private network numbers, autonomous system numbers, named time zones and the production machine's device name, and the last three in the code too.
 - What no pattern finds, a title, a date or a habit, stays the writer's and the reviewer's duty.
 - A production reading in a doc names a placeholder, durations and counts instead of a title and a time.
 
