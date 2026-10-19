@@ -7,6 +7,7 @@ from typing import cast
 
 import httpx
 
+from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
     ALL_DDL_CONFIGS,
@@ -64,3 +65,14 @@ async def test_every_resolver_that_captures_gets_the_stealth_pool() -> None:
         "vixeo",
     }
     assert all(getattr(r, "_stealth_pool", None) is pool for r in capturing)
+
+
+async def test_filemoon_reads_the_kept_capture_state() -> None:
+    """Its captcha pass tells Filemoon a cold capture (row 121)."""
+    pool = cast(StealthPool, object())
+    store = cast(ClearanceStore, object())
+    async with httpx.AsyncClient() as client:
+        resolvers = build_hoster_resolvers(client, pool, clearance_store=store)
+
+    (filemoon,) = [r for r in resolvers if r.name == "filemoon"]
+    assert getattr(filemoon, "_clearance_store", None) is store

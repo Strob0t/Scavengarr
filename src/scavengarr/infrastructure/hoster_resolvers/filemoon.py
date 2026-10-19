@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
+from scavengarr.infrastructure.browser.page_gate import mark_resolution_challenge
 from scavengarr.infrastructure.hoster_resolvers._browser import capture_stream
 from scavengarr.infrastructure.hoster_resolvers._video_extract import (
     extract_hls_from_unpacked,
@@ -34,6 +36,7 @@ from scavengarr.infrastructure.hoster_resolvers._video_extract import (
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 log = structlog.get_logger(__name__)
@@ -80,6 +83,11 @@ _WATCH_PLAYER = ".video-page__player iframe"
 # warm captures at 20 and 29 min, the captcha at 31)
 _PASS_ITEM = "byse:captcha-clearance:embed"
 
+# A pass with less left than this counts as none: the player looks at it at
+# its first click, seconds into the capture (the pass keeper waits as long
+# past its end)
+_PASS_LEFT_S = 30.0
+
 
 def pass_expiry(state: Mapping[str, Any]) -> float | None:
     """When the Byse captcha pass in *state* (a browser context's storage
@@ -124,9 +132,12 @@ class FilemoonResolver:
         http_client: httpx.AsyncClient,
         *,
         stealth_pool: StealthPool | None = None,
+        clearance_store: ClearanceStore | None = None,
     ) -> None:
         self._http = http_client
         self._stealth_pool = stealth_pool
+        # The kept capture state: its captcha pass tells a cold capture
+        self._clearance_store = clearance_store
 
     @property
     def name(self) -> str:
@@ -179,6 +190,14 @@ class FilemoonResolver:
         if page is None:
             return None
         page_url, player = page
+        if await self._starts_cold():
+            # The player asks a context without a pass for its captcha
+            # first: production's cold captures found their stream 17.4 to
+            # 31.5 s in, past the resolve bound, and 12 of 17 were cut
+            # without a challenge mark (row 106). Marked from the start, a
+            # cut one ends as a challenge and runs on in the background
+            # (row 121)
+            mark_resolution_challenge("hoster_captcha")
         # The player frame's ad tag turns every click into a popup
         return await capture_stream(
             self._stealth_pool,
@@ -188,6 +207,18 @@ class FilemoonResolver:
             own_scripts_only=True,
             challenge_requests=_CAPTCHA_REQUESTS,
         )
+
+    async def _starts_cold(self) -> bool:
+        """Whether the capture starts without the player's captcha pass: the
+        kept capture state (``ClearanceStore``, which the pass keeper reads)
+        holds none with ``_PASS_LEFT_S`` left. Without the store or the
+        browser nothing is known beforehand: the pages alone mark a
+        challenge."""
+        if self._clearance_store is None or self._stealth_pool is None:
+            return False
+        kept = await self._clearance_store.creation_state()
+        expiry = None if kept is None else pass_expiry(kept.state)
+        return expiry is None or expiry - time.time() < _PASS_LEFT_S
 
     async def _byse_page(self, embed_url: str) -> tuple[str, str | None] | None:
         """The page the browser opens for a Byse video and the player element

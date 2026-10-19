@@ -362,14 +362,18 @@ def build_crawljob_store(
 
 
 def build_hoster_resolvers(
-    http_client: httpx.AsyncClient, stealth_pool: StealthPool | None
+    http_client: httpx.AsyncClient,
+    stealth_pool: StealthPool | None,
+    *,
+    clearance_store: ClearanceStore | None = None,
 ) -> list[HosterResolverPort]:
     """The hoster resolvers in registration order.
 
     A domain two resolvers claim stays with the first one registered, so the
     specific resolvers come before the generic XFS and DDL ones.
     ``scripts/generate_resolver_list.py`` lists them in
-    ``docs/reference/resolvers.md``.
+    ``docs/reference/resolvers.md``. *clearance_store* holds the kept
+    capture state, whose captcha pass tells Filemoon a cold capture.
     """
     return [
         # Streaming resolvers (extract direct video URLs)
@@ -377,7 +381,11 @@ def build_hoster_resolvers(
         StreamtapeResolver(http_client=http_client),
         SuperVideoResolver(http_client=http_client, stealth_pool=stealth_pool),
         DoodStreamResolver(http_client=http_client, stealth_pool=stealth_pool),
-        FilemoonResolver(http_client=http_client, stealth_pool=stealth_pool),
+        FilemoonResolver(
+            http_client=http_client,
+            stealth_pool=stealth_pool,
+            clearance_store=clearance_store,
+        ),
         # DDL resolvers (custom — non-generic)
         FilerNetResolver(http_client=http_client),
         RapidgatorResolver(http_client=http_client),
@@ -622,7 +630,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #    unplayable (browser captures that cannot pass a challenge from this IP)
     hoster_breaker = PluginCircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
     state.hoster_resolver_registry = HosterResolverRegistry(
-        resolvers=build_hoster_resolvers(state.http_client, state.stealth_pool),
+        resolvers=build_hoster_resolvers(
+            state.http_client, state.stealth_pool, clearance_store=clearance_store
+        ),
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,

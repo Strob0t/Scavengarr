@@ -147,3 +147,24 @@ A resolver whose player loads a captcha widget that does not gate its stream SHA
 #### Scenario: reCAPTCHA's puzzle frame
 - **WHEN** a page loads reCAPTCHA's `bframe` and no visible checkbox frame
 - **THEN** the resolution is not marked
+
+### Requirement: A Capture Known To Meet The Captcha Is Marked From Its Start
+A resolver that knows before its capture that the hoster will ask for its captcha SHALL mark the resolution's challenge before the capture starts. The Filemoon resolver SHALL do so for a Byse capture when the kept capture state holds no captcha pass with at least 30 s left, and such a resolution SHALL take the paths of a capture that showed its challenge. A video the hoster reports gone SHALL start no capture and no mark.
+
+#### Scenario: No kept pass, cut before the captcha
+- **WHEN** Filemoon's capture starts without a kept pass and the resolve bound cuts it before the player's `captcha` request
+- **THEN** the resolution ends as `challenge`, the breaker's failure count is unchanged and the challenge cooldown starts
+- **AND** the capture runs on in the background and caches its stream
+
+#### Scenario: A kept pass
+- **WHEN** the kept capture state holds a pass with more than 30 s left and the bound cuts a capture that showed no challenge
+- **THEN** the resolution ends as `timeout` and counts for the breaker, as before
+
+#### Scenario: An offline notice without a kept pass
+- **WHEN** a capture that started without a kept pass shows the hoster's offline notice
+- **THEN** the resolution ends as `dead` and is cached as dead
+
+#### Scenario: The pass keeper's capture
+- **WHEN** the pass keeper captures its link after the pass has gone and its bound cuts the capture
+- **THEN** the resolution ends as `challenge` without a breaker failure
+- **AND** the capture runs on as the background completion

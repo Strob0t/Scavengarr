@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: A Filemoon Capture Without a Kept Pass Counts as Challenged From Its Start
+
+- The Filemoon resolver reads the kept capture state before a Byse capture (`ClearanceStore.creation_state()` and `pass_expiry()`; `FilemoonResolver(clearance_store=)`, wired by `build_hoster_resolvers()` in `src/scavengarr/interfaces/composition.py`). Without a captcha pass with 30 s left it marks the resolution's challenge (`hoster_captcha`, `mark_resolution_challenge()`) before the capture starts, so the registry's challenge paths apply: a cut ends as `challenge` instead of a breaker failure, the challenge cooldown starts, and the capture runs on in the background for up to 20 s and caches its stream and keeps the new pass, from which the pass keeper goes on. A video the details API reports gone starts no capture, and a page past its captcha keeps its verdict (an offline notice is a dead link).
+- The pass keeper's capture starts after the pass has gone, so it is marked too: its cut runs on as the completion and no longer counts toward the breaker. `hoster_resolve_success` names `hoster_captcha` for every Filemoon stream found without a kept pass.
+- Why: the Byse player asks a context without a pass for its captcha first. In 54 h of one build's logs on the production host, cold captures found their stream 17.4 to 31.5 s in, past the 10 s resolve bound, and 12 of 17 were cut without a challenge mark; after the rebuild with the pass keeper the first lookup's timeout opened the breaker and the keeper idled (idea I20, the maintainer's decision D7).
+- Proof: unit tests of both paths in `tests/unit/infrastructure/test_filemoon_resolver.py` (a kept pass leaves the capture unmarked; none, an expired one or one with less than 30 s left marks it; with the registry, a cut without a pass ends as `challenge` with no breaker failure and the completion caches the stream, a cut with one stays a `timeout`, an offline page stays dead) and the wiring in `tests/unit/interfaces/test_resolver_wiring.py`. The production proof follows the deploy (backlog row 121); the OpenSpec change `react-to-challenges` has the requirement and its tasks group 4.
+
 ### Added: Every Plugin Has a Live Smoke Entry
 
 - `tests/live/test_plugin_smoke.py` lists cineby, crawli, hdsource, jjs, movieblog and serienjunkies (filmpalast_to's plugin is `filmpalast`, listed before), so all 42 plugins are searched in a live run; `tests/unit/infrastructure/test_plugin_smoke_coverage.py` fails when a registered plugin has no entry or one twice.

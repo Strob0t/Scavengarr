@@ -37,3 +37,11 @@
 - [x] 3.6 Tests and implementation: a request for a link whose completion runs joins it and answers its stream, no second capture; the join waits at most the resolve bound; a joined refresh never answers the refused stream; the outcome `joined` (finding 9). Docs in `docs/current/hoster-resolvers.md`, `docs/current/observability.md` and `CHANGELOG.md`.
 - [x] 3.7 Tests and implementation: the completions leave one of the page gate's pages free, and a single page hands nothing over; the composition hands the registry the gate (finding 12). Docs in `docs/current/hoster-resolvers.md` and `CHANGELOG.md`.
 - [x] 3.8 Tests and implementation: a request cut in the bound's loop iteration cancels the capture and counts as cut (finding 15); a completion's playback check error is logged, caches and steps up nothing (V29). Docs in `docs/current/hoster-resolvers.md` and `CHANGELOG.md`.
+
+## 4. Row 121: a Filemoon capture without a kept pass is marked from its start (R5, decision D7)
+
+- [x] 4.1 Tests: a kept pass with time left leaves the capture unmarked; none, an expired one or one with less than 30 s left marks it `hoster_captcha` before the capture; a gone video (the details API's 404) and an offline page mark nothing; without the kept state the pages alone mark.
+- [x] 4.2 Tests (the registry with a short bound): a cut capture without a kept pass ends as `challenge` with no breaker failure and a cooldown, and its completion caches the stream; with a kept pass the cut stays a `timeout`; a page past its captcha keeps its verdict (`dead`).
+- [x] 4.3 Implementation: `FilemoonResolver(clearance_store=)` reads `ClearanceStore.creation_state()` and `pass_expiry()` before the capture and marks the challenge (`mark_resolution_challenge()`); `build_hoster_resolvers(clearance_store=)` wires it.
+- [x] 4.4 Docs: `docs/current/hoster-resolvers.md`, `docs/current/browser-and-challenges.md`, `docs/current/known-issues.md`, `CHANGELOG.md`, this change's spec.
+- [ ] 4.5 Production after the deploy: a Filemoon stream request without a kept pass ends as `challenge`, its completion caches the stream, and the pass keeper's events follow about 30 min after the captcha; recorded in backlog row 121.

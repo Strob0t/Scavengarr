@@ -155,6 +155,9 @@ A resolver tunes its capture through `capture_stream()`:
 
 Filemoon asks the details API (`/api/videos/<id>/embed/details`) first: a 404 means the video is gone, and no browser starts.
 A video whose owner allows embedding only on its own sites (403 `embedding … not allowed`, logged as `filemoon_embedding_blocked`) is captured from the hoster's watch page, which plays it in a player frame of a second host.
+A Byse capture that starts without the player's captcha pass in the kept capture state (`ClearanceStore.creation_state()`, which [the pass keeper](#filemoons-pass-keeper) reads; a pass with less than 30 s left counts as none) is marked as challenged from its start (`hoster_captcha`).
+The player asks such a context for its captcha before the stream: in 54 h of one build's logs on the production host, cold captures found their stream 17.4 to 31.5 s in, past the 10 s bound, and 12 of 17 were cut without a challenge mark, as breaker failures.
+Marked from the start, a cut capture ends as `challenge` and runs on in the background ([Outcomes](#outcomes)); without the kept state or the browser the pages alone mark it, and a video the details API reports gone starts no capture.
 
 ### Outcomes
 
@@ -205,7 +208,7 @@ The clock stops while a capture waits for a stealth browser page or for the shar
 A resolution whose pages showed a challenge ends as `challenge` and starts the hoster's challenge cooldown while the challenge stands (`hoster_resolve_challenge` with the `kind`, `passed` and `cooldown_s`; [Challenges](browser-and-challenges.md#challenges)).
 A page past its challenge gives its verdict, so `None` there is a dead link.
 The cooldown is checked before the breaker, so a skipped link never takes a half-open probe's place, and a refresh at play time (`resolve(refresh=True)`, after the CDN refused a stored stream) passes the cooldown.
-`hoster_resolve_success` names the challenge a cold capture passed on its way to the stream (`challenge`, `None` for a warm one) and the attempt's time from its start (`duration_ms`), the wait for a page and the playback check included.
+`hoster_resolve_success` names the challenge a cold capture passed on its way to the stream (`challenge`, `None` for a warm one; `hoster_captcha` for every Filemoon capture that started without a kept pass) and the attempt's time from its start (`duration_ms`), the wait for a page and the playback check included.
 
 A capture that the bound cut after its challenge runs on in the background instead of being cancelled (`_complete()`):
 
@@ -268,10 +271,10 @@ A capture with the pass does not renew it, and the first capture after the expir
 3. The captcha falls to that capture, and its new pass is kept for the next request's capture.
 
 - Its capture has a bound of its own, 30 s (`_BOUND_S`), since the captcha comes with the player's first click 3 s after the page has loaded, and a cold page load can take most of the request's bound.
-- Its timeout counts toward the breaker as a request's does.
+- Its capture starts after the pass has gone, so the resolver marks it as challenged from its start: a cut ends as `challenge` (a cooldown step while the challenge stands, no breaker failure) and runs on as the registry's completion, which keeps the pass when it finds the stream.
 - Its page claim is `background`, served last, and it starts only while one of the stealth browser's pages stays free beside its own.
 - One capture per pass: a capture that brings no new pass ends the keeping until a request's capture brings one, and without a cached Filemoon stream nothing is captured.
-- A capture the bound cuts after the captcha runs on as the registry's completion, which keeps the pass when it finds the stream.
+- Without a kept pass (a first start, a lost cache, a capture that brought none) it has nothing to keep and looks again every 5 min: the next request's capture starts marked, so a cut one runs on as the completion, and its cached stream and kept pass start the keeping.
 - It keeps the pass only while a request looked up a Filemoon link within the last 48 h (`_DEMAND_S`), and the keeper's own stream counts when a request takes it from the cache.
 - Past 48 h it idles, once per pass, and the next request's lookup starts it again; the bound leaves at most 96 captures after the last request.
 - It looks again at most every 5 min, and every 30 s while no page is free.

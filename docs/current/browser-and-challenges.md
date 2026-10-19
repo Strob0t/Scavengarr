@@ -175,6 +175,7 @@ A page that got past its challenge passes the mark (`mark_resolution_passed()`):
 A later challenge on the page marks it again.
 The hoster's own captcha and a provider frame in front of the player give no pass signal before the stream, so they stand until a stream ends them.
 A resolver whose player loads a widget that does not gate the stream passes `passive_widget=True`, and the providers' frames mark nothing for it.
+A resolver that knows the hoster will ask for its captcha marks the resolution itself before the capture starts (`mark_resolution_challenge()`): Filemoon, when the kept capture state holds no captcha pass with 30 s left ([Browser captures](hoster-resolvers.md#browser-captures)).
 
 A resolution whose pages showed a challenge and found no stream in time ends as `challenge`, which the hoster's circuit breaker does not count ([the decision](../target/decisions/0012-challenge-outside-the-breaker.md)).
 A page past its challenge gives its verdict instead, so no stream there is a dead link.
