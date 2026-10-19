@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: Dependabot Opens Its Pull Requests Against `staging`
+
+- `.github/dependabot.yml` sets `target-branch: "staging"` for Poetry, GitHub Actions and the Docker base images, so an update reaches `main` only through `staging`; AGENTS.md §4 says the PRs are merged into `staging` after a green CI run, and `tests/unit/infrastructure/test_repository_files.py` fails when an ecosystem names another branch or none.
+
 ### Changed: The README Stays Current
 
 - The README's documentation table links every document under `docs/current/`, `docs/how-to/` and `docs/reference/` and the rules, decisions, plans, the work queue and the assistants' working rules; its test count reads about 7,000.

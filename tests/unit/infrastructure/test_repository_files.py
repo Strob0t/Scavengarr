@@ -46,6 +46,23 @@ def test_compose_trusts_a_reverse_proxy_on_private_networks() -> None:
     assert "8.8.8.8" not in trusted
 
 
+def test_dependabot_opens_its_pull_requests_against_staging() -> None:
+    """`main` takes merges from `staging` only (AGENTS.md §1): an update PR
+    against `main` would bypass `staging`, so every ecosystem names it."""
+    config = yaml.safe_load((_ROOT / ".github" / "dependabot.yml").read_text())
+
+    targets = {
+        update["package-ecosystem"]: update.get("target-branch")
+        for update in config["updates"]
+    }
+
+    assert targets == {
+        "pip": "staging",
+        "github-actions": "staging",
+        "docker": "staging",
+    }
+
+
 def test_shipped_config_has_no_container_only_paths() -> None:
     """`poetry run start --config data/config.yaml` must work outside Docker.
 
