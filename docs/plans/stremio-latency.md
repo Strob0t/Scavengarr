@@ -1,7 +1,7 @@
 # Plan: Stremio Response Time and Playable Streams
 
 > **Status:** plan
-> **As of:** c11a50ff
+> **As of:** e4b4371c
 
 **Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the twelfth (2026-10-11) are appended; the seventh measured how the stealth browser's pages are shared since [browser-page-budget.md](../archive/plans/browser-page-budget.md) (the sixth round's kinoger timeouts did not recur). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
 **Priority:** High (Stremio is the main use case; cold answers take 17–38 s)
@@ -863,6 +863,7 @@ The twelfth round's Series D S01E01 got no stream from a stale entry whose only 
 | 41d6958 | +1 h 26 min | 1 | 0 | none to fill; read before row 105's rebuild signal |
 | 4429aff | +44 min 23 s | 4 | 0 | none to fill; read before row 107's rebuild signal |
 | 85e9e5d | +1 h 29 min | 8 | 0 | none to fill; read before the rebuild signal for rows 106, 108 and 109 (four of the eight stale answers are the repeated post-deploy check's own requests) |
+| d8f375bc | +about 1 h | 0 | 0 | no Stremio request in this container's first hour (the counter did not exist yet); read before the rebuild signal for rows 121 and 122; the stack was recreated twice on this build, and the two earlier containers (9 h 50 min and about 4 h) went unread |
 
 ## AIOStreams
 
