@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Stremio Response Time and Playable Streams
+
+> **Status:** plan
+> **As of:** c11a50ff
 
 **Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the twelfth (2026-10-11) are appended; the seventh measured how the stealth browser's pages are shared since [browser-page-budget.md](../archive/plans/browser-page-budget.md) (the sixth round's kinoger timeouts did not recur). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
 **Priority:** High (Stremio is the main use case; cold answers take 17–38 s)

@@ -8,8 +8,10 @@ trial, a measurement, a proof or a finding, and no line cites a backlog id
 behaviour, the archive says where it came from. Quoted examples (the contract's
 own list of banned ids) stay allowed, and code fences are not read.
 
-Covered: ``docs/README.md`` and the folders of the target layout. The archive and
-``docs/plans/`` keep their history; ``docs/backlog.md`` cites its ids.
+Covered: every document under ``docs/`` outside the archive, which stays exempt.
+Every document outside the archive carries the header; plans keep their ids and
+history by the contract (``docs/plans/`` checks the header only), and
+``docs/backlog.md`` cites its ids.
 """
 
 from __future__ import annotations
@@ -21,14 +23,15 @@ import pytest
 
 _ROOT = Path(__file__).parents[3]
 _DOCS_DIR = _ROOT / "docs"
-_FOLDERS = ("target", "current", "how-to", "reference", "agents")
 _DOCS = [
-    _DOCS_DIR / "README.md",
-    *sorted(_DOCS_DIR.glob("backlog.md")),
-    *(doc for folder in _FOLDERS for doc in sorted((_DOCS_DIR / folder).rglob("*.md"))),
+    doc
+    for doc in sorted(_DOCS_DIR.rglob("*.md"))
+    if "archive" not in doc.relative_to(_DOCS_DIR).parts
 ]
 # Documents that cite backlog ids by design
 _ID_EXEMPT = (_DOCS_DIR / "backlog.md",)
+# Plans keep their ids and their history: only the header is checked
+_PLANS = _DOCS_DIR / "plans"
 
 _STATUS = re.compile(r"^> \*\*Status:\*\* (current|target|how-to|reference|plan)\b")
 _AS_OF = re.compile(r"^> \*\*As of:\*\* [0-9a-f]{7,40}\b")
@@ -77,13 +80,16 @@ def _header_problems(name: str, lines: list[str]) -> list[str]:
     return problems
 
 
-def style_problems(doc: Path, root: Path = _ROOT, *, ids: bool = True) -> list[str]:
-    """Where *doc* breaks the document contract, as ``path:line: problem``."""
+def style_problems(
+    doc: Path, root: Path = _ROOT, *, ids: bool = True, history: bool = True
+) -> list[str]:
+    """Where *doc* breaks the document contract, as ``path:line: problem``;
+    *ids* and *history* off skip the backlog-id and the history-heading check."""
     name = doc.relative_to(root).as_posix()
     lines = doc.read_text(encoding="utf-8").splitlines()
     problems = _header_problems(name, lines)
     for number, line in _prose(lines):
-        if _HEADING.match(line) and _HISTORY_WORD.search(line):
+        if history and _HEADING.match(line) and _HISTORY_WORD.search(line):
             problems.append(f"{name}:{number}: a heading names history")
         if not ids:
             continue
@@ -97,7 +103,10 @@ def style_problems(doc: Path, root: Path = _ROOT, *, ids: bool = True) -> list[s
 
 @pytest.mark.parametrize("doc", _DOCS, ids=lambda doc: str(doc.relative_to(_ROOT)))
 def test_the_docs_follow_the_contract(doc: Path) -> None:
-    problems = style_problems(doc, ids=doc not in _ID_EXEMPT)
+    plan = doc.is_relative_to(_PLANS)
+    problems = style_problems(
+        doc, ids=not plan and doc not in _ID_EXEMPT, history=not plan
+    )
 
     assert not problems, "\n".join(problems)
 
@@ -167,3 +176,24 @@ def test_the_backlog_may_cite_its_ids(tmp_path: Path) -> None:
 
     assert style_problems(doc, tmp_path, ids=False) == []
     assert style_problems(doc, tmp_path) == ["backlog.md:6: a backlog id (row 106)"]
+
+
+def test_a_plan_keeps_its_ids_and_history_but_not_a_bare_header(tmp_path: Path) -> None:
+    text = "### Round 2: the trial\n\nRow 106 measured it, see N1.\n"
+    plan = _write(
+        tmp_path,
+        "plan.md",
+        "# Plan: latency\n\n> **Status:** plan\n> **As of:** d17c66f7\n\n" + text,
+    )
+    bare = _write(tmp_path, "bare.md", "[← Back](../README.md)\n\n# Plan: latency\n")
+
+    assert style_problems(plan, tmp_path, ids=False, history=False) == []
+    assert style_problems(bare, tmp_path, ids=False, history=False) == [
+        "bare.md:1: the title is not the first line"
+    ]
+
+
+def test_the_archive_is_exempt() -> None:
+    assert _DOCS
+    assert not [doc for doc in _DOCS if "archive" in doc.parts]
+    assert _DOCS_DIR / "README.md" in _DOCS

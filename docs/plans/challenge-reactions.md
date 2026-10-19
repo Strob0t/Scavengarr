@@ -1,6 +1,7 @@
-[← Back to Index](../README.md)
-
 # Plan: Reactive Challenge Handling (Round 2)
+
+> **Status:** plan
+> **As of:** ebad43ac
 
 **Status:** Decided (the maintainer): R1 with R7, R2, and R4 with R5 become backlog rows 89 to 91; R3 is not chosen; R6, R8 and R9 wait for the numbers ([Decision and Expected Gain](#decision-and-expected-gain-2026-10-12)). R4 is built (row 91, OpenSpec `keep-capture-state`, 2026-10-12).
 

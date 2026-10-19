@@ -1,7 +1,7 @@
 # Docs overhaul: one style, target and current state only, history archived
 
 > **Status:** plan (open); the work is rows 110 to 120 of `docs/backlog.md`
-> **As of:** staging 1b7abe45
+> **As of:** 1b7abe45
 > **Evidence:** an inventory of every Markdown file in the repository (117 files, 21,870 lines, 2.43 MB; the numbers below are its final pass)
 
 ## Problem

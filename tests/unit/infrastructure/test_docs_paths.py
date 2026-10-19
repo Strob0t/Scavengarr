@@ -1,7 +1,7 @@
 """The docs name repository paths that exist.
 
-Every backticked path in the instruction files, the feature and
-architecture docs and the folders of the target layout must exist (plans, the backlog,
+Every backticked path in the instruction files and the folders of the
+target layout must exist (plans, the backlog,
 OpenSpec changes and the index's document contract name future files, the
 archive names removed ones; none of them is checked), so a moved module
 shows up here and not in a reader's shell (finding 10 of
@@ -24,8 +24,6 @@ _DOCS = [
     _ROOT / "AGENTS.md",
     _ROOT / "README.md",
     _ROOT / "CONTRIBUTING.md",
-    *sorted((_ROOT / "docs" / "features").glob("*.md")),
-    *sorted((_ROOT / "docs" / "architecture").glob("*.md")),
     *(
         doc
         for folder in ("target", "current", "how-to", "reference", "agents")

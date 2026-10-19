@@ -1,7 +1,7 @@
 # Scavengarr documentation
 
 > **Status:** reference
-> **As of:** d17c66f7
+> **As of:** ad8ef2f5
 
 The one index of the documentation: one line per document with its status.
 
@@ -10,7 +10,6 @@ The one index of the documentation: one line per document with its status.
 Agents read [`AGENTS.md`](../AGENTS.md) first: it holds the rules for every change.
 To learn how a part works now, read its `current` document; to learn what must hold, read the `target` documents and the decision records.
 The `plan` documents and the archive are history and work in progress, not a description of the code.
-The documents move into the target layout of [`docs/plans/docs-overhaul.md`](plans/docs-overhaul.md); until each one has moved, it is listed here under its present path.
 Every new or moved document adds its own line here, and every document follows the rules at the end of this file.
 
 | Status | Meaning |
@@ -22,13 +21,46 @@ Every new or moved document adds its own line here, and every document follows t
 | plan | Open work and its evidence. |
 | archived | History, kept unchanged; the archive index names its successor. |
 
+## What Scavengarr does
+
+One line per feature, with the document that describes it.
+
+| Feature | What it does | Described in |
+|---|---|---|
+| Python plugins | Each site is one Python file on `HttpxPluginBase` or `PlaywrightPluginBase`, with shared bases for sites on one backend. | [Plugins](current/plugins.md#base-classes) |
+| Multi-stage scraping | A plugin runs the search page, the detail pages and the links itself, with bounded concurrency. | [Plugins](current/plugins.md#search-stages) |
+| Per-plugin overrides | `plugins.overrides` sets a plugin's timeout, concurrency, result cap and whether it runs. | [Configuration](reference/configuration.md#plugins) |
+| Plugin domains | The domain check finds a reachable domain, follows site moves and reads official domain lists. | [Plugin domains](current/plugin-domains.md) |
+| Plugin scores and probes | Background probes keep a weighted average of each plugin's health and search quality. | [Plugins](current/plugins.md#scores-and-probes) |
+| Torznab and Newznab API | `caps` and `search` serve Prowlarr and the Arr apps. | [Torznab API](reference/torznab-api.md) |
+| Prowlarr integration | Prowlarr finds the indexers, Sonarr and Radarr search through it, and JDownloader takes the grabs. | [Connect Prowlarr](how-to/connect-prowlarr.md) |
+| CrawlJobs | A grab is one `.crawljob` file with the validated links of a release, for JDownloader. | [Torznab and CrawlJobs](current/torznab-and-crawljobs.md#the-crawljob) |
+| Link validation | Download links are checked in parallel with `HEAD`, then `GET` where needed. | [Link validation](current/link-validation.md) |
+| Stremio addon | The manifest, the catalogs and the streams answer IMDb and `kitsu:` ids, with TMDB titles in each plugin's languages. | [Stremio addon](current/stremio-addon.md) |
+| Search cache and answer budget | Searches are cached per title, and a request answers at its budget with the results known by then. | [Stremio addon](current/stremio-addon.md#the-search-cache) |
+| Stream ranking | Streams are ranked by a weighted score, and each hoster and language keeps its best-ranked stream. | [Stremio addon](current/stremio-addon.md#ranking) |
+| HLS and file proxy | Streams bound to headers or to the resolving address play through Scavengarr's own proxy. | [Stremio addon](current/stremio-addon.md#hls-proxy) |
+| Hoster resolvers | Individual, generic DDL and XFS resolvers turn a hoster link into a stream or a checked download. | [Hoster resolvers](current/hoster-resolvers.md), [resolver list](reference/resolvers.md) |
+| Circuit breakers | A plugin per category, or a hoster, is skipped after repeated failures until it recovers. | [Stremio addon](current/stremio-addon.md#circuit-breakers), [Hoster resolvers](current/hoster-resolvers.md#the-circuit-breaker) |
+| Shared browser and stealth pool | One Chromium serves the browser plugins and the captures, with a stealth context for protected pages. | [Browser and challenges](current/browser-and-challenges.md) |
+| Concurrency pool | httpx and browser slots are shared fairly across concurrent Stremio requests. | [Architecture](current/architecture.md#infrastructure) |
+| Auto-tune | Concurrency limits follow the container's CPU and memory at startup. | [Configuration](reference/configuration.md#auto-tune) |
+| HTTP rate limits and retries | Every outbound request goes through per-domain token buckets, and a 429 or 503 is retried with backoff. | [Architecture](current/architecture.md#cross-cutting-runtime) |
+| API rate limit | `http.api_rate_limit_rpm` limits the requests per client address. | [Torznab API](reference/torznab-api.md#rate-limiting) |
+| Configuration | CLI arguments, the environment, YAML and the defaults set typed settings, in that precedence. | [Configuration](reference/configuration.md) |
+| Structured logging | structlog writes JSON or console lines, and every request's lines carry its `request_id`. | [Observability](current/observability.md#request-id) |
+| Metrics and tracing | The core's stages are Prometheus metrics, and OpenTelemetry traces on demand. | [Observability](current/observability.md), [Metrics](reference/metrics.md) |
+| Health endpoints | `/api/v1/healthz` reports the build and `/api/v1/readyz` answers once the startup has finished. | [Torznab API](reference/torznab-api.md#application-health) |
+| Graceful shutdown | In-flight requests and background work end before the cache closes. | [Architecture](current/architecture.md#shutdown) |
+| Tests | Unit, integration and end-to-end tests run on every commit, live tests against the sites on demand. | [Contributing](../CONTRIBUTING.md#running-tests) |
+
 ## Repository root
 
 | Document | Status | What it holds |
 |---|---|---|
 | [`README.md`](../README.md) | current | What Scavengarr is, the quick start and the configuration overview. |
 | [`AGENTS.md`](../AGENTS.md) | target | The rules for every change, for agents and developers alike. |
-| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | how-to | The dev setup, the tests and the contribution workflow. |
+| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | how-to | The dev setup, the project layout, the tech stack, the tests and the contribution workflow. |
 | [`CHANGELOG.md`](../CHANGELOG.md) | reference | The release history and the open defects. |
 
 ## Architecture
@@ -58,7 +90,6 @@ Every new or moved document adds its own line here, and every document follows t
 
 | Document | Status | What it holds |
 |---|---|---|
-| [`features/FEATURES.md`](features/FEATURES.md) | current | Every feature in one compact handbook. |
 | [`current/stremio-addon.md`](current/stremio-addon.md) | current | The Stremio addon: the endpoints, anime ids, titles, the search cache, matching, ranking and the proxies. |
 | [`how-to/stremio-deployment.md`](how-to/stremio-deployment.md) | how-to | Deploying the addon with a streaming server, a VPN container and AIOStreams. |
 | [`current/browser-and-challenges.md`](current/browser-and-challenges.md) | current | The shared browser, the stealth pool, the page gate, the clearance store and capture state, and challenges. |

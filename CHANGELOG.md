@@ -6,6 +6,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: AGENTS.md Keeps the Rules, the Feature Handbook Becomes the Index's Feature List
+
+- AGENTS.md §3, §7 and §9 keep the rules and link the current docs for the mechanics: §3 keeps the layer table and the invariants that are rules and links `docs/current/` (link validation, the Stremio addon, the architecture, the hoster resolvers, observability, Torznab and CrawlJobs) and `docs/reference/configuration.md`; §7 keeps the plugin MUST rules, the XFS and DDL rule and the resolvers' declaration flags and links `docs/current/plugins.md`, `docs/current/plugin-domains.md`, `docs/current/hoster-resolvers.md` and `docs/current/browser-and-challenges.md`; §9's production diagnostics link `docs/how-to/operations.md`. §1's docs line names `docs/current/`, `docs/target/`, `docs/how-to/` and `docs/reference/`, and §10 no longer names `docs/features/`.
+- CONTRIBUTING.md is the one owner of the project layout and the tech stack; the index and AGENTS.md §10 say so instead of repeating them, and its docs line names the folders of the new layout.
+- `docs/features/FEATURES.md` is gone, and with it `docs/features/`: its feature list is the section "What Scavengarr does" of `docs/README.md`, one line per feature with the current doc that describes it. The index's "As of" names this change's parent, and its sentence about documents still waiting to move is gone.
+- `tests/unit/infrastructure/test_docs_style.py` covers every document under `docs/` outside the archive, which stays exempt: every document outside the archive carries the header; plans keep their ids and history by the contract. `docs/plans/challenge-reactions.md` and `docs/plans/stremio-latency.md` open with their title and a status block instead of a back-link, and `docs/plans/docs-overhaul.md`'s "As of" is a bare hash.
+- `tests/unit/infrastructure/test_docs_paths.py` no longer globs the removed `docs/features/` and `docs/architecture/`.
+
 ### Added: The Specs of the Configuration and the Plugin System
 
 - `openspec/specs/configuration/spec.md` holds the configuration's requirements as the code has them: the four layers and their precedence, the config file and the dotenv file, the YAML layer, the environment's names (sectioned, flat, JSON values; no variable without the `SCAVENGARR_` prefix), the startup's reports of ignored keys and variables and of a flat and a sectioned name that disagree, the validation, the log format by environment, the `config_effective` line with its masking, the bind address and the guards that every setting is read and documented.

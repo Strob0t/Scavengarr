@@ -99,7 +99,7 @@ src/scavengarr/
 plugins/            # one Python file per site (42 plugins)
 scripts/            # maintenance scripts (e.g. plugin list generator)
 tests/              # unit, integration, E2E, live tests and benchmarks
-docs/               # docs index, architecture, decision records, feature docs, plans, generated plugin list
+docs/               # docs index, current, target (decision records), how-to, reference (generated lists), plans, archive
 data/config.yaml    # default configuration (mounted by Docker Compose)
 ```
 
@@ -160,7 +160,7 @@ Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters bui
 
 ## Documentation
 
-Docs ship with the code: when behaviour, features, configuration or architecture change, update the matching files in the same commit — `CHANGELOG.md`, `docs/features/`, `docs/current/`, `docs/target/`, `README.md`, `AGENTS.md`. Larger changes start with a short plan in `docs/plans/` (problem, design, affected files, tests).
+Docs ship with the code: when behaviour, features, configuration or architecture change, update the matching files in the same commit — `CHANGELOG.md`, `docs/current/`, `docs/target/`, `docs/how-to/`, `docs/reference/`, `README.md`, `AGENTS.md`. Larger changes start with a short plan in `docs/plans/` (problem, design, affected files, tests).
 
 ## AI-assisted contributions
 
