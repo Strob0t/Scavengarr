@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Skill Set Drops `code-review`, graphify Stays User-Wide
+
+- `code-review` (mattpocock/skills) leaves `SKILL_SOURCES` in `.devcontainer/setup.sh`; Claude Code's built-in `/code-review` stays. The new `RETIRED_SKILLS` list removes an installed copy on the next attach (`skills remove -g -a claude-code`), so its description stops costing context.
+- graphify stays user-wide: its installer's project option (`graphify install --project`, read in its `install.py`: `_project_install()` calls `claude_install(project=True)`) writes a `CLAUDE.md` into the repository root, where `AGENTS.md` is the one instruction file, and a PreToolUse hook into the project's Claude Code settings.
+- `docs/agents/skills.md` records both, a table of removed skills and the rule that a skill nobody invoked for two weeks is removed (the advisor keeps the usage list; the coders name their skills in every push report).
+
 ### Added: The Tech Stack With the Reasons for It
 
 - `docs/reference/tech-stack.md` lists every runtime and development dependency of `pyproject.toml` with what it does here and why it is the one (the measurements behind selectolax, uvloop, Patchright, guessit's cache and the HTTP/2 setting included), the tools beside the Python packages (Poetry, Chromium, Xvfb, curl, the Compose services, Node in the dev container) and the alternatives deliberately not used with their reasons: playwright-stealth, Camoufox, nodriver, Selenium, a required solver service, Scrapy, BeautifulSoup and lxml, other HTTP clients, curl_cffi, paid solver services, difflib, Typer, Pydantic in the domain, mypy and Pylance, black, isort and flake8, OpenTelemetry metrics and its auto-instrumentation.

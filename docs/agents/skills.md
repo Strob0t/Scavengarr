@@ -1,7 +1,7 @@
 # Claude Code skills
 
 > **Status:** reference
-> **As of:** d17c66f7
+> **As of:** b33f1b84
 
 The skills installed for Claude Code in the dev container, grouped by their source
 repository. `.devcontainer/setup.sh` installs them on every attach with the pinned
@@ -14,11 +14,18 @@ npx -y skills@1.7.2 add obra/superpowers -g -y -a claude-code -s brainstorming
 graphify is a Python package with an installer of its own (`pipx install graphifyy`,
 then `graphify install --platform claude`, which writes the skill to
 `~/.claude/skills/graphify/` and a three-line user-level `~/.claude/CLAUDE.md` that
-points `/graphify` at it; the `graphify-mcp` server it ships is not wired). The caveman
-skills come from `CAVEMAN_SKILLS` in the same script.
+points `/graphify` at it; the `graphify-mcp` server it ships is not wired). It stays
+user-wide: its project option (`graphify install --project`) writes a `CLAUDE.md` into
+the repository root, where `AGENTS.md` is the one instruction file, and a PreToolUse
+hook into the project's Claude Code settings. Every attach writes the user-level `CLAUDE.md` again.
+The caveman skills come from `CAVEMAN_SKILLS` in the same script.
 
 Every installed skill's description costs context in every session: add a skill
-deliberately and record it here.
+deliberately and record it here. A skill nobody invoked for two weeks is removed: the
+advisor (Mr. Fable) keeps the list of the skills the sessions invoke, the coders name
+theirs in every push report, and a removed skill moves from `SKILL_SOURCES` to
+`RETIRED_SKILLS` in `.devcontainer/setup.sh`, which removes the installed copy on the
+next attach, and to the table [Removed](#removed).
 
 ## Working and communicating
 
@@ -72,6 +79,11 @@ deliberately and record it here.
 | `ponytail-review` | DietrichGebert/ponytail | review of a diff or a subagent's result (required) |
 | `ponytail-audit`, `ponytail-debt` | DietrichGebert/ponytail | repository audit, the list of deliberate shortcuts |
 | `rubric` | pwguler/skills | defect review against criteria fixed in advance |
-| `code-review` | mattpocock/skills | review against documented rules since a fixed point |
 | `requesting-code-review`, `receiving-code-review` | obra/superpowers | request a review; check feedback technically instead of applying it blindly |
 | `security-audit` | cloudflare/security-audit-skill | security review of code and services |
+
+## Removed
+
+| Skill | Source | Why |
+|---|---|---|
+| `code-review` | mattpocock/skills | Claude Code's built-in `/code-review` covers it (ledger O4) |
