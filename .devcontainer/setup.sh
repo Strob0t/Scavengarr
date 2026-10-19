@@ -77,8 +77,12 @@ done
 # Skills taken out of the set (docs/agents/skills.md, Removed): an attach removes
 # the copy an earlier one installed, so its description stops costing context
 RETIRED_SKILLS=(code-review)
-if [ -d "$HOME/.claude/skills/${RETIRED_SKILLS[0]}" ]; then
-  npx -y "$SKILLS_CLI" remove -g -y -a claude-code -s "${RETIRED_SKILLS[@]}" </dev/null \
+installed_retired=()
+for skill in "${RETIRED_SKILLS[@]}"; do
+  [ -d "$HOME/.claude/skills/$skill" ] && installed_retired+=("$skill")
+done
+if [ "${#installed_retired[@]}" -gt 0 ]; then
+  npx -y "$SKILLS_CLI" remove -g -y -a claude-code -s "${installed_retired[@]}" </dev/null \
     || echo "WARN: removing retired skills failed (optional)"
 fi
 
