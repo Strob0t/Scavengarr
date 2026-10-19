@@ -104,6 +104,15 @@ def test_the_image_healthcheck_asks_readiness() -> None:
     assert "/api/v1/healthz" not in healthcheck
 
 
+def test_agents_md_holds_rules_only() -> None:
+    """Every session reads AGENTS.md whole, so it keeps the rules under 3,000
+    words and links the details in `docs/` (the dev container's in
+    `docs/how-to/dev-container.md`)."""
+    words = len((_ROOT / "AGENTS.md").read_text(encoding="utf-8").split())
+
+    assert words < 3000, f"AGENTS.md has {words} words: move details into docs/"
+
+
 @pytest.mark.skipif(
     shutil.which("git") is None or not (_ROOT / ".git").exists(),
     reason="needs a git checkout",

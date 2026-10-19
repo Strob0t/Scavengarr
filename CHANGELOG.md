@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: AGENTS.md Holds the Rules, the Dev Container Its Own How-To
+
+- `AGENTS.md` is under 3,000 words (from 3,697): §9 keeps one rule line per item and links `docs/how-to/dev-container.md`, which holds the details (git access, what the setup script installs, the dev server for the LAN, checks in a worktree, line endings and executable bits, the editor and the formatter, the Claude Code hooks, code intelligence, the production diagnostics, a Verify list and a troubleshooting table).
+- The rule that docs ship with the code is a table of change → documents to update (behaviour, configuration, architecture decision, dependency, plugin or resolver, plan), and §1's paragraph on the checks keeps its rules (the image tags are in `docs/how-to/deploy.md`).
+- `tests/unit/infrastructure/test_repository_files.py` fails once `AGENTS.md` reaches 3,000 words. `docs/README.md` and the root `README.md` list the new how-to, and `CONTRIBUTING.md` links it for the dev container's details.
+
 ### Added: A Glossary of the Codebase's Terms
 
 - `docs/reference/glossary.md` says in one sentence each what a term means here (plugin, mirror group, episode reference and placement, CrawlJob, grab-time link, the search cache entry's states, answer budget, read-ahead, address-bound and client-bound streams, hoster, resolver, breaker, half-open probe, cooldown, pass, keeper, capture, challenge, mark, page gate, stealth context, clearance and more) and links the section that holds it.

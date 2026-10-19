@@ -2,7 +2,7 @@
 
 > **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** 9ab93345
+> **As of:** 317d12f8
 
 The one index of the documentation: one line per document with its status.
 
@@ -35,7 +35,7 @@ The `how-to` guides work with the `current` documents and look up the `reference
 ## The state
 
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
-Open in the docs: the production machine's device name in two code comments, `AGENTS.md` as rules only with the dev container as a how-to, the alternatives in every decision record, and the archive's removal in favour of the git history.
+Open in the docs: the production machine's device name in two code comments, the alternatives in every decision record, and the archive's removal in favour of the git history.
 Open in the hoster resolvers and the browser: Filemoon's cold capture on the production host, its captcha pass kept warm, and sto's link-outs through the resolvers.
 Open in the plugins: a search page's network failure that stays a failure in the plugin record, first in the base and then in the httpx plugins, and a plugin for the public broadcasters' media libraries.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
@@ -159,6 +159,7 @@ One line per feature, with the document that describes it.
 
 | Document | Status | What it holds |
 |---|---|---|
+| [`how-to/dev-container.md`](how-to/dev-container.md) | how-to | Setting up and working in the dev container: git access, its tools, checks in a worktree, the editor, the Claude Code hooks and the production diagnostics. |
 | [`agents/skills.md`](agents/skills.md) | reference | The Claude Code skills of the dev container and their sources. |
 | [`agents/mcp-servers.md`](agents/mcp-servers.md) | reference | The MCP servers of `.mcp.json` and what installs them. |
 

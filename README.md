@@ -351,6 +351,7 @@ The index [docs/README.md](docs/README.md) maps the document groups, states what
 | Metrics reference | [docs/reference/metrics.md](docs/reference/metrics.md) |
 | Operating production | [docs/how-to/operations.md](docs/how-to/operations.md) |
 | Measuring a change | [docs/how-to/performance-measurement.md](docs/how-to/performance-measurement.md) |
+| The dev container (setup, worktrees, hooks) | [docs/how-to/dev-container.md](docs/how-to/dev-container.md) |
 | Known issues | [docs/current/known-issues.md](docs/current/known-issues.md) |
 | Plugin list | [docs/reference/plugins.md](docs/reference/plugins.md) |
 | Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
