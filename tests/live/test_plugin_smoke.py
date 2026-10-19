@@ -3,6 +3,9 @@
 Each test hits the real website and verifies the plugin can still scrape
 valid results. Network errors and Cloudflare blocks are handled gracefully
 via pytest.skip() — broken selectors or empty results cause a FAIL.
+An empty run after a fetch the base logged as failed (``<plugin>_timeout``,
+``_fetch_error``, ``_http_error``: the base answers those with ``None``, the
+plugin with ``[]``) skips as a slow or failing site, the line in the reason.
 
 Run:
     poetry run pytest -m live -v               # live tests only
@@ -15,11 +18,13 @@ import asyncio
 
 import httpx
 import pytest
+import structlog
 
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 
 from .conftest import AUTH_ENV_VARS, chromium_available, has_auth
+from .smoke_outcome import failed_fetch
 
 pytestmark = pytest.mark.live
 
@@ -110,6 +115,16 @@ def _is_cloudflare_block(exc: Exception) -> bool:
     return any(kw in msg for kw in ("cloudflare", "challenge", "cf-", "403"))
 
 
+def _skip_after_failed_fetch(
+    results: list[SearchResult], events: list[structlog.typing.EventDict], plugin: str
+) -> None:
+    """Skip an empty run whose plugin logged a failed fetch: the site was slow
+    or failing, the parser had nothing to read."""
+    line = None if results else failed_fetch(events, plugin)
+    if line is not None:
+        pytest.skip(f"{plugin} found nothing after a failed fetch: {line}.")
+
+
 def _assert_results(results: list[SearchResult], plugin_name: str) -> None:
     """Assert that results are valid — FAIL if plugin appears broken."""
     assert len(results) > 0, (
@@ -145,10 +160,11 @@ async def test_httpx_plugin_smoke(
     plugin = type(raw_plugin)()  # Fresh instance
 
     try:
-        results = await asyncio.wait_for(
-            plugin.search(query),
-            timeout=60.0,
-        )
+        with structlog.testing.capture_logs() as events:
+            results = await asyncio.wait_for(
+                plugin.search(query),
+                timeout=60.0,
+            )
     except _NETWORK_ERRORS:
         pytest.skip(f"Network error reaching {plugin_name} — site may be down.")
     except RuntimeError as exc:
@@ -162,6 +178,7 @@ async def test_httpx_plugin_smoke(
     finally:
         await plugin.cleanup()
 
+    _skip_after_failed_fetch(results, events, plugin_name)
     _assert_results(results, plugin_name)
 
 
@@ -190,10 +207,11 @@ async def test_playwright_plugin_smoke(
     timeout = 120.0 if plugin_name in AUTH_ENV_VARS else 90.0
 
     try:
-        results = await asyncio.wait_for(
-            plugin.search(query),
-            timeout=timeout,
-        )
+        with structlog.testing.capture_logs() as events:
+            results = await asyncio.wait_for(
+                plugin.search(query),
+                timeout=timeout,
+            )
     except _NETWORK_ERRORS:
         pytest.skip(f"Network error reaching {plugin_name} — site may be down.")
     except RuntimeError as exc:
@@ -207,4 +225,5 @@ async def test_playwright_plugin_smoke(
     finally:
         await plugin.cleanup()
 
+    _skip_after_failed_fetch(results, events, plugin_name)
     _assert_results(results, plugin_name)

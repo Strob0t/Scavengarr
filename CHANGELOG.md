@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Live Smoke Skips a Slow Site Instead of Failing Its Parser
+
+- A plugin run that answers nothing after a fetch the base logged as failed (`<plugin>_timeout`, `_fetch_error` or `_http_error`: `_fetch_text()` and `_safe_fetch()` answer those with `None`, and 32 httpx plugins then answer `[]`) skips with the line, its context and status in the reason, instead of failing as a broken parser; a run without such a line keeps the old assertion. The decision is `failed_fetch()` in `tests/live/smoke_outcome.py`, tested by `tests/unit/infrastructure/test_plugin_smoke_outcome.py`; `tests/live/test_plugin_smoke.py` captures each search's log lines.
+- Why: row 135's runs failed jjs on a search-page timeout and kinox on a mirror's 503, both sites merely slow. That the plugin record counts such a search as one without results is backlog row 139.
+
 ### Changed: Readiness Notices a Lost Network, and the Image's Healthcheck Asks It
 
 - `/api/v1/readyz` answers 503 with `{"status": "not_ready", "reason": "network"}` once the cache backend's ping (`CachePort.ping()`: Redis `PING`, diskcache whether it is open) and the DNS resolution of the fully qualified `example.com.` (no search domain answers for it) have both failed for longer than 5 min (`NetworkProbe`, `src/scavengarr/infrastructure/network_probe.py`, wired in `src/scavengarr/interfaces/composition.py`). It probes at most once every 30 s, each check within 3 s, and a request in between gets the last verdict; a single miss or one check failing alone (a Redis restart, a DNS hiccup) keeps the 200. `network_lost` (error) and `network_recovered` log the loss and its end once each.

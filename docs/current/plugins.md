@@ -1,7 +1,7 @@
 # Plugins
 
 > **Status:** current
-> **As of:** 5b4303e4
+> **As of:** e238c723
 
 ## Purpose
 
@@ -282,6 +282,7 @@ Both are described in [Observability](observability.md).
 ## Limits
 
 - A site that changes its markup returns nothing until its parser is fixed; the live smoke tests (`poetry run pytest -m live`) find such plugins.
+- A slow or failing site also returns nothing: the base's `_fetch_text()` and `_safe_fetch()` turn a timeout, a transport error and every answer from 400 up into `None` with the line `<plugin>_timeout`, `_fetch_error` or `_http_error`, and the plugin answers `[]`, which the plugin record counts as a search without results. The live smoke skips such an empty run and names the line (`tests/live/smoke_outcome.py`); raising instead, so that the record counts a timeout, is open work ([the backlog](../backlog.md)).
 - The confidence of a score is computed when a probe updates it, so it reflects the sample count, not the age of the samples.
 - A site that binds its clearance to the browser costs a browser page for every request for 30 minutes.
 
