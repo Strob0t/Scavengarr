@@ -947,6 +947,7 @@ def _fast_capture(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(mod, "_MEDIA_AUTOPLAY_WAIT_S", 0.01)
     monkeypatch.setattr(mod, "_MEDIA_CLICK_WAIT_S", 0.01)
+    monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 0.01)
 
 
 @pytest.mark.usefixtures("_fast_capture")
@@ -1328,6 +1329,126 @@ class TestStealthPoolCaptureChallengeMark:
 
         assert media is not None
         assert challenge_mark.get() is None
+
+
+@pytest.mark.usefixtures("_fast_capture")
+class TestStealthPoolCaptureWaitsForItsCaptcha:
+    """A capture whose page requested the hoster's own captcha
+    (``challenge_requests``) waits for it instead of running out of clicks
+    (row 141): its next click and its end come no sooner than
+    ``_CAPTCHA_WAIT_S`` after the captcha's latest request. On the production
+    host a cold Byse capture used up its clicks before the stream, and the
+    captcha's proof of work took up to 9.9 s to its verify in the throttled
+    dev container."""
+
+    _CAPTCHA = "https://byse.example/api/videos/abc/embed/captcha"
+    _VERIFY = "https://byse.example/api/videos/abc/embed/captcha/verify"
+    _STREAM = "https://cdn.example/hls2/abc/master.m3u8"
+
+    @staticmethod
+    def _page(
+        *, first_click: list[str], later: tuple[tuple[float, str], ...] = ()
+    ) -> MagicMock:
+        """A player page that requests *first_click* on the first click and
+        each URL of *later* that many seconds after it."""
+        page = _player_page(on_click=[first_click])
+        click = page.mouse.click.side_effect
+        clicks = [0]
+
+        def _emit(url: str) -> None:
+            request = _request(url, navigation=False)
+            request.headers = {"referer": "https://byse.example/"}
+            request.resource_type = "fetch"
+            for call in page.on.call_args_list:
+                if call.args[0] == "request":
+                    contextvars.Context().run(call.args[1], request)
+
+        async def _click(*args: object) -> None:
+            await click(*args)
+            clicks[0] += 1
+            if clicks[0] == 1:
+                loop = asyncio.get_running_loop()
+                for delay, url in later:
+                    loop.call_later(delay, _emit, url)
+
+        page.mouse.click.side_effect = _click
+        return page
+
+    @staticmethod
+    async def _capture(page: MagicMock) -> object:
+        shared_pool, _, context = _mock_pool_stack()
+        context.new_page = AsyncMock(return_value=page)
+        return await StealthPool(browser_pool=shared_pool).capture_media(
+            "https://byse.example/e/abc", timeout=10, challenge_requests=_HOSTER_CAPTCHA
+        )
+
+    async def test_a_captcha_that_runs_gets_its_stream_past_the_clicks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 1.0)
+        page = self._page(first_click=[self._CAPTCHA], later=((0.3, self._STREAM),))
+
+        media = await self._capture(page)
+
+        assert media is not None
+        assert media.url == self._STREAM
+        # The clicks wait for the captcha: none after the one that brought it
+        page.mouse.click.assert_awaited_once()
+
+    async def test_each_captcha_request_moves_the_end(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The verify comes after the proof of work: the stream 0.3 s after
+        it, past the captcha's own wait of 0.4 s."""
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 0.4)
+        page = self._page(
+            first_click=[self._CAPTCHA],
+            later=((0.3, self._VERIFY), (0.6, self._STREAM)),
+        )
+
+        media = await self._capture(page)
+
+        assert media is not None
+        assert media.url == self._STREAM
+        page.mouse.click.assert_awaited_once()
+
+    async def test_a_captcha_gone_quiet_ends_the_capture_after_its_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 0.3)
+        page = self._page(first_click=[self._CAPTCHA])
+
+        started = time.monotonic()
+        media = await self._capture(page)
+
+        assert media is None
+        assert time.monotonic() - started >= 0.3
+        # Its remaining clicks come once the captcha's wait is over
+        assert page.mouse.click.await_count == 3
+
+    async def test_a_captcha_providers_frame_keeps_the_clicks_cadence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The wait is for the hoster's own captcha: a provider's widget is
+        passed by the clicks (Dropload's Turnstile)."""
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 5.0)
+        page = _player_page(
+            on_click=[[_TURNSTILE_FRAME]], documents=frozenset({_TURNSTILE_FRAME})
+        )
+
+        async with asyncio.timeout(2):
+            media = await self._capture(page)
+
+        assert media is None
+        assert page.mouse.click.await_count == 3
 
 
 class _Request:
@@ -1943,7 +2064,9 @@ class TestCaptureKeepsItsState:
     ) -> None:
         from scavengarr.infrastructure.browser import stealth_pool as mod
 
-        assert mod._KEEP_BOUND_S == 0.5
+        # On the production host the read took 274 and 385 ms, and two ran
+        # into the former 0.5 s (row 141): the pass went with them
+        assert mod._KEEP_BOUND_S == 2.0
         monkeypatch.setattr(mod, "_KEEP_BOUND_S", 0.01)
 
         async def _never(*_: object) -> None:
@@ -2001,6 +2124,7 @@ class TestCaptureKeepsItsState:
     ) -> None:
         from scavengarr.infrastructure.browser import stealth_pool as mod
 
+        assert mod._FRAME_READ_S == 1.5
         assert mod._FRAME_READ_S < mod._KEEP_BOUND_S
         monkeypatch.setattr(mod, "_FRAME_READ_S", 0.01)
 

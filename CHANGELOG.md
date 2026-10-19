@@ -6,6 +6,15 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Capture That Met the Hoster's Captcha Waits for It
+
+- A Byse capture (Filemoon) on the production host used up the player's clicks before its stream: of four cold captures, two ran out after 29 and 32 s, the pass keeper's own among them, so the keeping ended after one pass. The player solves a proof of work between its `captcha` and `captcha/verify` requests and requests the stream after the verify. With Chromium's CPU throttled sixfold in the dev container, the verify came 0.5 to 9.9 s after the captcha in 11 cold captures. On the production host the stream came 8.1 s after the verify, after the third click.
+- A page that requested the hoster's own captcha (`challenge_requests`) now gets 16 s after the captcha's latest request before its next click and before the capture ends (`_CAPTCHA_WAIT_S`, `_CaptchaClock` in `infrastructure/browser/stealth_pool.py`). The clicks before the captcha and a provider's widget (Turnstile) keep their cadence. In the throttled dev container 8 of 8 cold captures then streamed after one click, 0.7 to 1.1 s after the verify.
+- The pass keeper's capture is bounded at 45 s instead of 30 s (`_BOUND_S`), since the production host's cold Byse streams came 22.7 to 43.7 s after the resolution's start. The capture now ends inside its bound, so no cut steps the challenge cooldown up, and `hoster_pass_keep stream=` says whether the pass came.
+- The capture state's read after the stream has 2 s instead of 0.5 s (`_KEEP_BOUND_S`), and a frame's read 1.5 s instead of 0.4 s (`_FRAME_READ_S`). On the production host reads took 274 and 385 ms, and two ran into the 0.5 s bound and lost the captcha's new pass. The read runs after the stream's hand-over, so the bound holds the page and the browser's lease, not the stream.
+- `capture_timing --diagnose` names when each request went out and how long its answer took.
+- The playback check's unplayable verdicts on two filemoon.to streams were checked in the dev container, and the check is unchanged. There it passed all four Filemoon streams, and their CDNs answered a playlist with and without the Referer, the browser's User-Agent or cookies (20 of 20 requests). The stream URLs carry an `asn` parameter and no address, so they are bound to the requesting network, which the check shares with the capture.
+
 ### Added: Every Document Says What It Is For
 
 - Every document under `docs/` outside the archive opens its status block with `> **Purpose:** <one sentence>`, so `> **Status:**` moves to line 4 and `> **As of:**` to line 5. A current document lifts the first sentence of its Purpose section, a decision record says what it records, and the other documents take their line of the index in `docs/README.md`.

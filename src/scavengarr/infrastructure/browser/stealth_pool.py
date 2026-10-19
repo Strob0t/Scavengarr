@@ -10,6 +10,7 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import time
 from collections.abc import Callable, Collection, Iterable
@@ -103,14 +104,28 @@ _MEDIA_AUTOPLAY_WAIT_S = 3.0
 _KEEP_INTERVAL_S = 600.0
 # It reads that state from its own page before the page closes (code
 # review 2026-10-12, finding 6), after the stream went out, so the page
-# stays open for the read: at most this long. Inside the resolution, the
-# read cost a stream found near its bound (row 107)
-_KEEP_BOUND_S = 0.5
+# stays open for the read: at most this long. The read runs after the
+# stream's hand-over (row 107), so the bound holds the page and the
+# browser's lease, not the stream. On the production host reads took 274
+# and 385 ms, and two ran into a bound of 0.5 s, the captcha's new pass
+# lost with them (row 141); in the dev container a read takes 5 to 47 ms,
+# 123 ms with Chromium's CPU throttled sixfold
+_KEEP_BOUND_S = 2.0
 # A frame's read ends sooner, so that a frame that navigates, detaches or
 # dawdles meanwhile (an ad's) costs its own host only (row 97's review)
-_FRAME_READ_S = 0.4
+_FRAME_READ_S = 1.5
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
+# A page that requested the hoster's own captcha (``challenge_requests``)
+# gets this long after the captcha's latest request before its next click
+# and before the capture ends: the player solves a proof of work between
+# the captcha and its verify and requests the stream after the verify, and
+# a cold Byse capture on the production host used up its clicks before its
+# stream (row 141). There the stream came 8.1 s after the verify (row 103's
+# probe), and in the dev container with Chromium's CPU throttled sixfold
+# the verify came up to 9.9 s after the captcha (11 cold captures): the
+# wait is twice the 8.1 s
+_CAPTCHA_WAIT_S = 16.0
 # Dead-file notices of player pages, matched against the visible text only
 # (player scripts carry such strings as error templates)
 _PLAYER_OFFLINE_TEXT: tuple[str, ...] = (
@@ -257,21 +272,36 @@ def _challenge_of(
     return None
 
 
+@dataclass
+class _CaptchaClock:
+    """When a capture's page last requested the hoster's own captcha."""
+
+    last: float | None = None
+
+    def end(self) -> float:
+        """The capture's earliest end while the captcha runs:
+        ``_CAPTCHA_WAIT_S`` after its latest request (``time.monotonic()``),
+        none without one."""
+        return -math.inf if self.last is None else self.last + _CAPTCHA_WAIT_S
+
+
 def _capture_listener(
     found: asyncio.Future[CapturedMedia],
     mark: ChallengeMark | None,
     named: re.Pattern[str] | None,
     *,
     passive_widget: bool,
+    captcha: _CaptchaClock,
 ) -> Callable[[Request], None]:
     """A capture's request listener: the first stream request settles
     *found*, a challenge (``_challenge_of``) marks the hoster resolution's
-    *mark*."""
+    *mark*, and a request of the hoster's own captcha sets *captcha*."""
 
     def _on_request(request: Request) -> None:
-        if mark is not None and (
-            kind := _challenge_of(request, named, passive_widget=passive_widget)
-        ):
+        kind = _challenge_of(request, named, passive_widget=passive_widget)
+        if kind == "hoster_captcha":
+            captcha.last = time.monotonic()
+        if mark is not None and kind:
             mark.note(kind)
         # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
         # ``…~abc?token=``) by the video element's request type
@@ -370,27 +400,43 @@ async def _click_point(page: Page, player: str | None) -> tuple[float, float]:
     return size["width"] / 2, size["height"] / 2
 
 
+async def _stream_within(
+    found: asyncio.Future[CapturedMedia], wait_s: float, captcha: _CaptchaClock
+) -> CapturedMedia | None:
+    """The stream *found* brings within *wait_s*, or later while the
+    page's captcha runs (``_CaptchaClock.end()``); ``None`` without one."""
+    end = time.monotonic() + wait_s
+    while (left := max(end, captcha.end()) - time.monotonic()) > 0:
+        try:
+            return await asyncio.wait_for(asyncio.shield(found), left)
+        except TimeoutError:
+            pass  # a captcha request meanwhile moves the end
+    return None
+
+
 async def _start_player(
     page: Page,
     found: asyncio.Future[CapturedMedia],
     player: str | None,
     *,
     autoplay_wait: float | None = None,
+    captcha: _CaptchaClock | None = None,
 ) -> CapturedMedia | None:
     """Wait for autoplay (*autoplay_wait*, ``_MEDIA_AUTOPLAY_WAIT_S``
     without it), then click the player (``_click_point``) until it
     requests its stream, says the file is gone (some players tell only
-    after the click) or the clicks are used up."""
+    after the click) or the clicks are used up. While the hoster's own
+    captcha runs (*captcha*), the next click and the end wait for it."""
     if autoplay_wait is None:
         autoplay_wait = _MEDIA_AUTOPLAY_WAIT_S
+    if captcha is None:
+        captcha = _CaptchaClock()
     waits = (autoplay_wait, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
     for attempt, wait_s in enumerate(waits):
         if attempt:
             await page.mouse.click(*await _click_point(page, player))
-        try:
-            return await asyncio.wait_for(asyncio.shield(found), wait_s)
-        except TimeoutError:
-            pass
+        if (media := await _stream_within(found, wait_s, captcha)) is not None:
+            return media
         if attempt and await _shows_offline_notice(page):
             log.info("stealth_capture_offline", url=page.url, clicks=attempt)
             # The page's verdict on the link, past any challenge before it
@@ -773,10 +819,15 @@ class StealthPool:
                 found: asyncio.Future[CapturedMedia] = (
                     asyncio.get_running_loop().create_future()
                 )
+                captcha = _CaptchaClock()
                 page.on(
                     "request",
                     _capture_listener(
-                        found, mark, challenge_requests, passive_widget=passive_widget
+                        found,
+                        mark,
+                        challenge_requests,
+                        passive_widget=passive_widget,
+                        captcha=captcha,
                     ),
                 )
                 page.on("popup", _close_popup)
@@ -803,7 +854,7 @@ class StealthPool:
                         mark_resolution_passed()
                         return None
                 media = await _start_player(
-                    page, found, player, autoplay_wait=autoplay_wait
+                    page, found, player, autoplay_wait=autoplay_wait, captcha=captcha
                 )
                 log.debug("stealth_capture", url=url, found=media is not None)
                 # A page past a challenge holds a state of its own making

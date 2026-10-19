@@ -146,7 +146,7 @@ In a worktree the dev-container probes run with `PYTHONPATH=src`, so they import
 - It runs without the registry's bound and caches nothing: no clearance store, breaker or resolver cache, a temporary directory of its own, 90 s per run, its processes killed by parent PID at exit.
 - It counts challenges by the app's rule: a captcha provider's frame such as `turnstile`, or a request the resolver names as its hoster's captcha, split into `captcha` and `captcha/verify`.
 - `--restore` keeps the runs' captures' state as the app does (in a temporary `ClearanceStore`), prints how long each read took and the state's make-up (cookie names per domain with ids masked, key and database counts per origin, no values), and resolves the link twice more: in a fresh context (`control`) and in one created from the store (`restored`).
-- `--diagnose` adds per run the page's requests (domain, the path with its ids masked, resource type, status or error), what each frame can play after the clicks and how many popups the page opened.
+- `--diagnose` adds per run the page's requests (domain, the path with its ids masked, resource type, status or error, when the request went out and how long its answer took, all in seconds after the run's start), what each frame can play after the clicks and how many popups the page opened.
 - `--block DOMAIN` (repeatable) aborts every request to a domain and its subdomains, such a request reading `blocked`.
 - `--autoplay-wait S` sets the capture's wait before its first click for every resolver alike; the report names the wait the captures used.
 - It first reads the memory, `/dev/shm` and whether the app's Chromium runs with `--disable-dev-shm-usage`, and launches nothing when they are short.

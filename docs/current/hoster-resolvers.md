@@ -149,7 +149,7 @@ A resolver tunes its capture through `capture_stream()`:
 
 - `player=` names the element to click, a CSS selector: Filemoon's watch page `/d/<id>` shows the player in a frame below a header.
 - `own_scripts_only=True` runs only the scripts of the page's and its frames' sites (Filemoon and Vixeo), since a foreign ad tag turned every click into a popup ([the decision](../target/decisions/0011-own-scripts-only-captures.md)).
-- `challenge_requests` names the requests of the hoster's own captcha, which mark the resolution's challenge: Filemoon names the Byse player's `captcha` and `captcha/verify`, which a cold context requests and a warm one skips.
+- `challenge_requests` names the requests of the hoster's own captcha, which mark the resolution's challenge: Filemoon names the Byse player's `captcha` and `captcha/verify`, which a cold context requests and a warm one skips, and each of them holds the capture's next click and its end until 16 s after it ([Captures](browser-and-challenges.md#captures)).
 - `passive_widget=True` tells the capture that the player's captcha widget does not gate the stream, so the providers' frames mark nothing: DoodStream's player loads an invisible Turnstile on every capture and does not wait for it.
 - `autoplay_wait` shortens the wait before the first click for a player that does not start itself and takes that click at once: Vixeo waits 0.5 s, the others the 3 s for a player that starts itself.
 
@@ -267,10 +267,10 @@ A capture with the pass does not renew it, and the first capture after the expir
 `PassKeeper` (`infrastructure/hoster_resolvers/pass_keeper.py`) keeps the pass for the next request ([the decision](../target/decisions/0009-pass-keeper-demand-bound.md)):
 
 1. It reads the pass's expiry from the kept capture state (`pass_expiry()` in `filemoon.py`, over `ClearanceStore.creation_state()`).
-2. 30 s after the expiry it resolves the link of the newest cached Filemoon stream again (`last_stream("filemoon")`, then `resolve(link, refresh=True, demand=False, bound=30)`), past the cache and the challenge cooldown, while an open breaker still refuses it.
+2. 30 s after the expiry it resolves the link of the newest cached Filemoon stream again (`last_stream("filemoon")`, then `resolve(link, refresh=True, demand=False, bound=45)`), past the cache and the challenge cooldown, while an open breaker still refuses it.
 3. The captcha falls to that capture, and its new pass is kept for the next request's capture.
 
-- Its capture has a bound of its own, 30 s (`_BOUND_S`), since the captcha comes with the player's first click 3 s after the page has loaded, and a cold page load can take most of the request's bound.
+- Its capture has a bound of its own, 45 s (`_BOUND_S`), since the captcha comes with the player's first click 3 s after the page has loaded, a cold page load can take most of the request's bound, and the production host's cold Byse streams came 22.7 to 43.7 s after the resolution's start: the capture ends inside its bound, so its `hoster_pass_keep` line says whether the pass came.
 - Its capture starts after the pass has gone, so the resolver marks it as challenged from its start: a cut ends as `challenge` (a cooldown step while the challenge stands, no breaker failure) and runs on as the registry's completion, which keeps the pass when it finds the stream.
 - Its page claim is `background`, served last, and it starts only while one of the stealth browser's pages stays free beside its own.
 - One capture per pass: a capture that brings no new pass ends the keeping until a request's capture brings one, and without a cached Filemoon stream nothing is captured.

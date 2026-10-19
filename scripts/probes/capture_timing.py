@@ -43,7 +43,8 @@ relaunched browser whose context the app creates from the store
 (``restored``), as after a restart of the app. ``--diagnose`` adds per run
 the page's requests (domain, path with its ids masked as
 ``/api/videos/<id>/embed/playback``, resource type, and the status,
-``redirect``, the browser's error or ``pending``) and, after the clicks,
+``redirect``, the browser's error or ``pending``, with when the request
+went out and how long its outcome took) and, after the clicks,
 what each frame can play: its video element (MediaError code, network
 state) and the answers of MediaSource and canPlayType for H.264, AAC and
 HLS, and how many popups the page opened (the capture closes them).
@@ -321,13 +322,17 @@ class PageLoad:
 
 @dataclass
 class RequestNote:
-    """A request of a watched page: domain, path shape, resource type and
-    outcome (the status, ``redirect``, the browser's error or ``pending``)."""
+    """A request of a watched page: domain, path shape, resource type,
+    outcome (the status, ``redirect``, the browser's error or ``pending``),
+    when it went out and when its outcome came, in seconds after the run's
+    start."""
 
     domain: str
     shape: str
     kind: str
     outcome: str = "pending"
+    at: float | None = None
+    answered: float | None = None
 
 
 @dataclass(frozen=True)
@@ -416,7 +421,10 @@ def watch_requests(page: Any, run: Run) -> None:
         if hop is not None and hop.outcome == "pending":
             hop.outcome = "redirect"
         note = RequestNote(
-            domain(request.url), shape(request.url), request.resource_type
+            domain(request.url),
+            shape(request.url),
+            request.resource_type,
+            at=time.monotonic() - run.started,
         )
         notes[request] = note
         run.requests.append(note)
@@ -424,12 +432,14 @@ def watch_requests(page: Any, run: Run) -> None:
     def answered(response: Any) -> None:
         if (note := notes.get(response.request)) is not None:
             note.outcome = str(response.status)
+            note.answered = time.monotonic() - run.started
 
     def failed(request: Any) -> None:
         if (note := notes.get(request)) is not None:
             failure = request.failure or "failed"
             blocked = failure.startswith(_BLOCKED_ERROR)
             note.outcome = "blocked" if blocked else failure
+            note.answered = time.monotonic() - run.started
 
     page.on("request", requested)
     page.on("response", answered)
@@ -735,19 +745,27 @@ def state_lines(state: Mapping[str, Any]) -> list[str]:
 
 
 def request_lines(run: Run) -> list[str]:
-    """*run*'s requests in the order they came, alike ones counted
-    together; images, fonts and stylesheets summed up in one line."""
+    """*run*'s requests in the order they came, each with when it went out
+    and how long its outcome took, alike ones counted together with the
+    first one's times; images, fonts and stylesheets summed up in one
+    line."""
     alike: Counter[tuple[str, str, str, str]] = Counter()
+    first: dict[tuple[str, str, str, str], RequestNote] = {}
     quiet: Counter[str] = Counter()
     for note in run.requests:
         if note.kind in _QUIET_KINDS:
             quiet[note.kind] += 1
         else:
-            alike[note.domain, note.shape, note.kind, note.outcome] += 1
-    lines = [
-        f"- {where} {path} {kind}: {outcome}" + (f" ×{count}" if count > 1 else "")
-        for (where, path, kind, outcome), count in alike.items()
-    ]
+            key = (note.domain, note.shape, note.kind, note.outcome)
+            alike[key] += 1
+            first.setdefault(key, note)
+    lines: list[str] = []
+    for key, count in alike.items():
+        where, path, kind, outcome = key
+        lines.append(
+            f"- {where} {path} {kind}: {outcome}{_times(first[key])}"
+            + (f" ×{count}" if count > 1 else "")
+        )
     if len(lines) > _MAX_REQUEST_LINES:
         more = f"- … {len(lines) - _MAX_REQUEST_LINES} more"
         lines[_MAX_REQUEST_LINES:] = [more]
@@ -755,6 +773,15 @@ def request_lines(run: Run) -> list[str]:
         summed = ", ".join(f"{count} {kind}" for kind, count in sorted(quiet.items()))
         lines.append(f"- also {summed}")
     return lines
+
+
+def _times(note: RequestNote) -> str:
+    """When *note*'s request went out and how long its outcome took."""
+    if note.at is None:
+        return ""
+    if note.answered is None:
+        return f" at {note.at:.1f} s"
+    return f" at {note.at:.1f} s ({note.answered - note.at:.1f} s)"
 
 
 def _answer(value: bool | None) -> str:
@@ -776,7 +803,10 @@ def frame_line(note: FrameNote) -> str:
 
 
 def diagnosis_lines(label: int | str, run: Run) -> list[str]:
-    lines = [f"### Run {label}: requests (domain, path with ids masked, type: outcome)"]
+    lines = [
+        f"### Run {label}: requests (domain, path with ids masked, type: outcome"
+        " at when it went out (how long the outcome took))"
+    ]
     lines.extend(request_lines(run) or ["- none"])
     lines.append(f"popups opened: {run.popups} (the capture closes them)")
     lines.append("frames after the clicks:")

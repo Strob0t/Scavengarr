@@ -54,6 +54,13 @@ Some players create the stream URL only while they run, behind a challenge of th
 3. It clicks the player up to 3 times, 5 s apart.
 4. It returns the first request for a `.m3u8`, `.mpd`, `.mp4` or `master.txt` URL, or the video element's request for a CDN URL without an extension.
 
+A page that requested the hoster's own captcha (`challenge_requests`, Filemoon's `captcha` and `captcha/verify`) gets 16 s after the captcha's latest request before its next click and before the capture ends (`_CAPTCHA_WAIT_S`):
+
+- The player solves a proof of work between the captcha and its verify, and requests the stream once the verify has answered.
+- On the production host a cold Byse capture used up its clicks before its stream, and in a `capture_timing` probe there the stream came 8.1 s after the verify.
+- In the dev container with Chromium's CPU throttled sixfold, the verify came 0.5 to 9.9 s after the captcha in 11 cold captures and the stream 0.7 to 1.1 s after the verify, and with the wait 8 of 8 streamed after their first click.
+- A captcha provider's widget (Turnstile) keeps the clicks' cadence, since the clicks pass it.
+
 - The click goes to the page's centre, since an embed page is the player, or to the centre of the element a resolver names (`player=`, a CSS selector) for a player in a frame below a header.
 - The capture's page loads stylesheets and fonts, since without them the play button is not where the click lands; only media downloads are aborted, their URL known by then.
 - Popups opened by ad scripts are closed.
@@ -121,9 +128,9 @@ They stay valid only for the same browser and address, and a stale one merely co
 The capture state (`browser:capture_state:v1`) is kept per host after a capture found its stream (`keep_capture_state()`):
 
 - It holds the cookies of the page's host and of its frames' hosts at that moment, their parent domains' included, and their origins' localStorage and IndexedDB.
-- It is read from the capture's own page after the stream went out, in the background and within 0.5 s (`collect_capture_state()`), and no other origin is visited.
+- It is read from the capture's own page after the stream went out, in the background and within 2 s (`collect_capture_state()`, `_KEEP_BOUND_S`), and no other origin is visited: on the production host reads took 274 and 385 ms, and two ran into a former bound of 0.5 s, which lost the captcha's new pass.
 - Until the read ends, the page keeps its place at the page gate and the browser's lease, so it counts against the page limit and the browser does not restart under it.
-- A frame whose read fails or takes longer than 0.4 s leaves out its own host only (`capture_state_save_failed`), which keeps its earlier entry and is read again at its next stream.
+- A frame whose read fails or takes longer than 1.5 s leaves out its own host only (`capture_state_save_failed`), which keeps its earlier entry and is read again at its next stream.
 - An IndexedDB database is kept whole or not at all: one with a record plain JSON cannot hold stays out, since a new context cannot always take it back.
 - A host is kept at most once per 10 minutes, and at once when the capture's page met a challenge on its way to the stream, since its state then holds a new pass.
 - A host's entry lasts at most 24 h, and nothing above 512 KiB per host is kept (`capture_state_too_large`).

@@ -44,4 +44,28 @@
 - [x] 4.2 Tests (the registry with a short bound): a cut capture without a kept pass ends as `challenge` with no breaker failure and a cooldown, and its completion caches the stream; with a kept pass the cut stays a `timeout`; a page past its captcha keeps its verdict (`dead`).
 - [x] 4.3 Implementation: `FilemoonResolver(clearance_store=)` reads `ClearanceStore.creation_state()` and `pass_expiry()` before the capture and marks the challenge (`mark_resolution_challenge()`); `build_hoster_resolvers(clearance_store=)` wires it.
 - [x] 4.4 Docs: `docs/current/hoster-resolvers.md`, `docs/current/browser-and-challenges.md`, `docs/current/known-issues.md`, `CHANGELOG.md`, this change's spec.
-- [ ] 4.5 Production after the deploy: a Filemoon stream request without a kept pass ends as `challenge`, its completion caches the stream, and the pass keeper's events follow about 30 min after the captcha; recorded in backlog row 121.
+- [x] 4.5 Production after the deploy: a Filemoon stream request without a kept pass ends as `challenge`, its completion caches the stream, and the pass keeper's events follow about 30 min after the captcha; recorded in backlog row 121. Two readings on two builds:
+  - 6f9e42f5, one cold capture: marked from its start, it ended as `challenge` after 17.3 s (cooldown 60 s) with no breaker failure, and its completion found no stream: the capture used up its clicks 34 s after its start.
+  - 2ca40548, two cold captures and the keeper: both ended as `challenge`, their streams came 43.7 s (through the completion) and 34.0 s after the start, and the second kept its pass (`capture_state_saved` in 385 ms; the first one's read ran into its 0.5 s bound). A later Filemoon link resolved warm in 8.2 s. The keeper fired 30 s past the pass's expiry, and its capture met the captcha and used up its clicks after 29 s (`hoster_pass_keep stream=False`). No Filemoon timeout and no breaker opening.
+  - The keeper's capture without a pass is group 5.
+
+## 5. Row 141: a capture that met the hoster's captcha waits for it
+
+- [x] 5.1 Measurement:
+  - the dev container, two cold captures: one click each, the verify 0.3 and 0.5 s after the captcha, the stream 0.4 and 2.2 s after the verify;
+  - the dev container with Chromium's CPU throttled sixfold: the verify 0.5 to 9.9 s after the captcha in 11 cold captures;
+  - the production host, from the probe runs on record: the stream 8.1 s after the verify, after the third click.
+  - `capture_timing --diagnose` names each request's start and the time its answer took.
+- [x] 5.2 Tests:
+  - a captcha that runs gets its stream past the clicks, with one click;
+  - each captcha request moves the end;
+  - a captcha gone quiet ends the capture after its wait, its remaining clicks following;
+  - a provider's widget keeps the clicks' cadence;
+  - the state read's bounds (2 s, a frame's 1.5 s) and the keeper's bound (45 s).
+- [x] 5.3 Implementation:
+  - `_CAPTCHA_WAIT_S` and `_CaptchaClock` in `capture_media()`, through `_capture_listener()` and `_start_player()`;
+  - `_KEEP_BOUND_S` 2 s and `_FRAME_READ_S` 1.5 s;
+  - the pass keeper's `_BOUND_S` 45 s.
+- [x] 5.4 Live proof (the dev container, CPU throttled sixfold, one Byse link): 8 of 8 cold captures streamed after one click, their verify 0.5 to 9.7 s after the captcha and their stream 0.7 to 1.1 s after the verify; the restored ones streamed without a click in 2.8 to 3.8 s.
+- [x] 5.5 Docs: `docs/current/browser-and-challenges.md`, `docs/current/hoster-resolvers.md`, `docs/plans/challenge-reactions.md`, `docs/how-to/operations.md`, `CHANGELOG.md`, this change's spec.
+- [ ] 5.6 Production after the deploy: the pass keeper's next cycles keep their pass (`hoster_pass_keep stream=True`), read from production's log after the maintainer's use.

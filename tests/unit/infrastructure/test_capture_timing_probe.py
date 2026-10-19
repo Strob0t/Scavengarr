@@ -443,6 +443,56 @@ class TestRequests:
             ("byse.example", "/api/videos/access/attest", "xhr", "pending"),
         ]
 
+    def test_each_request_notes_when_it_went_out_and_how_long_its_answer_took(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [100.0]
+        monkeypatch.setattr(_mod.time, "monotonic", lambda: now[0])
+        page, run = _Page(), _mod.Run(100.0)
+        _mod.watch_requests(page, run)
+        api = "https://byse.example/api/videos/aa6n0tuxqz1h/embed"
+        captcha, verify = _Request(f"{api}/captcha"), _Request(f"{api}/captcha/verify")
+        playback = _Request(f"{api}/playback")
+        media = _Request(
+            "https://edge.cdn.example.com/a1b2c3d4/master.m3u8",
+            "media",
+            failure="net::ERR_FAILED",
+        )
+        for at, event, payload in (
+            (114.1, "request", captcha),
+            (114.3, "response", _Response(captcha, 200)),
+            (114.6, "request", verify),
+            (117.9, "response", _Response(verify, 200)),
+            (118.0, "request", playback),
+            (122.7, "request", media),
+            (122.8, "requestfailed", media),
+        ):
+            now[0] = at
+            page.emit(event, payload)
+
+        assert _mod.request_lines(run) == [
+            "- byse.example /api/videos/<id>/embed/captcha fetch: 200"
+            " at 14.1 s (0.2 s)",
+            "- byse.example /api/videos/<id>/embed/captcha/verify fetch: 200"
+            " at 14.6 s (3.3 s)",
+            "- byse.example /api/videos/<id>/embed/playback fetch: pending at 18.0 s",
+            "- example.com /<id>/master.m3u8 media: net::ERR_FAILED at 22.7 s (0.1 s)",
+        ]
+
+    def test_alike_requests_show_the_first_ones_times(self) -> None:
+        note = _mod.RequestNote
+        run = _mod.Run(0.0)
+        run.requests.extend(
+            [
+                note("byse.example", "/assets/<id>.js", "script", "200", 1.2, 1.5),
+                note("byse.example", "/assets/<id>.js", "script", "200", 1.3, 1.9),
+            ]
+        )
+
+        assert _mod.request_lines(run) == [
+            "- byse.example /assets/<id>.js script: 200 at 1.2 s (0.3 s) ×2"
+        ]
+
     def test_a_redirect_marks_its_hop(self) -> None:
         page, run = _Page(), _mod.Run(0.0)
         _mod.watch_requests(page, run)
@@ -579,7 +629,8 @@ class TestDiagnosedPool:
         run.frames.append(_mod.FrameNote("byse.example", main=True))
 
         assert _mod.diagnosis_lines(1, run) == [
-            "### Run 1: requests (domain, path with ids masked, type: outcome)",
+            "### Run 1: requests (domain, path with ids masked, type: outcome"
+            " at when it went out (how long the outcome took))",
             "- byse.example /d/<id> document: 200",
             "popups opened: 2 (the capture closes them)",
             "frames after the clicks:",

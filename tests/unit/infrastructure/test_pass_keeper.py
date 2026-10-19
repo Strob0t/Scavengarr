@@ -15,6 +15,7 @@ from scavengarr.domain.entities.stremio import ResolvedStream
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.infrastructure.browser.clearance_store import CreationState
 from scavengarr.infrastructure.browser.page_gate import PageGate
+from scavengarr.infrastructure.hoster_resolvers import pass_keeper
 from scavengarr.infrastructure.hoster_resolvers.pass_keeper import PassKeeper
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
@@ -171,6 +172,10 @@ class TestCapture:
         """The cold path outlasts the requests' bound: the captcha comes
         after the first click, 3 s after the page has loaded (row 106's
         proofs: cut before it, no pass). No request waits for the keeper."""
+        # The production host's cold Byse streams came 22.7 to 43.7 s after
+        # the resolution's start (row 141): the keeper's capture ends inside
+        # its bound, so its line says whether the pass came
+        assert pass_keeper._BOUND_S == 45.0
         rig = await _rig(resolve_timeout=0.05)
         rig.took["s"] = 0.2
         rig.kept(_NOW - 60)

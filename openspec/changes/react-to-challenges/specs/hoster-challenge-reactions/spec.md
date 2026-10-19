@@ -168,3 +168,18 @@ A resolver that knows before its capture that the hoster will ask for its captch
 - **WHEN** the pass keeper captures its link after the pass has gone and its bound cuts the capture
 - **THEN** the resolution ends as `challenge` without a breaker failure
 - **AND** the capture runs on as the background completion
+
+### Requirement: A Capture Waits For The Hoster's Captcha
+A capture whose page requested the hoster's own captcha (the requests its resolver names) SHALL neither click the player again nor end before 16 s have passed since the captcha's latest request, unless the stream came first. A captcha provider's widget SHALL keep the clicks' cadence of 5 s.
+
+#### Scenario: A proof of work that outlasts the clicks
+- **WHEN** a capture's page requests the hoster's captcha after the first click and its verify comes after the clicks would have run out
+- **THEN** the capture clicks no more and captures the stream the player requests after the verify
+
+#### Scenario: A captcha gone quiet
+- **WHEN** no stream comes within 16 s of the captcha's latest request
+- **THEN** the capture's remaining clicks follow and it ends without a stream
+
+#### Scenario: A provider's widget
+- **WHEN** a capture's page loads a captcha provider's frame and no request its resolver names
+- **THEN** the clicks keep their cadence and the capture ends after the last one's wait

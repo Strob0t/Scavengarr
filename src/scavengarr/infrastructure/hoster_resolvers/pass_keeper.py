@@ -55,9 +55,12 @@ _RECHECK_S = 300.0
 _BUSY_S = 30.0
 # The capture's bound in place of the resolve bound, and its page claim's
 # due (the page gate serves it last and refuses it 3 s before): a page load
-# of 8.6 s put the captcha past production's 10 s. 30 s is what a challenged
-# capture gets there in all, the bound and the 20 s completion
-_BOUND_S = 30.0
+# of 8.6 s put the captcha past production's 10 s. The production host's
+# cold Byse streams came 22.7 to 43.7 s after the resolution's start, the
+# capture waiting for its captcha (row 141), so the keeper's capture ends
+# inside its bound: no cut steps the challenge cooldown up, and its line
+# says whether the pass came
+_BOUND_S = 45.0
 # The keeping stops this long after a request's last Filemoon lookup
 _DEMAND_S = 48 * 3600.0
 
