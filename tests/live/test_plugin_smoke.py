@@ -16,7 +16,7 @@ import asyncio
 import httpx
 import pytest
 
-from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.infrastructure.plugins.registry import PluginRegistry
 
 from .conftest import AUTH_ENV_VARS, chromium_available, has_auth
@@ -32,6 +32,8 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("burningseries", "Breaking Bad"),
     ("byte", "Iron Man"),
     ("cine", "Iron Man"),
+    ("cineby", "Iron Man"),
+    ("crawli", "Iron Man"),
     ("dataload", "Iron Man"),
     ("einschalten", "Iron Man"),
     ("filmfans", "Iron Man"),
@@ -40,18 +42,22 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("fireani", "Naruto"),
     ("haschcon", "Iron Man"),
     ("hdfilme", "Iron Man"),
+    ("hdsource", "Iron Man"),
     ("hdworld", "Iron Man"),
+    ("jjs", "Iron Man"),
     ("kinoger", "Iron Man"),
     ("kinoking", "Iron Man"),
     ("kinox", "Iron Man"),
     ("megakino", "Iron Man"),
     ("megakino_to", "Iron Man"),
     ("moflix", "Iron Man"),
+    ("movieblog", "Iron Man"),
     ("movie2k", "Iron Man"),
     ("movie4k", "Iron Man"),
     ("nox", "Iron Man"),
     ("scnlog", "Iron Man"),
     ("serienfans", "Breaking Bad"),
+    ("serienjunkies", "Iron Man"),
     ("myboerse", "Iron Man"),
     ("nima4k", "Iron Man"),
     ("sto", "Breaking Bad"),
@@ -81,6 +87,8 @@ _NETWORK_ERRORS: tuple[type[BaseException], ...] = (
     asyncio.TimeoutError,
     ConnectionError,
     OSError,
+    # No domain answered the plugin's domain check: the site is down
+    PluginUnreachableError,
 )
 
 try:

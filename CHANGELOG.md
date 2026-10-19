@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Every Plugin Has a Live Smoke Entry
+
+- `tests/live/test_plugin_smoke.py` lists cineby, crawli, hdsource, jjs, movieblog and serienjunkies (filmpalast_to's plugin is `filmpalast`, listed before), so all 42 plugins are searched in a live run; `tests/unit/infrastructure/test_plugin_smoke_coverage.py` fails when a registered plugin has no entry or one twice.
+- A plugin whose domain check finds no domain (`PluginUnreachableError`) skips as a site that is down, as a network error does; before, a dead site's entry failed.
+- `docs/how-to/new-plugin.md` → the live check names the file, the lists and the guard.
+
 ### Fixed: A Torznab Search over Several Kinds Answers Every Kind
 
 - `cat=` with ids of several kinds (`cat=2000,5000,…`, which Prowlarr's own searches and its RSS sync send with the indexer's whole category list) answered the first kind only, so the TV results never reached Prowlarr. The router now reads every id and groups them by kind (the thousands): ids of one kind give the first id as before (Sonarr's `5030,5040` through `served_category()`); ids of several kinds make the plugin search unfiltered and the use case keep the results whose label one of the kinds covers, before they are cached under a key that carries the sorted kinds. A non-numeric id anywhere in `cat` answers 400 (before: only the first was checked). On the dev server a filmpalast search with `cat=2000,5000` answered 10 movies and 27 TV results, the sum of `cat=2000` and `cat=5000`; the code before answered the 10 movies only.

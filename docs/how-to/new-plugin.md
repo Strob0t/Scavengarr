@@ -1,7 +1,7 @@
 # Adding a plugin
 
 > **Status:** how-to
-> **As of:** 5b4303e4
+> **As of:** 9847f739
 
 ## Goal
 
@@ -183,7 +183,9 @@ poetry run python scripts/capture_pages.py <name> --fixture <page> <fixture-name
 
 The first command records every page a live search fetches under `.cache/pages/<name>/`; the second stores one of them scrubbed and gzipped under `tests/fixtures/html/<name>/`.
 `tests/unit/infrastructure/test_real_pages.py` asserts values read off those pages.
-Add a live smoke entry under `tests/live/`.
+Add a live smoke entry to `tests/live/test_plugin_smoke.py`, in the httpx or the Playwright list after the plugin's base class, with a query the site answers (a title of the captured search page).
+`tests/unit/infrastructure/test_plugin_smoke_coverage.py` fails while a plugin has no entry.
+A site that is down skips on its network error or on `PluginUnreachableError`; a search that answers nothing fails.
 
 ### 8. Regenerate the plugin list
 
