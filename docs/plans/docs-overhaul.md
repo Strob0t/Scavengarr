@@ -203,3 +203,7 @@ The rows live in the backlog's Order table; this is what each one delivers and w
 - **The device name** ("Raspberry Pi" in about 30 files as the production machine): the privacy rule bans device names; row 119 applies the maintainer's decision (ledger P1).
 - **The example repository** (`cityforall`): unreachable from the dev container; its practices are adopted when it can be read (ledger B1).
 - **This plan** moves to `docs/archive/plans/` when row 119 lands.
+
+## Follow-ups
+
+The open points were decided with the model repository at hand: the device name becomes "the production host" (row 123), the archive is deleted and history is read from git (row 132), and the model's conventions this layout lacked become rows 127 to 133 of `docs/backlog.md`: the index as a document map with the overall state, AGENTS.md as rules only under 3,000 words with the change-to-documents table, a tech-stack reference with the reasons, a glossary, a purpose line in every header, and the alternatives in every decision record. The CHANGELOG keeps its length. This plan is deleted with row 132.
