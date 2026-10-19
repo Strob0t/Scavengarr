@@ -1,4 +1,4 @@
-# Performance on the Raspberry Pi: Baseline
+# Performance on the Production Host: Baseline
 
 > **Status:** archived
 > **Superseded by:** `docs/how-to/performance-measurement.md` (row 117)
@@ -7,7 +7,7 @@ Status: baseline measured 2026-10-04 (v0.2.3). The decided measures are implemen
 
 ## Setup
 
-- Raspberry Pi 4 (4× Cortex-A72, 8 GB RAM, aarch64), Python 3.12, Scavengarr in Docker. All traffic goes through a VPN container; DNS is its resolver on 127.0.0.1.
+- The production host (4 arm64 cores, 8 GB RAM), Python 3.12, Scavengarr in Docker. All traffic goes through a VPN container; DNS is its resolver on 127.0.0.1.
 - Not installed: uvloop, httptools, h2, orjson, lxml, selectolax, brotli.
 - Cache (`/app/cache`, diskcache/SQLite) and config live on the SD card (`/dev/mmcblk0p2`, ext4). Chromium's `/dev/shm` is a 1 GB tmpfs.
 - Shared httpx client: `AsyncHTTPTransport()` with httpx defaults:
@@ -81,7 +81,7 @@ Ordered by measured share and effort.
 
 ## Review of the literature research (2026-10-04)
 
-A literature review proposed measures for fan-out, tail latency, caching, Python and the production host. It is the gitignored `.devdata/research/performance-deep-research.md`: Tail at Scale, Kwiken, SRE Book, RFC 5861, Mercator, uvloop/httptools, selectolax and Raspberry Pi/Docker sources. Its proposals, checked against this baseline, production and the code:
+A literature review proposed measures for fan-out, tail latency, caching, Python and the production host. It is the gitignored `.devdata/research/performance-deep-research.md`: Tail at Scale, Kwiken, SRE Book, RFC 5861, Mercator, uvloop/httptools, selectolax and arm64/Docker sources. Its proposals, checked against this baseline, production and the code:
 
 | Proposal | Verdict |
 |---|---|
@@ -96,7 +96,7 @@ A literature review proposed measures for fan-out, tail latency, caching, Python
 | Token bucket "serializes every request per domain" | Overstated: it sleeps only when the bucket is empty, and then the spacing is the configured rate (10 rps, burst 10, AIMD up to 50). The `co.uk` key problem is real but hits no current site |
 | `cf_clearance` does not work with httpx (TLS fingerprint), use curl_cffi | Refuted for kinoger and moflix: httpx with the browser's cookies and User-Agent passes both from the VPN IP, and curl_cffi did no better (antibot-patchright.md Phase 4) |
 | Memory cgroup disabled on the production host | Already fixed: `cgroup_enable=memory cgroup_memory=1` in the kernel command line, the cgroup reports 625 MB |
-| Cooler and CPU governor | No throttling seen: 54 °C at 1.8 GHz (the maximum), governor `ondemand`; one sample, Raspberry Pi 4 |
+| Cooler and CPU governor | No throttling seen: 54 °C at 1.8 GHz (the maximum), governor `ondemand`; one sample, the production host |
 | Docker's embedded DNS | Not used: Scavengarr runs in the VPN container's network namespace and uses its caching resolver |
 | SSD instead of the SD card | Applies: cache and config are on the SD card (`mmcblk0p2`) |
 
@@ -375,7 +375,7 @@ No popup in the 88 runs with `--diagnose` (the 12 `--restore` runs ran without i
 
 **What it means for the change (after the production host runs and Mr. Fable's go).** A wait per resolver, from the dev numbers: 0.5 s for DoodStream and Vixeo, 3 s kept for Dropload and SuperVideo. For Filemoon, 1.5 s helps a cold capture on one of its two hosts, and in the dev container it does not matter warm, production's case. Whether it matters on the production host is the production host runs' question: the idle production host's warm filemoon.to run (`docs/plans/challenge-reactions.md` → R4) clicked at 5.1 s and found the stream at 6.5 s, so there the warm player had not started itself 3 s after its page. Whether a click 1.5 s after the page brings it sooner there, or comes too early, the dev numbers cannot tell.
 
-**Limits.** The dev container: a fast CPU, page loads of 0.2 to 2.1 s. One link per hoster, two to six runs per cell, within 13 minutes. A Raspberry Pi's page and player are slower, so a wait the player takes in the dev container can come too early there, and a missed click costs 5 s.
+**Limits.** The dev container: a fast CPU, page loads of 0.2 to 2.1 s. One link per hoster, two to six runs per cell, within 13 minutes. The production host's page and player are slower, so a wait the player takes in the dev container can come too early there, and a missed click costs 5 s.
 
 **On the production host (production 503a0eb, 1 min 50 s).** Ultracode's four calls on Mr. Fable's go, through `scripts/prodctl.py probe`, `--runs 2 --diagnose` each (run 1 cold, run 2 warm), with production's `capture_timing.py` of 503a0eb and only `--autoplay-wait` added: today's probe needs row 97's capture state, which 503a0eb lacks. The links are the dev runs'. Before each call the container had been up for 2 hours, its CPU was at 0.00 to 0.27 of 4 cores, and its log had no `/play`, `/proxy` or HLS line in the last 2 minutes; the maintainer's playback held the calls back until then. Times are seconds after the resolution's start, a page as its start and its load:
 

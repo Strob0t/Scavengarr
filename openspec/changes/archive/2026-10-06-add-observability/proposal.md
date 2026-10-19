@@ -2,7 +2,7 @@
 
 ## Why
 
-The only metrics today are the JSON of `/api/v1/stats/metrics`: averages per plugin since the start, the event-loop lag of the last 5 minutes and the circuit breaker states. They have no distributions (p95), no phases of a Stremio request, no hoster outcomes and no reason why an answer went out. Every tuning decision of the last rounds (answer policy, timeouts, breakers, dead plugins and hosters) needed a manual end-to-end round on the Raspberry Pi plus a log analysis. Such a round costs the production host minutes of CPU (17 first searches took about 2.6 min) and still shows a few dozen requests only.
+The only metrics today are the JSON of `/api/v1/stats/metrics`: averages per plugin since the start, the event-loop lag of the last 5 minutes and the circuit breaker states. They have no distributions (p95), no phases of a Stremio request, no hoster outcomes and no reason why an answer went out. Every tuning decision of the last rounds (answer policy, timeouts, breakers, dead plugins and hosters) needed a manual end-to-end round on the production host plus a log analysis. Such a round costs the production host minutes of CPU (17 first searches took about 2.6 min) and still shows a few dozen requests only.
 
 Metrics from real use answer the same questions all the time, without a test load. One request can only be reconstructed from log time windows; a request id in the log context makes that direct.
 

@@ -1,7 +1,7 @@
 # Docs overhaul: one style, target and current state only, history archived
 
 > **Status:** plan (open); the work is rows 110 to 120 of `docs/backlog.md`
-> **As of:** 1b7abe45
+> **As of:** 6786e014
 > **Evidence:** an inventory of every Markdown file in the repository (117 files, 21,870 lines, 2.43 MB; the numbers below are its final pass)
 
 ## Problem
@@ -200,7 +200,7 @@ The rows live in the backlog's Order table; this is what each one delivers and w
 ## Open points
 
 - **CHANGELOG entries.** 2,083 lines, 36 of them over 1 KB, with measurement narratives inside; the inventory suggests capping entries at one to three lines with a link and moving the narratives to the archive. Keep a Changelog allows both. The maintainer decides; until then the CHANGELOG is untouched by this plan.
-- **The device name** ("Raspberry Pi" in about 30 files as the production machine): the privacy rule bans device names; row 119 applies the maintainer's decision (ledger P1).
+- **The device name** (the production machine's model in about 30 files): the privacy rule bans device names; row 119 applies the maintainer's decision (ledger P1).
 - **The example repository** (`cityforall`): unreachable from the dev container; its practices are adopted when it can be read (ledger B1).
 - **This plan** moves to `docs/archive/plans/` when row 119 lands.
 

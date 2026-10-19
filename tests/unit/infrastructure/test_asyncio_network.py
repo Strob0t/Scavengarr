@@ -263,7 +263,7 @@ class TestTls:
 class TestGuardedBackend:
     def test_the_guard_connects_with_asyncio_streams(self) -> None:
         """httpx's default backend (anyio) runs TLS in Python; asyncio streams
-        saved the HLS proxy about a quarter of its CPU on the Raspberry Pi
+        saved the HLS proxy about a quarter of its CPU on the production host
         (2026-10-05)."""
         backend = GuardedNetworkBackend(PrivateAddressGuard())
         assert isinstance(backend._backend, AsyncioNetworkBackend)

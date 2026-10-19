@@ -6,7 +6,7 @@
 
 The backlog as it grew from the first production review to the docs overhaul: findings, ideas, the maintainer's decisions, the working rules and the order of the rows with their hashes and acceptances. Kept with its text; the open rows continue in the successor.
 **Status:** Decided (2026-10-06, see [Decisions](#decisions)) and handed off to the implementing agent; items that are built move to their own plan or feature doc.
-**Source:** A review of the repository state and of production on 2026-10-06 (`scripts/prodctl.py`: `state`, `metrics` and 7 h of logs of the Raspberry Pi behind the VPN, 93 stream requests since the container start 6 h earlier), read against the open items in [next-steps.md](../archive/plans/next-steps.md) §6, [optimization-options.md](../archive/plans/optimization-options.md) (19 options) and [code-review-fixes.md](../archive/plans/code-review-fixes.md). Only findings and ideas that are **not** in those documents are listed in full; the rest is referenced.
+**Source:** A review of the repository state and of production on 2026-10-06 (`scripts/prodctl.py`: `state`, `metrics` and 7 h of logs of the production host behind the VPN, 93 stream requests since the container start 6 h earlier), read against the open items in [next-steps.md](../archive/plans/next-steps.md) §6, [optimization-options.md](../archive/plans/optimization-options.md) (19 options) and [code-review-fixes.md](../archive/plans/code-review-fixes.md). Only findings and ideas that are **not** in those documents are listed in full; the rest is referenced.
 
 ## Snapshot (2026-10-06)
 

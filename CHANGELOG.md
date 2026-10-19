@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Production Machine Is "the Production Host" Everywhere
+
+- The production machine's device name gave way to "the production host" in 34 files: 13 code comments and docstrings in `src/` and `plugins/` (among them the HLS transcoding setting's description, so `docs/reference/configuration.md` is regenerated), 7 tests, 14 CHANGELOG lines, `README.md` (the image's platforms without an example device), `data/config.yaml`, `.github/workflows/image.yml`, 3 OpenSpec files (`add-container-image` and the archived `add-observability`), `docs/plans/docs-overhaul.md`, the backlog and 5 files of the archive (their text only; the archive goes as a whole later). A benchmark on another device of that kind reads "an arm64 board", and the arm64 platform stays where it is the point.
+- `tests/unit/infrastructure/test_docs_privacy.py` fails on the device name in every doc, so it cannot return; decision 0015 names it in its rule. Code comments follow once the two mentions in the stealth pool and its test change (backlog row 123, part 2).
+
 ### Changed: The Skill Set Drops `code-review`, graphify Stays User-Wide
 
 - `code-review` (mattpocock/skills) leaves `SKILL_SOURCES` in `.devcontainer/setup.sh`; Claude Code's built-in `/code-review` stays. The new `RETIRED_SKILLS` list removes an installed copy on the next attach (`skills remove -g -a claude-code`), so its description stops costing context.
@@ -679,7 +684,7 @@ Anime and the right episode: the Kitsu catalogs' ids, an anime episode's absolut
 
 ## v0.3.0 - 2026-10-06
 
-Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5 streams while links resolve during the plugin search, cached answers at once, and plugins whose site is down are skipped; the stealth browser's pages go to the most urgent work, and their count follows waits, CPU and memory. HLS plays in Stremio Web again (1080p stutter, VEEV, the proxy's 500s under Python 3.13 with anyio). Prometheus metrics, request ids and on-demand tracing, plugin parsers on selectolax, read-only production diagnostics (`scripts/prodctl.py`), and the fixes of two code reviews.
+Stremio latency and playback on the production host behind a VPN: answers go out at 5 streams while links resolve during the plugin search, cached answers at once, and plugins whose site is down are skipped; the stealth browser's pages go to the most urgent work, and their count follows waits, CPU and memory. HLS plays in Stremio Web again (1080p stutter, VEEV, the proxy's 500s under Python 3.13 with anyio). Prometheus metrics, request ids and on-demand tracing, plugin parsers on selectolax, read-only production diagnostics (`scripts/prodctl.py`), and the fixes of two code reviews.
 
 ### Fix: CDN Tokens No Longer Reach the Logs Through httpx and uvicorn
 - The app's `http_request` line masks query values, but two third-party lines repeated every URL whole: uvicorn's access log (each proxied HLS request with the CDN's tokens) and httpx's `HTTP Request: GET <url>` line for every outgoing request (video URLs with tokens and the client's address, `i=`). Production logs carried both (2026-10-06). uvicorn now runs with `access_log=False` (`http_request` is the access log), and third-party records show URLs by their origin only (`HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`), tracebacks included.
@@ -878,12 +883,12 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 ### Feat: Prometheus Metrics
 - `GET /metrics` serves Prometheus metrics of the core (prometheus-client): every Stremio stream request by the state of its search results (cache, stale, new or joined search), its phases and why the answer went out (target, done, deadline, cached), streams per answer, every plugin search and every hoster resolution with duration and outcome (`hits`, `empty`, `cut`, `breaker_open`, `unplayable`, ...), HLS proxy requests with time to first byte and bytes, the event-loop lag, open circuit breakers and the container's CPU and memory (Chromium included). `docs/features/observability.md` has the families, a scrape job and queries.
 - One port records everything: `TelemetryPort.stage()` times a step and records its outcome (`cut` for a cancellation). The plugin search runner, the hoster resolver registry, the Stremio use case and the HLS proxy route use it; plugins and resolvers stay unchanged. Labels come from fixed sets only (no titles, ids, URLs or domains).
-- Cost on x86: 5.6 µs per recorded step, 4.4 ms per scrape of 672 series (rendered in a worker thread); at a 60 s scrape interval about 20 s of CPU per day on a Raspberry Pi 4. `tests/benchmark/test_telemetry_overhead.py` measures it.
+- Cost on x86: 5.6 µs per recorded step, 4.4 ms per scrape of 672 series (rendered in a worker thread); at a 60 s scrape interval about 20 s of CPU per day on the production host. `tests/benchmark/test_telemetry_overhead.py` measures it.
 - `docker/grafana-dashboard.json`: a Grafana dashboard of answers (why they went out, search state, answer and phase times), plugins and resolvers (time and outcomes), open breakers, the HLS proxy and CPU (container, Python, Chromium) and memory.
 - `/api/v1/stats/metrics` keeps its JSON; its plugin statistics come from the new metrics. `MetricsCollector` (`infrastructure/metrics.py`) is replaced by `Telemetry` (`infrastructure/telemetry/`).
 
 ### Perf: Plugin Parsers on selectolax
-- Every plugin parser (28 plugins and the XenForo base of dataload and myboerse) reads pages with selectolax (lexbor, C) and CSS selectors instead of `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the Raspberry Pi, 0.43 s per first request).
+- Every plugin parser (28 plugins and the XenForo base of dataload and myboerse) reads pages with selectolax (lexbor, C) and CSS selectors instead of `html.parser` state machines in Python, which held the GIL for every page (34% of the GIL samples of a Stremio request on the production host, 0.43 s per first request).
 - Results stay the same: every parser input of the test suite and of live searches of all plugins was recorded on the base commit, and 2,989 of the 2,990 unique inputs give identical results (the other keeps a description's line breaks as `\n`, as HTML5 does). The recorded big pages (from 20 KB) parse in 1.6 instead of 17.4 s on x86.
 - Every page goes through `parse_page(parser, html)` (`infrastructure/plugins/dom.py`), which parses pages from 32 KiB in a worker thread; `HttpxPluginBase._feed()` is gone, and 17 plugins (5 on Playwright) no longer parse on the event loop. `docs/features/python-plugins.md` ("Parsing Pages") has the pattern and selectolax's pitfalls.
 - The migration found the bugs fixed under "Plugin Selectors That Missed the Live Theme".
@@ -904,7 +909,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - movieblog: with several "Nächste Seite" links the pagination took the last one, unless an earlier link's URL contained "Seite" (a check meant for a match that tested the URL). The first link wins now; live pages have one, so nothing changes there.
 
 ### Fix: 1080p HLS Streams Stutter in Stremio Web
-- Stremio Web has its streaming server probe every stream before it plays it. An HLS source (format `hls`) then always goes through the server's converter, which re-encodes the video with libx264: it repackages MP4 and Matroska only, because only their keyframes are indexed (`requiresTranscoding` in the server's `hls-converter`). On the maintainer's Raspberry Pi 4 (no usable hardware encoder) a 1480×620 stream took 1–2 cores, and 1080p, 2.3 times the pixels, stuttered. Each segment was also fetched twice, by one ffmpeg for the video and one for the audio.
+- Stremio Web has its streaming server probe every stream before it plays it. An HLS source (format `hls`) then always goes through the server's converter, which re-encodes the video with libx264: it repackages MP4 and Matroska only, because only their keyframes are indexed (`requiresTranscoding` in the server's `hls-converter`). On the production host (no usable hardware encoder) a 1480×620 stream took 1–2 cores, and 1080p, 2.3 times the pixels, stuttered. Each segment was also fetched twice, by one ffmpeg for the video and one for the audio.
 - The HLS proxy refuses the streaming server's ffmpeg (User-Agent `Lavf/`) the stream's playlist (`403`, `hls_proxy_converter_refused`). The failed probe makes Stremio Web read the content type with `HEAD` and play the playlist itself (hls.js): no transcoding, the original quality, each segment fetched once.
 - `stremio.allow_hls_transcoding: true` lets a server transcode again, for players that cannot decode a stream's codecs (HEVC in Firefox, AC3); hosters' HLS was H.264 and AAC in every probe.
 
@@ -935,7 +940,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - A cancelled request (shutdown) now cancels its unfinished resolutions instead of leaving them running untracked.
 
 ### Perf: TLS Runs in the Event Loop, Not in Python
-- httpx's default network backend on asyncio is anyio, which runs TLS in Python. The shared client now connects through `AsyncioNetworkBackend` (asyncio streams; TLS in the event loop, uvloop in production), underneath the SSRF guard's `GuardedNetworkBackend`. Measured on the Raspberry Pi with 1 MB HLS segments through the proxy: 103–112 ms of CPU per MB before, 75–88 ms after.
+- httpx's default network backend on asyncio is anyio, which runs TLS in Python. The shared client now connects through `AsyncioNetworkBackend` (asyncio streams; TLS in the event loop, uvloop in production), underneath the SSRF guard's `GuardedNetworkBackend`. Measured on the production host with 1 MB HLS segments through the proxy: 103–112 ms of CPU per MB before, 75–88 ms after.
 - An idle connection the server closed or sent something on (a 408) is retired before reuse: asyncio reads ahead into the stream's buffer, so the backend checks the buffer instead of polling the socket.
 - The HLS proxy sends segments in 64 KiB pieces and decodes an encoded body. Passing the CDN's chunks through, as decided first, cost more CPU: VOE's CDN sends 4 KiB TLS records, and each became a response write. Dev-server end-to-end run (x86, 2026-10-05), CPU per relayed MB of one VOE stream: 34 ms before both changes, 41 ms with the asyncio backend and the chunks passed through, 25 ms with 64 KiB pieces.
 - ChaCha20 instead of AES-GCM for TLS, decided first for the proxy's CPU, was dropped: production's OpenSSL 3.5.7 decrypts both at the same speed on the production host (0.66 against 0.68 s of CPU for 20 MB).
@@ -945,7 +950,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - The resolver no longer checks the URL itself. The registry's playback check reads the page, counts the stream as unplayable, and the breaker pauses SuperVideo (60 s, doubling up to 1 h) until a probe finds a playlist again.
 
 ### Fix: Half-Open Hoster Probes Report Their Outcome
-- The hoster circuit breaker lets one probe through after its cooldown. Filemoon's browser captures take longer than the resolve grace on the Raspberry Pi, so the grace cut every probe before half of `http.timeout_resolve_seconds`, the probe reported nothing, and the breaker probed again after every cooldown without doubling it: about 6 s of Chromium CPU per probe, and the cached answer that carried it waited for the grace (fifth end-to-end round, 2026-10-05).
+- The hoster circuit breaker lets one probe through after its cooldown. Filemoon's browser captures take longer than the resolve grace on the production host, so the grace cut every probe before half of `http.timeout_resolve_seconds`, the probe reported nothing, and the breaker probed again after every cooldown without doubling it: about 6 s of Chromium CPU per probe, and the cached answer that carried it waited for the grace (fifth end-to-end round, 2026-10-05).
 - The probe now runs to its end in the background when its request is cut (`HosterResolverRegistry._resolve_with`, ended by `aclose()` at shutdown): a stream closes the breaker and stays in the resolution cache for the next request; a timeout or an unplayable stream reopens it with twice the cooldown (up to 1 h).
 
 ### Measured: Fifth End-to-End Round
@@ -976,7 +981,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - Production's stream requests started a browser capture for every DoodStream and Dropload link. From the VPN address DoodStream's Turnstile is not solved (31–34 s, 4 attempts) and Dropload's captcha player gives no stream (19 s). In an hour that was 50 captures, no stream, and about 10 s of Chromium CPU per stream request, a cached search included.
 - `HosterResolverRegistry` now has a circuit breaker per resolver (`PluginCircuitBreaker`: 5 failures, 60 s cooldown doubling up to 1 h). A timeout, a cut after half of `http.timeout_resolve_seconds` and an unplayable stream count; a stream resets it; a dead link neither counts nor resets it. While open, the hoster is skipped (`hoster_resolve_circuit_open`).
 
-### Measured: The Performance Plan on the Raspberry Pi
+### Measured: The Performance Plan on the Production Host
 - Production, 3 titles, the plugins searching again (`docs/plans/pi-performance.md`):
   - a stream request took 11.3 s instead of 13.9 s;
   - it used 2.55 s of Python CPU instead of 4.1 s (−55% of the CPU on the GIL);
@@ -990,7 +995,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - The client now connects to the addresses of the guard's lookup (`GuardedNetworkBackend`, IPv4 first, the next address when one refuses). TLS still verifies the hostname. A lookup answers checks and connections for 60 s (was 5 min for checks only).
 
 ### Perf: Lighter Chromium
-- On the Raspberry Pi Chromium held 1.7 GB in 15 processes.
+- On the production host Chromium held 1.7 GB in 15 processes.
 - Main frames share at most 2 renderer processes (`--renderer-process-limit=2`). Frames of other sites keep their own (site isolation): turning it off cut the renderers from 7 to 2 with 5 open pages, but made s.to's Turnstile gate fail in 2 of 2 tries.
 - Browser contexts block service workers, and Playwright plugins abort heavy resources by type (image, font, stylesheet, media, text track) like the stealth context, instead of by file extension.
 - The shared Chromium restarts after 200 stealth pages once no page is open, since its memory grows with the pages it rendered.
@@ -1002,7 +1007,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - The same check found no effect of a lower result cap (no plugin returned more than 24 results for an exact title), so `max_results_per_plugin` stays at 50.
 
 ### Perf: Big Pages Parsed Off the Event Loop or in C
-- html.parser took 21–27% of the Python CPU of a stream request on the Raspberry Pi (py-spy in production). It runs in Python on the event loop: a 300 KB detail page took 20 ms on x86 and several times as long on the production host, and every timeout and request waited for it.
+- html.parser took 21–27% of the Python CPU of a stream request on the production host (py-spy in production). It runs in Python on the event loop: a 300 KB detail page took 20 ms on x86 and several times as long on the production host, and every timeout and request waited for it.
 - `HttpxPluginBase._feed(parser, html)` parses pages from 32 KB in a worker thread, where the loop gets the GIL back every few ms. sto, kinoger, kinoking, kinox, megakino, movie2k and hdfilme's detail pages use it.
 - The two hottest parsers on the production host use selectolax (lexbor, a C parser; new dependency): filmpalast's detail pages (8.4% of the Python CPU; 20 ms → 2.3 ms per page on x86) and search pages, and hdfilme's search pages (5.9% with its detail pages; 8.3 ms → 1.4 ms). They return the same results on the captured real pages of hdfilme, streamcloud, streamkiste and filmpalast.
 
@@ -1025,7 +1030,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - `cache.search_ttl_seconds: 0` turns off all three and restores the previous behavior. App shutdown cancels background searches.
 
 ### Perf: uvloop, httptools, Eager Tasks and Python 3.14
-- On the Raspberry Pi the event loop took 13–16% of the Python CPU (py-spy in production, `docs/plans/pi-performance.md`).
+- On the production host the event loop took 13–16% of the Python CPU (py-spy in production, `docs/plans/pi-performance.md`).
 - **uvloop and httptools** are dependencies now, and uvicorn uses both when they are installed (`loop="auto"`, `http="auto"`): the event loop and the server's HTTP parser run in C. Of uvicorn's `standard` extra only these two are installed; websockets and watchfiles are not used.
 - **Eager tasks:** new tasks start eagerly (`asyncio.eager_task_factory`, set in the lifespan). A task runs until its first await when it is created, so a task that never suspends (cache hit, guard) skips a trip through the loop. The whole suite also passes with every test loop eager. The startup log `event_loop_configured` names the loop (`uvloop` or `asyncio`).
 - **Python 3.14:** the Docker image runs Python 3.14 (`python:3.14-slim`), whose interpreter and asyncio are faster.
@@ -1035,7 +1040,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
   - Images built from their own Dockerfile change `python:3.12-slim` to `python:3.14-slim`.
 
 ### Perf: Each Release Name Parsed Once
-- On the Raspberry Pi guessit, which parses release names, took 25–33% of the Python CPU of a stream request (py-spy in production, `docs/plans/pi-performance.md`).
+- On the production host guessit, which parses release names, took 25–33% of the Python CPU of a stream request (py-spy in production, `docs/plans/pi-performance.md`).
 - The title matcher (title candidates, year), the release parser (quality, language) and the episode filter each parsed the same names, and the next request for the same title parsed them all again.
 - `infrastructure/stremio/release_guess.py` parses a name once and caches the result: read-only, the last 4096 names.
 - Measured on x86 with 120 results: 3.5 s → 1.0 s for the first request, 3 ms for the same titles again.
@@ -1046,7 +1051,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 - `http.http2` (`SCAVENGARR_HTTP_HTTP2`, off by default) offers HTTP/2, so the requests to one host share a connection. It needs `httpx[http2]` (h2). Measured both ways in production: the plugin searches used 22% more CPU with HTTP/2 (its framing runs in Python) and were not faster, so it stays off.
 
 ### Feat: Event-Loop Lag in the Metrics
-- On the Raspberry Pi the Python process was busy for 34–82% of a stream request's wall time (`docs/plans/pi-performance.md`). CPU work on the event loop (parsing, TLS handshakes, logging) delays every callback, and with them the timeouts and deadlines.
+- On the production host the Python process was busy for 34–82% of a stream request's wall time (`docs/plans/pi-performance.md`). CPU work on the event loop (parsing, TLS handshakes, logging) delays every callback, and with them the timeouts and deadlines.
 - A timer every 0.5 s records how late it fires. `/api/v1/stats/metrics` shows the lag's p50, p99 and maximum over the last 5 min (`event_loop`), and a stall of 250 ms or more is logged as `event_loop_lag`. This is the yardstick for the performance plan.
 
 ### Chore: Profile Script for Stream Requests
@@ -1062,7 +1067,7 @@ Stremio latency and playback on a Raspberry Pi behind a VPN: answers go out at 5
 
 ## v0.2.3 - 2026-10-04
 
-Production fixes from a Raspberry Pi behind a VPN: kinoger and moflix pass their challenges once and go on over httpx, s.to's link-out gate is passed (ad layers, Turnstile and ALTCHA), and HLS-proxy streams play in Stremio Web. Each fix was verified on the production instance before the release.
+Production fixes from the production host behind a VPN: kinoger and moflix pass their challenges once and go on over httpx, s.to's link-out gate is passed (ad layers, Turnstile and ALTCHA), and HLS-proxy streams play in Stremio Web. Each fix was verified on the production instance before the release.
 
 ### Fix: moflix Without Results Behind a Stored Clearance
 - In production moflix returned 0 results on every search, without an error event. A restarted browser gets the stored clearance cookies (`ClearanceStore`), so it loaded moflix's API without a challenge and got 401 (`stealth_http_error`): the API (Laravel Sanctum) serves only requests that carry its site's Referer, and a page load sends one only in a challenge's reload. The browser fetch returned nothing, httpx never took over the session, and the host stayed in the browser memo for 30 min.
@@ -1075,7 +1080,7 @@ Production fixes from a Raspberry Pi behind a VPN: kinoger and moflix pass their
 - Production's Turnstile widget took 16–70 s on the production host, and the first wait for the redirect had 1.85 s left after it: a submitted gate now gets up to 10 s for its redirect even past the timeout, and s.to gives the browser 60 s for the gate (`_GATE_TIMEOUT_S`; the pass runs in the background, a Stremio request does not wait for it).
 
 ### Perf: httpx Goes On With the Browser's Session After a Challenge
-- Production (Raspberry Pi 4 behind a datacenter VPN) got nothing from kinoger: its site challenges the VPN IP, and after one challenge every page of the host went through the browser for 30 min, too slow for the 10 s Stremio budget on a production host.
+- Production (behind a datacenter VPN) got nothing from kinoger: its site challenges the VPN IP, and after one challenge every page of the host went through the browser for 30 min, too slow for the 10 s Stremio budget on a production host.
 - Measured from production's VPN IP: after a 3–4 s browser solve, plain httpx with the browser's cookies and User-Agent got kinoger's pages (HostAdmin WAF) and moflix's API (Cloudflare) in 0.3–0.4 s; curl_cffi (Chrome TLS fingerprint) did no better, so no new dependency.
 - `BrowserFetcherPort.session(url)` returns the browser's cookies for a site and its User-Agent (`StealthPool`, `SolverFetcher`, `ChainedBrowserFetcher`). `HttpxPluginBase._fetch_text()` takes them over after a browser fetch, so later requests to the host run through httpx (`{name}_browser_session_adopted`). A challenge within 5 min of a takeover sends the host to the browser for 30 min as before (`{name}_browser_session_rejected`); an expired clearance is solved again.
 - Covers every plugin that reads pages with `_fetch_text()` (kinoger, filmfans, serienfans, burningseries, kinox, sto). Docs: `docs/features/python-plugins.md`, `docs/plans/antibot-patchright.md` (Phase 4).

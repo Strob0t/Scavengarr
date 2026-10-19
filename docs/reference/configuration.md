@@ -1,7 +1,7 @@
 # Configuration
 
 > **Status:** reference
-> **As of:** bdd3f0c4
+> **As of:** 6786e014
 
 Every setting of Scavengarr, the layers that set it and the rules the loader applies.
 The settings tables are generated from the schema; the notes under them add what a description leaves out.
@@ -153,7 +153,7 @@ Unprefixed `CACHE_*` variables are not read.
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `SCAVENGARR_STREMIO_ALLOW_HLS_TRANSCODING` | bool | `false` | Let Stremio's streaming server transcode HLS streams. Stremio Web has the server probe every stream, and an HLS source then goes through the server's converter, which re-encodes the video (on a Raspberry Pi 4 too slow for 1080p). Off, the HLS proxy refuses the server's ffmpeg the stream's playlist, and Stremio Web plays it itself. |
+| `SCAVENGARR_STREMIO_ALLOW_HLS_TRANSCODING` | bool | `false` | Let Stremio's streaming server transcode HLS streams. Stremio Web has the server probe every stream, and an HLS source then goes through the server's converter, which re-encodes the video (on the production host too slow for 1080p). Off, the HLS proxy refuses the server's ffmpeg the stream's playlist, and Stremio Web plays it itself. |
 | `SCAVENGARR_STREMIO_ANSWER_BUDGET_SECONDS` | float (optional) | (unset) | The request's answer budget, counted from the request start (a stale search-cache entry's refresh: from its own start): the request stops waiting for the search then and answers with the results known so far; plugins still running are not cut, their results reach the search cache for the next request. Unset: the plugin timeout; a value above it counts as the plugin timeout. |
 | `SCAVENGARR_STREMIO_AUTO_TUNE_ALL` | bool | `true` | Auto-tune ALL concurrency parameters (plugins, Playwright, probes, validation) based on detected container/host resources via cgroups. Supersedes max_concurrent_plugins_auto. |
 | `SCAVENGARR_STREMIO_DEFAULT_LANGUAGE_SCORE` | int | `100` | Score for unknown/undetected languages. |

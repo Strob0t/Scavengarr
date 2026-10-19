@@ -149,7 +149,7 @@ cd Scavengarr
 docker compose up -d
 ```
 
-Compose pulls the published image `ghcr.io/strob0t/scavengarr:latest` (`linux/amd64` and `linux/arm64`, e.g. a Raspberry Pi 4; the plugins are part of it). Then check that it is running:
+Compose pulls the published image `ghcr.io/strob0t/scavengarr:latest` (`linux/amd64` and `linux/arm64`; the plugins are part of it). Then check that it is running:
 
 ```bash
 curl http://localhost:7979/api/v1/healthz

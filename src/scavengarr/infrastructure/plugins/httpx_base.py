@@ -566,8 +566,8 @@ class HttpxPluginBase:
     ) -> str | None:
         """Load *url* in the browser and let httpx go on with its session.
 
-        The browser passes the site's challenge once (seconds; on a Raspberry
-        Pi several); every further page through it would cost that again.
+        The browser passes the site's challenge once (seconds; on the production
+        host several); every further page through it would cost that again.
         The site's cookies and the browser's User-Agent pass the same check
         through httpx, so later requests carry them. The host stays in the
         browser memo while the browser works (parallel requests do not try
@@ -575,7 +575,7 @@ class HttpxPluginBase:
         taken over less than ``_SESSION_TRUST_S`` ago: that site binds its
         clearance to the browser. The solve runs on when the Stremio deadline
         cuts the request that started it, so the next request gets the
-        session (on a Raspberry Pi under load a solve took 20 s).
+        session (on the production host under load a solve took 20 s).
         """
         host = urlparse(url).hostname or ""
         self._mark_cf_blocked(url)

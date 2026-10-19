@@ -2,7 +2,7 @@
 
 ## Why
 
-Production (a Raspberry Pi 4 behind a VPN container) builds its image from GitHub with a Dockerfile that is not in the repository: it fetches `staging` with `ADD <git>#ref`, ships the plugins inside the image while `docker-compose.yml` mounts them, seeds `config.yaml` once, and takes over ten minutes per build. watchtower, which already updates the other containers at 04:00, cannot update a locally built image. Every production round of the last week began with "please rebuild", the deployed commit was invisible (`scavengarr_build_info` names the package version only), and a cached `RUN git clone` layer once kept production on an old commit for weeks. A CI-built image on GHCR for `linux/amd64` and `linux/arm64` makes deploys a `docker compose pull`, lets watchtower do them, and carries its commit.
+The production host (behind a VPN container) builds its image from GitHub with a Dockerfile that is not in the repository: it fetches `staging` with `ADD <git>#ref`, ships the plugins inside the image while `docker-compose.yml` mounts them, seeds `config.yaml` once, and takes over ten minutes per build. watchtower, which already updates the other containers at 04:00, cannot update a locally built image. Every production round of the last week began with "please rebuild", the deployed commit was invisible (`scavengarr_build_info` names the package version only), and a cached `RUN git clone` layer once kept production on an old commit for weeks. A CI-built image on GHCR for `linux/amd64` and `linux/arm64` makes deploys a `docker compose pull`, lets watchtower do them, and carries its commit.
 
 ## What Changes
 

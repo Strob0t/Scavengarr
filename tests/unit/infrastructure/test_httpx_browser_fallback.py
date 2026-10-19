@@ -323,7 +323,7 @@ def _solving_fetcher(session: BrowserSession | None = _SESSION) -> AsyncMock:
 class TestBrowserSessionReuse:
     """After the browser passed a challenge, httpx goes on with its session.
 
-    Every page through the browser costs seconds (on a Raspberry Pi too many
+    Every page through the browser costs seconds (on the production host too many
     for a Stremio request); the site's cookies and the browser's User-Agent
     pass the same check through httpx (measured 2026-10-04 from a VPN IP).
     """
@@ -432,7 +432,7 @@ class TestBrowserSessionReuse:
     async def test_solve_outlives_a_cut_request(self) -> None:
         """A request cut by its Stremio deadline does not abort the browser's
         solve: the next request gets the session (a solve takes seconds, on
-        a Raspberry Pi up to 20 s under load)."""
+        the production host up to 20 s under load)."""
         respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
         route_b = respx.get("https://cf.example/b").respond(200, text="<html>b</html>")
         started, release = asyncio.Event(), asyncio.Event()

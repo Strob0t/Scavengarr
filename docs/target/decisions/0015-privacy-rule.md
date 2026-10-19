@@ -1,7 +1,7 @@
 # 0015: Docs and commit texts tell nothing about what the maintainer watches
 
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 6786e014
 
 ## Context
 
@@ -15,7 +15,7 @@ Docs, OpenSpec texts and commit texts must carry none of these:
 
 - titles or IMDb or Kitsu ids of the maintainer's requests, and request ids;
 - clock times or dates of playbacks and observations;
-- local host names, private network addresses, or the names of the internet provider, of another network service or of a device;
+- local host names, private network addresses, or the names of the internet provider, of another network service or of a device, the production machine's model and its short form included;
 - conclusions about the household, the network or viewing habits.
 
 A placeholder such as "Series A" stands in for a title, and the production machine is "the production host" in every text.
@@ -23,7 +23,7 @@ Durations, counts and build hashes are allowed, and test data and fixtures keep 
 
 ## Consequences
 
-- `tests/unit/infrastructure/test_docs_privacy.py` fails on what a pattern can find: clock times with seconds or in UTC, request ids, local host names, private network numbers, autonomous system numbers and named time zones.
+- `tests/unit/infrastructure/test_docs_privacy.py` fails on what a pattern can find: clock times with seconds or in UTC, request ids, local host names, private network numbers, autonomous system numbers, named time zones and the production machine's device name (in the docs; in code comments once its last two mentions there are gone).
 - What no pattern finds, a title, a date or a habit, stays the writer's and the reviewer's duty.
 - A production reading in a doc names a placeholder, durations and counts instead of a title and a time.
 

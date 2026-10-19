@@ -1,6 +1,6 @@
 ## Context
 
-Scavengarr runs as one uvicorn process on a Raspberry Pi 4 (4 cores, 8 GB) next to Prometheus, Grafana and node-exporter. A Stremio stream request fans out into about 17 plugin searches and 20-40 hoster resolutions; it answers at `resolve_target_count` hosters with a video, when the search and every resolution are done, or at `stream_deadline_seconds` (`docs/plans/round5-measures.md`). Searches are shared per title (single-flight) and cached; a cached answer resolves the other links in the background.
+Scavengarr runs as one uvicorn process on the production host (4 cores, 8 GB) next to Prometheus, Grafana and node-exporter. A Stremio stream request fans out into about 17 plugin searches and 20-40 hoster resolutions; it answers at `resolve_target_count` hosters with a video, when the search and every resolution are done, or at `stream_deadline_seconds` (`docs/plans/round5-measures.md`). Searches are shared per title (single-flight) and cached; a cached answer resolves the other links in the background.
 
 The existing `MetricsCollector` (`infrastructure/metrics.py`) keeps per-plugin averages and the event-loop lag for the JSON endpoint. Analyses of rounds 4 and 5 were built by hand from logs.
 

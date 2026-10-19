@@ -17,7 +17,7 @@ from typing import Protocol
 from selectolax.lexbor import LexborNode
 
 # Pages from this size parse in a worker thread: selectolax took 0.3 ms for
-# 32-64 KiB on x86 (about 1 ms on a Raspberry Pi 4), a thread hop 0.06 ms
+# 32-64 KiB on x86 (about 1 ms on the production host), a thread hop 0.06 ms
 THREAD_PARSE_CHARS = 32 * 1024
 
 
@@ -33,7 +33,7 @@ async def parse_page[P: PageParser](parser: P, html: str) -> P:
     lexbor builds the tree in C without the GIL, and the parser's queries
     on it hand the GIL back every few ms: in a thread the event loop keeps
     running. A 1.3 MB page (burningseries' series list) took 23 ms on x86,
-    several times as long on a Raspberry Pi.
+    several times as long on the production host.
     """
     if len(html) < THREAD_PARSE_CHARS:
         parser.feed(html)

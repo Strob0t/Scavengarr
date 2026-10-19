@@ -109,7 +109,7 @@ class TestRestart:
         assert not _events(logs, "hoster_state_discarded")
 
     async def test_a_snapshot_from_the_future_keeps_its_lifetimes(self) -> None:
-        """A Raspberry Pi has no clock until NTP: a negative downtime counts as 0."""
+        """The production host lacks a clock until NTP: negative downtime is 0."""
         cache = _backend()
         await cache.set(
             _KEY,

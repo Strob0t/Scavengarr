@@ -202,7 +202,7 @@ Only if plugins remain blocked after Phase 2. Built as an option in v0.2.0: own 
 
 ## Phase 4 — httpx goes on with the browser's session (2026-10-04)
 
-Problem: production (Raspberry Pi 4, all traffic through a datacenter VPN) answered kinoger and moflix with nothing. Their sites challenge the VPN IP; after one challenge `_fetch_text()` sent every page of the host through the browser for 30 min (moflix, a Playwright plugin, always runs in the browser). On the production host a browser page costs seconds, so the 10 s Stremio budget ran out before the detail pages.
+Problem: production (all traffic through a datacenter VPN) answered kinoger and moflix with nothing. Their sites challenge the VPN IP; after one challenge `_fetch_text()` sent every page of the host through the browser for 30 min (moflix, a Playwright plugin, always runs in the browser). On the production host a browser page costs seconds, so the 10 s Stremio budget ran out before the detail pages.
 
 Measured from production's VPN IP inside the production container (2026-10-04, one run each):
 

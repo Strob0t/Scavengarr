@@ -303,7 +303,7 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     Idle connections stay open for a minute (up to
     ``_KEEPALIVE_CONNECTIONS``): one stream request talks to 18-42 hosts,
     and with httpx's 5 s default every pause between two requests closed
-    them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi).
+    them all (TLS handshakes were 21% of the Python CPU on the production host).
     A host that does not answer fails after ``_CONNECT_TIMEOUT_S`` instead
     of the full read timeout.
     """

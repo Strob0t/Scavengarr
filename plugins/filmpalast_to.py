@@ -114,7 +114,7 @@ class _DetailPageParser:
     """Parse filmpalast.to detail page for streaming links (selectolax).
 
     The detail pages are ~300 KB: html.parser took 20 ms per page on x86
-    and the largest share of the parsing CPU on a Raspberry Pi.
+    and the largest share of the parsing CPU on the production host.
 
     Structure::
 

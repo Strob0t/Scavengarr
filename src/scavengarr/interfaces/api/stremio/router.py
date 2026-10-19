@@ -647,7 +647,7 @@ def _converter_refused(state: AppState, request: Request) -> bool:
     Stremio Web has its streaming server probe every stream before it plays
     it. An HLS source (format ``hls``) then goes through the server's
     converter, which re-encodes the video: it repackages MP4 and Matroska
-    only. On a Raspberry Pi 4 without a usable hardware encoder 1080p
+    only. On the production host without a usable hardware encoder 1080p
     stuttered at 1-2 cores. A failed probe makes Stremio Web read the
     content type with HEAD and play the playlist itself (hls.js).
     """

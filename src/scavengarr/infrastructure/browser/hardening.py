@@ -1,6 +1,6 @@
 """What keeps the app's Chromium light: launch flags and blocked resources.
 
-On the Raspberry Pi Chromium held 1.7 GB in 15 processes and used 4-9 s of
+On the production host Chromium held 1.7 GB in 15 processes and used 4-9 s of
 CPU per stream request (``docs/archive/plans/pi-performance.md``). Contexts also
 block service workers (``service_workers="block"`` where they are created):
 a site the app visits once would keep one running and caching.

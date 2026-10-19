@@ -2304,7 +2304,7 @@ class TestProxyFileEndpoint:
 class TestProxyLeavesHlsToThePlayer:
     """Stremio Web lets its streaming server probe every stream. An HLS
     source then goes through the server's converter, which re-encodes the
-    video (it repackages MP4 and Matroska only): on a Raspberry Pi 4 too
+    video (it repackages MP4 and Matroska only): on the production host too
     slow for 1080p. The proxy refuses the converter's ffmpeg the playlist,
     and Stremio Web plays it itself."""
 
