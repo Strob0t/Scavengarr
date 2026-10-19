@@ -2,7 +2,7 @@
 
 > **Purpose:** A plugin lists its genuine domains in `_domains`, in fallback order, and the plugin base picks the one that serves the site, because sites move between domains, keep mirrors and get blocked by name.
 > **Status:** current
-> **As of:** 5b4303e4
+> **As of:** 9d2fc4c7
 
 ## Purpose
 
@@ -133,4 +133,3 @@ The plugins' long-term record counts the site checks that found the site down (`
 - `src/scavengarr/infrastructure/captcha/detect.py` (`detect_challenge_headers()`).
 - `src/scavengarr/interfaces/api/torznab/router.py` (the health endpoint).
 - `plugins/boerse.py` (the login fallback).
-- History: [`docs/archive/plans/plugin-domains.md`](../archive/plans/plugin-domains.md) (the domain readings and the official lists), [`docs/archive/plans/filmo-plugin.md`](../archive/plans/filmo-plugin.md).

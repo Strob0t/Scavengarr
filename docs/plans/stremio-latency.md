@@ -2,9 +2,9 @@
 
 > **Purpose:** The Stremio response time and playable streams, with its open investigation.
 > **Status:** plan
-> **As of:** e4b4371c
+> **As of:** 9d2fc4c7
 
-**Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the twelfth (2026-10-11) are appended; the seventh measured how the stealth browser's pages are shared since [browser-page-budget.md](../archive/plans/browser-page-budget.md) (the sixth round's kinoger timeouts did not recur). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
+**Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the twelfth (2026-10-11) are appended; the seventh measured how the stealth browser's pages are shared since the archived plan browser-page-budget (the sixth round's kinoger timeouts did not recur). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
 **Priority:** High (Stremio is the main use case; cold answers take 17–38 s)
 **Related:** `src/scavengarr/application/use_cases/stremio_stream.py`, `application/stremio/plugin_search.py`, `infrastructure/circuit_breaker.py`, `infrastructure/hoster_resolvers/`, `data/config.yaml`
 
@@ -144,7 +144,7 @@ After the config reseed production answers in 10.5–15.4 s. Measured with a scr
 
 ### Fourth round (2026-10-04, production on `staging` 53f2f88)
 
-The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.example.lan` after the performance plan (`docs/archive/plans/pi-performance.md`), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
+The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.example.lan` after the performance plan (the archived plan pi-performance), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
 
 | Pass | Median / max | Streams | Titles without stream |
 |---|---|---|---|
@@ -254,7 +254,7 @@ The fifth round's harness and 17 titles (none in the search cache) against produ
 | 2 (from the search cache) | 0.08 / 0.96 s (1.0 / 4.4 s) | 67 (110) | 0 / 5 of 17 |
 
 - **Answers:** 12 at the target of 5 streams (3.9–22.9 s, median 8.9 s), 5 when the search was done, all at 30.1–32.5 s (Movie L, Movie H, Series D, Series C, Series E with 1–2 streams): they waited for kinoger's plugin timeout.
-- **kinoger** delivered nothing: 13 of 13 searches hit the 30 s plugin timeout, then its breakers for films and series opened (6 searches skipped). Alone in the production container, with a browser of its own, three kinoger searches took 7.9–17.3 s and found results. Every kinoger page goes through the stealth browser (the site binds its Cloudflare clearance to the browser, `kinoger_browser_session_rejected`), and that browser loads 2 pages at a time; since links resolve while plugins search, hoster captures (Dropload, DoodStream's fallback, Filemoon, SuperVideo) take those pages during the search. In the fifth round the resolution started after the search's soft deadline, and kinoger delivered 11 streams in pass 1. Open: how the stealth browser's pages are shared ([browser-page-budget.md](../archive/plans/browser-page-budget.md)).
+- **kinoger** delivered nothing: 13 of 13 searches hit the 30 s plugin timeout, then its breakers for films and series opened (6 searches skipped). Alone in the production container, with a browser of its own, three kinoger searches took 7.9–17.3 s and found results. Every kinoger page goes through the stealth browser (the site binds its Cloudflare clearance to the browser, `kinoger_browser_session_rejected`), and that browser loads 2 pages at a time; since links resolve while plugins search, hoster captures (Dropload, DoodStream's fallback, Filemoon, SuperVideo) take those pages during the search. In the fifth round the resolution started after the search's soft deadline, and kinoger delivered 11 streams in pass 1. Open: how the stealth browser's pages are shared (the archived plan browser-page-budget).
 - **CPU and lag:** 3.8 s of Python and 27 s of container CPU (Chromium, Xvfb) per title in pass 1; the search now runs to its end and links resolve while it runs, so a title costs more than before (the fifth round's profile of 3 titles: 2.5 s Python, 6.7 s Chromium per request, measured differently). Event-loop lag p99 / max 194 / 1124 ms under the host load (fifth round's profile: 73 / 224 ms).
 - **Health check:** megakino_to and movie4k (still down) were skipped in 17 of 17 searches.
 - **Hosters:** breakers open for Filemoon (37 links skipped), Dropload (32) and SuperVideo (20; its half-open probes report as designed). DoodStream 13 streams (fifth round 9), VOE 25 resolved and 17 failed, Vidmoly 10.
@@ -329,7 +329,7 @@ The same command against production (`--base https://scavengarr.example.lan --in
 Titles without stream: 2 of 19 (first answer), 2 of 19 (cached answer); max first answer 30.0 s.
 CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 
-- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Series D S01E01, Series C, Series F, Series E): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Series C found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Series E kept 1 result (sto's), whose 2 links failed to resolve (`serienstream_invalid_url`). Both readings in [title-matching.md](../archive/plans/title-matching.md): the queries and the matcher are not the cause.
+- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Series D S01E01, Series C, Series F, Series E): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Series C found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Series E kept 1 result (sto's), whose 2 links failed to resolve (`serienstream_invalid_url`). Both readings in the archived plan title-matching: the queries and the matcher are not the cause.
 - **kinoger** works in production again: in the round's hour 48 search pages (27 with results), 12 saved Cloudflare clearances, 7 hoster resolutions of its links succeeded and 4 were cut at the resolve timeout; one detail page timed out. The sixth round's 13 of 13 timeouts did not recur.
 - **Play check** from the dev container: 43 of 71 streams playable (dev server 73 of 75). Examined afterwards (finding 15, below).
 

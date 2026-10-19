@@ -8,7 +8,7 @@
 Copy this file to `docs/target/decisions/NNNN-<slug>.md` with the next free number and a lower-case slug.
 One decision per record; a record is never rewritten to say something else: a new record supersedes it.
 Write one sentence per line, present tense for what holds, "must" for rules.
-No dates, row ids or measurements here: the evidence stays in the archive file the References name.
+No dates or row ids here; a measurement the decision rests on is carried as its number, and the rest of the history is read from git.
 Delete this comment in the copy.
 -->
 
@@ -38,4 +38,3 @@ accepted
 ## References
 
 - The modules, specs and current docs that implement the decision.
-- The archive file with the evidence.

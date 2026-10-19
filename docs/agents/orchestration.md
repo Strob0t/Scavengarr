@@ -2,11 +2,11 @@
 
 > **Purpose:** The three sessions' roles, working rules, worktrees, production access and the maintainer's standing decisions.
 > **Status:** reference
-> **As of:** 22fb988b
+> **As of:** 9d2fc4c7
 
 The maintainer runs three Claude Code sessions on this repository: an advisor that plans, dispatches and reviews (Mr. Fable) and two coders (Ultracode and Mr. Normal).
 This document holds the rules they work by.
-The work queue is [`docs/backlog.md`](../backlog.md); the rows done before the queue was cut are in [`docs/archive/backlog-2026-10.md`](../archive/backlog-2026-10.md).
+The work queue is [`docs/backlog.md`](../backlog.md); the rows done before the queue was cut are in the git history ([`docs/README.md`](../README.md#history)).
 
 ## Roles
 
@@ -69,5 +69,5 @@ Decisions with an architectural rule live in [`docs/target/decisions/`](../targe
 ## References
 
 - [`AGENTS.md`](../../AGENTS.md) §1 (workflow), §8 (subagents), §9 (dev container)
-- [`docs/backlog.md`](../backlog.md) and [`docs/archive/backlog-2026-10.md`](../archive/backlog-2026-10.md)
+- [`docs/backlog.md`](../backlog.md)
 - [`docs/how-to/operations.md`](../how-to/operations.md) and [`docs/how-to/deploy.md`](../how-to/deploy.md)

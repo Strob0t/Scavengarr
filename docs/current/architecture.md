@@ -2,7 +2,7 @@
 
 > **Purpose:** This document maps the modules of `src/scavengarr/` to their layers, follows a Torznab search and a Stremio stream request through them, and gives the order in which the app starts and stops.
 > **Status:** current
-> **As of:** 54ee500c
+> **As of:** 9d2fc4c7
 
 ## Purpose
 
@@ -478,4 +478,3 @@ The docs overhaul will move the remaining feature docs into `docs/current/`, `do
 - `src/scavengarr/interfaces/composition.py`, `src/scavengarr/interfaces/app.py` and `src/scavengarr/interfaces/cli/__main__.py`: the composition root, the app factory and the entry point.
 - `src/scavengarr/application/stremio/plugin_search.py`, `src/scavengarr/application/stremio/title_search.py` and `src/scavengarr/application/stremio/resolution.py`: the Stremio search and resolution timing.
 - `src/scavengarr/infrastructure/graceful_shutdown.py`: the drain; Uvicorn's `Server.shutdown()` in the installed package: its wait.
-- [`docs/archive/refactor/clean-architecture-migration.md`](../archive/refactor/clean-architecture-migration.md): the migration to the four layers.

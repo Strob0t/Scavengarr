@@ -99,7 +99,7 @@ src/scavengarr/
 plugins/            # one Python file per site (42 plugins)
 scripts/            # maintenance scripts (e.g. plugin list generator)
 tests/              # unit, integration, E2E, live tests and benchmarks
-docs/               # docs index, current, target (decision records), how-to, reference (generated lists), plans, archive
+docs/               # docs index, current, target (decision records), how-to, reference (generated lists), plans
 data/config.yaml    # default configuration (mounted by Docker Compose)
 ```
 

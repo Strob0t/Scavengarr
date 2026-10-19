@@ -2,17 +2,16 @@
 
 > **Purpose:** What Scavengarr does once a page shows a challenge or a captcha.
 > **Status:** plan
-> **As of:** ebad43ac
+> **As of:** 9d2fc4c7
 
 **Status:** Decided (the maintainer): R1 with R7, R2, and R4 with R5 become backlog rows 89 to 91; R3 is not chosen; R6, R8 and R9 wait for the numbers ([Decision and Expected Gain](#decision-and-expected-gain-2026-10-12)). R4 is built (row 91, OpenSpec `keep-capture-state`, 2026-10-12).
 
 **Request:** the maintainer's: after the release v0.4.0, research reactive approaches to Cloudflare challenges and captchas and document them.
 
 **Related:**
-- [captcha-solving.md](../archive/plans/captcha-solving.md): round 1, done 2026-09-29. One detector, the chain httpx → own browser → optional sidecar, and clearance cookies that survive a restart.
-- [antibot-patchright.md](../archive/plans/antibot-patchright.md), [cloudflare-solvers.md](../archive/plans/cloudflare-solvers.md), [browser-page-budget.md](../archive/plans/browser-page-budget.md).
-- [filmo-plugin.md](../archive/plans/filmo-plugin.md): Filemoon on the production host.
-- [header-bound-hosters.md](../archive/plans/header-bound-hosters.md): Dropload and Vixeo on the production host.
+- [`docs/current/browser-and-challenges.md`](../current/browser-and-challenges.md): round 1 (the archived plan captcha-solving, done 2026-09-29): one detector, the chain httpx → own browser → optional sidecar, and clearance cookies that survive a restart; the archived plans antibot-patchright, cloudflare-solvers and browser-page-budget.
+- [`docs/current/hoster-resolvers.md`](../current/hoster-resolvers.md): Filemoon, Dropload and Vixeo on the production host (the archived plans filmo-plugin and header-bound-hosters).
+- The archived plans are read from git: [`docs/README.md`](../README.md#history).
 
 Reactive means what Scavengarr does once a page shows a challenge or a captcha, not how it avoids one; round 1 and the Patchright work cover avoiding.
 

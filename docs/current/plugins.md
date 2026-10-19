@@ -2,7 +2,7 @@
 
 > **Purpose:** A plugin knows how to search one site and returns normalised `SearchResult` objects.
 > **Status:** current
-> **As of:** e238c723
+> **As of:** 9d2fc4c7
 
 ## Purpose
 
@@ -314,4 +314,3 @@ Both are described in [Observability](observability.md).
 - Bases and helpers: `src/scavengarr/infrastructure/plugins/httpx_base.py`, `src/scavengarr/infrastructure/plugins/playwright_base.py`, `src/scavengarr/infrastructure/plugins/data_api.py`, `src/scavengarr/infrastructure/plugins/xenforo.py`, `src/scavengarr/infrastructure/plugins/categories.py`, `src/scavengarr/infrastructure/plugins/relevance.py`, `src/scavengarr/infrastructure/plugins/episodes.py`, `src/scavengarr/infrastructure/plugins/episode_index.py`.
 - Selection: `src/scavengarr/application/stremio/plugin_selection.py`, `src/scavengarr/application/stremio/plugin_search.py`, `src/scavengarr/infrastructure/plugins/health_monitor.py`.
 - Scoring: `src/scavengarr/infrastructure/scoring/scheduler.py`, `src/scavengarr/infrastructure/scoring/health_prober.py`, `src/scavengarr/infrastructure/scoring/search_prober.py`, `src/scavengarr/infrastructure/scoring/query_pool.py`, `src/scavengarr/infrastructure/scoring/ewma.py`, `src/scavengarr/infrastructure/persistence/plugin_score_cache.py`.
-- History: [`docs/archive/plans/title-matching.md`](../archive/plans/title-matching.md) (the metadata convention), [`docs/archive/plans/series-episodes.md`](../archive/plans/series-episodes.md) (the s.to season rows), [`docs/archive/plans/sto-linkout.md`](../archive/plans/sto-linkout.md) (the link-out gate).

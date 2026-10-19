@@ -5,7 +5,7 @@ Cloudflare (``cf_clearance``), DDoS-Guard (``__ddg*``) and the HostAdmin WAF
 memory, so a restart used to cost one challenge per protected host. The store
 keeps just these cookies in the cache (``CachePort``, diskcache or Redis) until
 they expire and puts them into every new browser context
-(docs/archive/plans/captcha-solving.md, decision B3).
+(docs/current/browser-and-challenges.md).
 
 The cookies stay valid only for the same browser (User-Agent/TLS) and IP, and
 for ~20–45 min; a stale one merely costs a new challenge.

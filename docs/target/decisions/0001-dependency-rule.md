@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why source code depends inward only.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
@@ -44,4 +44,3 @@ accepted
 - [`docs/target/architecture.md`](../architecture.md): the rule table, the layer graph, the layer contracts and the invariants.
 - [`docs/current/architecture.md`](../../current/architecture.md): the module map per layer and the composition root's order.
 - `src/scavengarr/interfaces/composition.py`: the composition root.
-- [`docs/archive/refactor/clean-architecture-migration.md`](../../archive/refactor/clean-architecture-migration.md): the migration that introduced the layers, with its motivation.

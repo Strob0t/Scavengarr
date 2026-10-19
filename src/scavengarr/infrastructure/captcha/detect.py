@@ -1,7 +1,7 @@
 """Classify bot challenges and captchas in an HTTP response.
 
 One classification for every plugin, resolver and prober, so logs and
-scoring speak the same language (docs/archive/plans/captcha-solving.md, requirement 1).
+scoring speak the same language (docs/current/browser-and-challenges.md).
 
 Page blocks (the whole response is a challenge) win over embedded widgets
 (a normal page that contains a captcha form). In a browser, the frames a

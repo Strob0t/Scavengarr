@@ -6,7 +6,8 @@ Usage (against a running container):
         [--connect-to app.example.lan:192.0.2.10] [--py-spy] [IDS]
 
 IDS are Stremio ids (``movie/tt0816692``, ``series/tt0903747:1:2``); without
-them the baseline set of ``docs/archive/plans/pi-performance.md`` is measured. Per id
+them the baseline set of ``docs/how-to/performance-measurement.md`` is measured.
+Per id
 it prints:
 
 - the request's wall time;
@@ -48,7 +49,7 @@ from urllib.parse import urlparse
 import httpx
 from portainer import Portainer, credentials
 
-# The titles of the 2026-10-04 baseline (docs/archive/plans/pi-performance.md)
+# The titles of the baseline (docs/how-to/performance-measurement.md)
 BASELINE_IDS = ("movie/tt0816692", "series/tt0903747:1:2", "movie/tt0133093")
 
 # CPU seconds of the container's Python and Chromium processes, as JSON

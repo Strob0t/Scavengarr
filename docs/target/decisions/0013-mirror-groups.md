@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why mirror sites form a group, and a Stremio request asks one of them.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
@@ -37,4 +37,3 @@ accepted
 - `src/scavengarr/application/stremio/plugin_search.py`: `_one_per_mirror_group()`.
 - `src/scavengarr/interfaces/composition.py`: the groups, read from the plugins' `mirror_group`.
 - [`docs/current/plugins.md`](../../current/plugins.md#plugin-selection-for-a-stremio-request): the mirror groups as a Stremio request applies them.
-- [`docs/archive/plans/next-steps.md`](../../archive/plans/next-steps.md): the evidence of one database and the decision.

@@ -2,7 +2,7 @@
 
 > **Purpose:** A hoster resolver checks a hoster link of a plugin's result, the embed page of a streaming hoster or the file page of a direct-download hoster, and for a streaming hoster turns it into a playable video URL with the headers its CDN wants.
 > **Status:** current
-> **As of:** 54ee500c
+> **As of:** 9d2fc4c7
 
 ## Purpose
 
@@ -345,4 +345,4 @@ Its strategies, in order:
 - Tests: `tests/unit/infrastructure/test_hoster_registry.py`, `tests/unit/infrastructure/test_check_playable.py`, `tests/unit/infrastructure/test_verify_video_url.py`, `tests/unit/infrastructure/test_xfs_resolver.py`, `tests/unit/infrastructure/test_generic_ddl_resolver.py`, `tests/live/test_resolver_live.py`.
 - Specs: [`openspec/specs/hoster-resolution-persistence/spec.md`](../../openspec/specs/hoster-resolution-persistence/spec.md).
 - Decisions: [0009](../target/decisions/0009-pass-keeper-demand-bound.md), [0011](../target/decisions/0011-own-scripts-only-captures.md), [0012](../target/decisions/0012-challenge-outside-the-breaker.md), [0014](../target/decisions/0014-resolver-state-snapshot.md).
-- History: [`docs/archive/plans/header-bound-hosters.md`](../archive/plans/header-bound-hosters.md), [`docs/archive/plans/code-review-2026-10-12.md`](../archive/plans/code-review-2026-10-12.md), [`docs/plans/challenge-reactions.md`](../plans/challenge-reactions.md).
+- The open challenge work: [`docs/plans/challenge-reactions.md`](../plans/challenge-reactions.md).

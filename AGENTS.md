@@ -205,5 +205,4 @@ How to set it up and work in it, with the details behind each rule: [`docs/how-t
 | Contributor guide (project layout), Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
 | Production diagnostics | `scripts/prodctl.py`, `scripts/probes/`, `scripts/portainer.py`, `scripts/digest.py` |
 | Docs (index: `docs/README.md`) | `docs/current/` (architecture: `docs/current/architecture.md`), `docs/target/` (`docs/target/architecture.md`, decisions: `docs/target/decisions/`), `docs/how-to/`, `docs/reference/` (settings: `docs/reference/configuration.md`), `docs/plans/`, `docs/agents/`, the queue `docs/backlog.md` |
-| Archive (closed plans, refactor history) | `docs/archive/` (index: `docs/archive/README.md`) |
 | OpenSpec change specs | `openspec/changes/` |

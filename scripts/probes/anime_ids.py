@@ -1,7 +1,8 @@
 """Anime ids spike: what a ``kitsu:`` request maps to, and what the sites find.
 
-``probe anime_ids [KITSU_ID[:EPISODE] ...]`` (default: the ten titles of
-``docs/archive/plans/anime-ids-spike.md``; no episode: a movie) prints per title:
+``probe anime_ids [KITSU_ID[:EPISODE] ...]`` (default: the ten titles that
+decided ``docs/target/decisions/0002-anime-ids-from-the-kitsu-addon.md``; no
+episode: a movie) prints per title:
 
 - Kitsu's entry (subtype, year, romaji and English title, mapping sites, the
   ``thetvdb/season`` id) and its episode record (``seasonNumber``,

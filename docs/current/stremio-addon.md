@@ -2,7 +2,7 @@
 
 > **Purpose:** The Stremio addon answers a Stremio player's request for the streams of a movie or an episode with the links Scavengarr's plugins find, resolved by its hoster resolvers and ranked.
 > **Status:** current
-> **As of:** 19b7e2c8
+> **As of:** 9d2fc4c7
 
 ## Purpose
 
@@ -474,7 +474,7 @@ The anime ids log `anime_id_translated`, `anime_kitsu_number`, `anime_id_lookup_
 
 ## Target
 
-- The open Stremio work is in [the backlog](../archive/backlog-2026-10.md).
+- The open Stremio work is in [the backlog](../backlog.md).
 - [The Stremio latency plan](../plans/stremio-latency.md) counts the stale answers without a stream, and its numbers will decide whether a stale answer needs a change.
 
 ## References
@@ -485,4 +485,3 @@ The anime ids log `anime_id_translated`, `anime_kitsu_number`, `anime_id_lookup_
 - Adapters: `src/scavengarr/infrastructure/anime/resolver.py`, `src/scavengarr/infrastructure/anime/kitsu_addon.py`, `src/scavengarr/infrastructure/anime/id_lists.py`, `src/scavengarr/infrastructure/stremio/cinemeta.py`, `src/scavengarr/infrastructure/stremio/title_matcher.py`, `src/scavengarr/infrastructure/stremio/episode_filter.py`, `src/scavengarr/infrastructure/stremio/stream_converter.py`, `src/scavengarr/infrastructure/stremio/stream_sorter.py`, `src/scavengarr/infrastructure/stremio/release_parser.py`, `src/scavengarr/infrastructure/stremio/hls_proxy.py`, `src/scavengarr/infrastructure/persistence/stream_link_cache.py`, `src/scavengarr/infrastructure/tmdb/client.py`, `src/scavengarr/infrastructure/tmdb/imdb_fallback.py`, `src/scavengarr/infrastructure/circuit_breaker.py`.
 - Specs: `openspec/specs/stremio-search-continuation/spec.md`, `openspec/specs/stremio-file-proxy/spec.md`, `openspec/specs/stremio-anime-ids/spec.md`, `openspec/specs/stremio-anime-episodes/spec.md`, `openspec/specs/stremio-series-identity/spec.md`.
 - Tests: `tests/unit/application/test_stremio_stream.py`, `tests/unit/application/test_title_search.py`, `tests/unit/application/test_search_cache.py`, `tests/unit/infrastructure/test_hls_proxy.py`, `tests/e2e/test_stremio_endpoint.py`.
-- History: [`docs/archive/plans/title-matching.md`](../archive/plans/title-matching.md), [`docs/archive/plans/series-episodes.md`](../archive/plans/series-episodes.md), [`docs/archive/plans/anime-ids-spike.md`](../archive/plans/anime-ids-spike.md), [`docs/archive/plans/pi-performance.md`](../archive/plans/pi-performance.md), [`docs/archive/plans/stremio-stream-split.md`](../archive/plans/stremio-stream-split.md), [`docs/archive/plans/header-bound-hosters.md`](../archive/plans/header-bound-hosters.md), [`docs/archive/plans/vidhide-segments.md`](../archive/plans/vidhide-segments.md).

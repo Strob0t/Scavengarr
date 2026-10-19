@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why a plugin's search gets 30 s, and the answer waits for its target.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
@@ -39,5 +39,4 @@ accepted
 - `src/scavengarr/application/stremio/plugin_search.py`: the timeout per plugin.
 - `src/scavengarr/application/stremio/resolution.py`: when the answer is due.
 - [`docs/reference/configuration.md`](../../reference/configuration.md): the settings.
-- [`docs/archive/plans/round5-measures.md`](../../archive/plans/round5-measures.md): the measures and the maintainer's decision.
 - [`docs/plans/stremio-latency.md`](../../plans/stremio-latency.md): the request times before and after.

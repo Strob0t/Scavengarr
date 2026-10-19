@@ -1,7 +1,7 @@
 #!/bin/sh
 # Container entrypoint: start a virtual display for the headful browser
 # (Cloudflare Turnstile rejects headless Chromium, see
-# docs/archive/plans/antibot-patchright.md), then exec the app so it stays the
+# docs/current/browser-and-challenges.md), then exec the app so it stays the
 # signal recipient (graceful shutdown on SIGTERM). Not xvfb-run: that
 # wrapper does not forward SIGTERM to the app.
 set -e

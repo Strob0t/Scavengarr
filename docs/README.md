@@ -2,7 +2,7 @@
 
 > **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 The one index of the documentation: one line per document with its status.
 
@@ -35,7 +35,6 @@ The `how-to` guides work with the `current` documents and look up the `reference
 ## The state
 
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
-Open in the docs: the production machine's device name in two code comments, the alternatives in every decision record, and the archive's removal in favour of the git history.
 Open in the hoster resolvers and the browser: Filemoon's cold capture on the production host, its captcha pass kept warm, and sto's link-outs through the resolvers.
 Open in the plugins: a search page's network failure that stays a failure in the plugin record, first in the base and then in the httpx plugins, and a plugin for the public broadcasters' media libraries.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
@@ -44,7 +43,7 @@ The rows behind each item are in [`backlog.md`](backlog.md), and the row that op
 
 Agents read [`AGENTS.md`](../AGENTS.md) first: it holds the rules for every change.
 To learn how a part works now, read its `current` document; to learn what must hold, read the `target` documents and the decision records.
-The `plan` documents and the archive are history and work in progress, not a description of the code.
+The `plan` documents are work in progress, not a description of the code, and the history is in git.
 Every new or moved document adds its own line here, and every document follows the rules at the end of this file.
 
 | Status | Meaning |
@@ -54,7 +53,6 @@ Every new or moved document adds its own line here, and every document follows t
 | how-to | The steps of one task. |
 | reference | Lookup tables, generated where a script can produce them. |
 | plan | Open work and its evidence. |
-| archived | History, kept unchanged; the archive index names its successor. |
 
 ## What Scavengarr does
 
@@ -165,54 +163,30 @@ One line per feature, with the document that describes it.
 
 ## Plans
 
-Open plans stay in `docs/plans/`; a closed plan moves to the archive with its outcome.
+Open plans stay in `docs/plans/`; a closed plan is deleted once its outcome is in its successor document ([History](#history)).
 
 | Document | Status | What it holds |
 |---|---|---|
 | [`plans/docs-overhaul.md`](plans/docs-overhaul.md) | plan (open) | The target layout of these docs, the document contract and the steps to get there. |
 | [`backlog.md`](backlog.md) | plan | The open rows of the work queue and the ideas not yet taken up; a coder's hashes and Mr. Fable's acceptance go on the row's line |
 | [`agents/orchestration.md`](agents/orchestration.md) | reference | The three sessions' roles, working rules, worktrees, production access and the maintainer's standing decisions |
-| [`archive/backlog-2026-10.md`](archive/backlog-2026-10.md) | archived | The backlog before the cut: findings, ideas, decisions, the working rules and the order of the work. |
 | [`plans/challenge-reactions.md`](plans/challenge-reactions.md) | plan (open) | What Scavengarr does once a page shows a challenge or a captcha. |
 | [`plans/stremio-latency.md`](plans/stremio-latency.md) | plan (open) | The Stremio response time and playable streams, with its open investigation. |
 
-## Archive
+## History
 
-| Document | Status | What it holds |
-|---|---|---|
-| [`archive/README.md`](archive/README.md) | reference | The archive index: each file, what it was, its outcome and its successor. |
-| [`archive/refactor/clean-architecture-migration.md`](archive/refactor/clean-architecture-migration.md) | archived | The migration from a flat codebase to the four layers. |
-| [`archive/refactor/pydantic-domain-removal.md`](archive/refactor/pydantic-domain-removal.md) | archived | The removal of Pydantic from the domain layer. |
-| [`archive/refactor/german-english-translation.md`](archive/refactor/german-english-translation.md) | archived | The translation of the codebase from German to English. |
-| [`archive/plans/anime-ids-spike.md`](archive/plans/anime-ids-spike.md) | archived | Where the anime ids of a `kitsu:` request come from. |
-| [`archive/plans/antibot-patchright.md`](archive/plans/antibot-patchright.md) | archived | Patchright, the Turnstile solver and the browser fallback of httpx plugins. |
-| [`archive/plans/browser-page-budget.md`](archive/plans/browser-page-budget.md) | archived | Which request gets a stealth browser page, and how many pages there are. |
-| [`archive/plans/captcha-solving.md`](archive/plans/captcha-solving.md) | archived | The challenge detector, grab-time links and the clearance cookies. |
-| [`archive/plans/cloudflare-solvers.md`](archive/plans/cloudflare-solvers.md) | archived | FlareSolverr and other Cloudflare solvers against Scavengarr's own stack. |
-| [`archive/plans/code-review-2026-10-12.md`](archive/plans/code-review-2026-10-12.md) | archived | A code review of the commits since a release, with its owners. |
-| [`archive/plans/code-review-fixes.md`](archive/plans/code-review-fixes.md) | archived | The fixes of the first full code review, in four waves. |
-| [`archive/plans/cuii-coverage.md`](archive/plans/cuii-coverage.md) | archived | The CUII block list against the plugins and hoster resolvers. |
-| [`archive/plans/filmo-plugin.md`](archive/plans/filmo-plugin.md) | archived | The filmo plugin and its official domain list. |
-| [`archive/plans/header-bound-hosters.md`](archive/plans/header-bound-hosters.md) | archived | Hosters whose CDN binds a video URL to the player's headers. |
-| [`archive/plans/integration-tests.md`](archive/plans/integration-tests.md) | archived | The integration, E2E and live smoke tests. |
-| [`archive/plans/more-plugins.md`](archive/plans/more-plugins.md) | archived | The plugin inventory and the remaining candidates. |
-| [`archive/plans/next-steps.md`](archive/plans/next-steps.md) | archived | An early project status and its prioritised next steps. |
-| [`archive/plans/optimization-options.md`](archive/plans/optimization-options.md) | archived | Where a stream request's time went, and the options to cut it. |
-| [`archive/plans/pi-performance.md`](archive/plans/pi-performance.md) | archived | The performance baseline of the production host, the measures and their effect. |
-| [`archive/plans/playwright-engine.md`](archive/plans/playwright-engine.md) | archived | The browser pool and its resource management. |
-| [`archive/plans/plugin-domains.md`](archive/plans/plugin-domains.md) | archived | The domains of the megakino_to and movie4k plugins. |
-| [`archive/plans/plugin-repair.md`](archive/plans/plugin-repair.md) | archived | The repair of broken plugins. |
-| [`archive/plans/round5-measures.md`](archive/plans/round5-measures.md) | archived | The measures after the fifth end-to-end Stremio check. |
-| [`archive/plans/search-caching.md`](archive/plans/search-caching.md) | archived | The search result cache and its `X-Cache` header. |
-| [`archive/plans/series-episodes.md`](archive/plans/series-episodes.md) | archived | What the episode filter does with each plugin's series results. |
-| [`archive/plans/sto-linkout.md`](archive/plans/sto-linkout.md) | archived | How sto's link-outs reach the resolvers, and how the plugin opens them. |
-| [`archive/plans/stremio-stream-split.md`](archive/plans/stremio-stream-split.md) | archived | The split of the Stremio stream use case along its phases. |
-| [`archive/plans/title-matching.md`](archive/plans/title-matching.md) | archived | Title matching for short and German series titles. |
-| [`archive/plans/vidhide-segments.md`](archive/plans/vidhide-segments.md) | archived | VidHide's HLS segments behind the proxy. |
+The git history holds every earlier state of the docs, the closed plans and the old backlog included; no folder keeps them.
+A closed plan or record is deleted with the row that closes it, after the numbers a decision or a current doc rests on are carried into that document.
+
+| Command | What it shows |
+|---|---|
+| `git log --oneline -- <path>` | The commits that changed a document. |
+| `git log --diff-filter=D --name-only --oneline -- docs` | The deleted documents, each under the commit that deleted it. |
+| `git show <commit>^:<path>` | A deleted document as it was before that commit. |
 
 ## Documentation rules
 
-Every document under `docs/` outside the archive starts with its title and a status block:
+Every document under `docs/` starts with its title and a status block:
 
 ```markdown
 # <Title>
@@ -224,15 +198,14 @@ Every document under `docs/` outside the archive starts with its title and a sta
 
 A `current` document's purpose line is the first sentence of its Purpose section, and a decision record's says what it records.
 A generated reference file names its generator in its purpose line and carries no further status lines; a reference file with generated tables names the generator there too and keeps them.
-An archived document keeps its text and gets `> **Status:** archived` plus `> **Superseded by:** <path>`.
 
 Sections in a fixed order per kind:
 
 | Kind | Sections |
 |---|---|
-| `current/` | Purpose · How it works (with a Mermaid diagram where a flow or state machine exists) · Configuration (a link into `reference/configuration.md`, no copied tables) · Observability (a link into `reference/metrics.md`) · Limits · Target (the open rows and specs, as links) · References (modules, specs, archive files) |
+| `current/` | Purpose · How it works (with a Mermaid diagram where a flow or state machine exists) · Configuration (a link into `reference/configuration.md`, no copied tables) · Observability (a link into `reference/metrics.md`) · Limits · Target (the open rows and specs, as links) · References (modules, specs) |
 | `target/` | Rule · Rationale · Consequences · Exceptions · References |
-| `target/decisions/` | Context · Decision · Consequences · Alternatives (the options not taken and why, or that none is on record) · Status (accepted, superseded by NNNN) · References (the archive file with the evidence) |
+| `target/decisions/` | Context · Decision · Consequences · Alternatives (the options not taken and why, or that none is on record) · Status (accepted, superseded by NNNN) · References (the modules, specs and current docs that implement it) |
 | `how-to/` | Goal · Prerequisites · Steps · Verify · Troubleshooting |
 | `reference/` | generated tables where possible; otherwise the lookup tables with one line per entry |
 
@@ -240,7 +213,7 @@ Style, the same for every document:
 
 - English; present tense for current behaviour; "must" for rules; "will" only in Target sections.
 - The privacy rule (AGENTS.md §1): no clock times or dates of observations, no request ids, no titles or ids of the maintainer's requests, no LAN, ISP, VPN or device names; durations, counts and build hashes are the evidence.
-- No backlog ids ("row 106", "finding 11", "N1", "R2") and no dated asides outside `docs/backlog.md`, `docs/plans/` and the archive: a current doc states the behaviour, the archive index states where it came from.
+- No backlog ids ("row 106", "finding 11", "N1", "R2") and no dated asides outside `docs/backlog.md` and `docs/plans/`: a current doc states the behaviour, the git history states where it came from.
 - One sentence per line in paragraphs (semantic line breaks: small diffs, exact edits); a table cell holds at most one sentence, longer content becomes a paragraph or a list under the table.
 - Headings to H3; one H1; paths, settings and symbols in backticks; a current doc with a flow or state machine has at least one Mermaid diagram, and the diagram and the prose say the same thing; no ASCII boxes.
 - Fixed terms: the production host, the dev container, the maintainer, a request, a search, a capture, a pass, a challenge, a mirror group, the answer budget, the plugin timeout; "CrawlJob" for the entity, `.crawljob` for the file.

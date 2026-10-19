@@ -2,13 +2,14 @@
 
 > **Purpose:** Records why captures that opt in load only their page's own scripts.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
 On the production host the players of Filemoon and Vixeo load an ad network's script that takes every click and opens a popup, and the player never starts its stream.
 Where the ad script fails to load, the same players play.
-With the ad script blocked in a capture on the production host, the player started its stream again.
+Without the block every click opened a popup: three clicks, three popups, in both runs.
+With the ad script blocked, a capture on the production host found its playlist in 6.9 s.
 A list of ad domains would go stale, since the ad network switches domains, and a DNS blocklist lies outside the app and also blocks hoster domains.
 
 ## Decision
@@ -39,5 +40,3 @@ accepted
 
 - `src/scavengarr/infrastructure/browser/stealth_pool.py`: `_foreign_script()` and the capture's route.
 - `src/scavengarr/infrastructure/hoster_resolvers/filemoon.py` and `src/scavengarr/infrastructure/hoster_resolvers/vixeo.py`: the resolvers that opt in.
-- [`docs/archive/plans/filmo-plugin.md`](../../archive/plans/filmo-plugin.md): the evidence for Filemoon on the production host.
-- [`docs/archive/plans/header-bound-hosters.md`](../../archive/plans/header-bound-hosters.md): the evidence for Vixeo and for Cloudflare's challenge host.

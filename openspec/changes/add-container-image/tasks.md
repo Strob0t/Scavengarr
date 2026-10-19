@@ -13,5 +13,5 @@
 ## 3. Compose and docs
 
 - [x] 3.1 `docker-compose.yml`: `image: ghcr.io/<owner>/scavengarr:latest` as default, `build:` commented as the alternative, the plugins mount commented as an override, the config and cache volumes as before.
-- [x] 3.2 README (install: pull, tags, watchtower note), `docs/how-to/deploy.md` (deployment section: image, volumes, seeding, `SCAVENGARR_*` variables unchanged), AGENTS.md §1 (release tag after the merge), `docs/archive/backlog-2026-10.md` (I7 row), `CHANGELOG.md`.
+- [x] 3.2 README (install: pull, tags, watchtower note), `docs/how-to/deploy.md` (deployment section: image, volumes, seeding, `SCAVENGARR_*` variables unchanged), AGENTS.md §1 (release tag after the merge), the archived backlog (I7 row), `CHANGELOG.md`.
 - [x] 3.3 Production example for the maintainer in `docs/how-to/deploy.md` ("Behind a VPN container"): the service block with `image`, `network_mode: service:<vpn>`, the two volumes, and the watchtower label; nothing from their compose copied.

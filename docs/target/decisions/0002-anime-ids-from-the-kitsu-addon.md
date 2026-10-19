@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why anime ids come from the Anime Kitsu addon, with Fribb's list as the fallback.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
@@ -12,6 +12,8 @@ Four sources were weighed: the Anime Kitsu addon, the public id lists (Fribb's a
 The addon places every episode of an entry in IMDb's count.
 The lists agree with the addon where they place an entry, but they leave a long-running series in its absolute count.
 Kitsu's API places no episode, and TMDB's lookup needs an API key.
+Over ten titles, Kitsu's own mappings carried a TheTVDB id for 2 and a season mapping for none, while the addon mapped all ten and placed every episode.
+The resolver built on the addon translates 10 of the 10 titles.
 
 ## Decision
 
@@ -44,4 +46,3 @@ accepted
 - `src/scavengarr/domain/ports/anime_ids.py`: the `AnimeIdResolverPort`.
 - [`openspec/specs/stremio-anime-ids/spec.md`](../../../openspec/specs/stremio-anime-ids/spec.md): the requirements.
 - [`openspec/changes/archive/2026-10-12-add-anime-ids/design.md`](../../../openspec/changes/archive/2026-10-12-add-anime-ids/design.md): the design and its alternatives.
-- [`docs/archive/plans/anime-ids-spike.md`](../../archive/plans/anime-ids-spike.md): the evidence on the four sources and the maintainer's choice.

@@ -2,7 +2,7 @@
 
 > **Purpose:** Measuring stream requests, a playback under load and the title set before and after a change.
 > **Status:** how-to
-> **As of:** d8f375bc
+> **As of:** 9d2fc4c7
 
 ## Goal
 
@@ -112,5 +112,4 @@ The groups run one after another with a pause in between (default 120 s), since 
 ## References
 
 - `scripts/stremio_profile.py`, `scripts/playback_under_load.py`, `scripts/stremio_round.py`, `scripts/stremio_playcheck.py`, `scripts/stremio_measure.py`.
-- [The production host's performance record](../archive/plans/pi-performance.md): the baseline and the playback tables these scripts fill.
 - [Operations](operations.md): `prodctl.py probe links` for a stream id.

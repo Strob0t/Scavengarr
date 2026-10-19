@@ -32,7 +32,7 @@
 ## 4. Docs
 
 - [x] 4.1 `docs/current/hoster-resolvers.md`: what a capture keeps and when.
-- [x] 4.2 `docs/archive/plans/captcha-solving.md`: B3's clearance cookies now with the capture state.
+- [x] 4.2 the archived plan captcha-solving: B3's clearance cookies now with the capture state.
 - [x] 4.3 `CHANGELOG.md` under `## Unreleased (staging)`.
 
 ## 5. The browser starts with the app (backlog row 93)

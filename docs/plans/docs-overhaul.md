@@ -2,7 +2,7 @@
 
 > **Purpose:** The target layout of these docs, the document contract and the steps to get there.
 > **Status:** plan (open); the work is rows 110 to 120 of `docs/backlog.md`
-> **As of:** 6786e014
+> **As of:** 9d2fc4c7
 > **Evidence:** an inventory of every Markdown file in the repository (117 files, 21,870 lines, 2.43 MB; the numbers below are its final pass)
 
 ## Problem
@@ -128,12 +128,12 @@ The rows live in the backlog's Order table; this is what each one delivers and w
 ### Row 110: the scaffold (Mr. Normal)
 
 - `docs/README.md` replaces `docs/features/README.md`: the index with one line per document and its status, written for agents first ("start here"), with a "Documentation rules" section that holds the contract above; it lists the documents under their current paths and every later row adds its own lines.
-- `docs/target/decisions/_template.md`; `docs/archive/README.md` (columns: file, what it was, outcome, successor doc); the three refactor records moved under `docs/archive/refactor/` with the archived header.
+- `docs/target/decisions/_template.md`; the archive's index (columns: file, what it was, outcome, successor doc); the three refactor records moved under the archive's refactor folder with the archived header.
 - The index links of `README.md`, `AGENTS.md` (§2) and `CONTRIBUTING.md` repointed; `test_docs_paths.py` extended; `test_docs_style.py` added for the new folders.
 
 ### Row 111: the archive (Mr. Normal)
 
-- The closed plans and measurement logs move unchanged to `docs/archive/plans/`, file names kept: `anime-ids-spike`, `antibot-patchright`, `browser-page-budget`, `captcha-solving`, `cloudflare-solvers`, `code-review-2026-10-12`, `code-review-fixes`, `cuii-coverage`, `filmo-plugin`, `header-bound-hosters`, `integration-tests`, `more-plugins`, `next-steps`, `optimization-options`, `pi-performance`, `playwright-engine`, `plugin-domains`, `plugin-repair`, `round5-measures`, `search-caching`, `series-episodes`, `sto-linkout`, `stremio-stream-split`, `title-matching`, `vidhide-segments`. Each gets the archived header with its successor; the archive index gets one row per file.
+- The closed plans and measurement logs move unchanged to the archive's plans folder, file names kept: `anime-ids-spike`, `antibot-patchright`, `browser-page-budget`, `captcha-solving`, `cloudflare-solvers`, `code-review-2026-10-12`, `code-review-fixes`, `cuii-coverage`, `filmo-plugin`, `header-bound-hosters`, `integration-tests`, `more-plugins`, `next-steps`, `optimization-options`, `pi-performance`, `playwright-engine`, `plugin-domains`, `plugin-repair`, `round5-measures`, `search-caching`, `series-episodes`, `sto-linkout`, `stremio-stream-split`, `title-matching`, `vidhide-segments`. Each gets the archived header with its successor; the archive index gets one row per file.
 - One path rewrite over everything that cites `docs/plans/<name>`: 93 references from 39 files (docstrings in `src/` and `plugins/`, the help texts of `scripts/stremio_round.py`, `stremio_measure.py`, `stremio_profile.py`, `playback_under_load.py`, the tests that name them, the specs).
 - The open items of closed plans are listed under a "Carried over" heading in the backlog's Ideas section, one line each, for Mr. Fable to triage: the sidecar check of the anti-bot plan's phase 3, step 8 of the captcha plan, the six open integration tests, the open next steps (monitoring, a scheduled live run, 3.5, 3.6), the missing plugins of the CUII reading and the candidates of `more-plugins`, the open observations of the review fixes, R6, R8 and R9 of the challenge decision (when that plan is archived).
 - Stays open in `docs/plans/`: this plan, `backlog-2026-10.md` (row 118), `challenge-reactions.md` and `stremio-latency.md` (archived by row 118 when their open points close).
@@ -183,7 +183,7 @@ The rows live in the backlog's Order table; this is what each one delivers and w
 
 ### Row 118: the backlog and OpenSpec (Mr. Fable, docs freeze)
 
-- `docs/backlog.md`: the open rows only, one line each (id, item, owner, status, link to the plan or spec); `docs/archive/backlog-2026-10.md`: everything else of `backlog-2026-10.md`; `docs/agents/orchestration.md`: the working and orchestration rules; `test_docs_privacy.py`'s path.
+- `docs/backlog.md`: the open rows only, one line each (id, item, owner, status, link to the plan or spec); the archived backlog: everything else of `backlog-2026-10.md`; `docs/agents/orchestration.md`: the working and orchestration rules; `test_docs_privacy.py`'s path.
 - OpenSpec: `openspec archive` for `add-stream-media-quality` and `place-episodes-by-number-first` (their specs then state the current rules), `openspec/project.md`'s change list, task 6.3 of the archived series-identity change into the backlog.
 - `challenge-reactions.md` and `stremio-latency.md` archived when the production readings of `react-to-challenges` (tasks 1.10, 2.7) and the open investigation close.
 - Two spec gaps closed with the archiving: the `stremio-anime-episodes` spec requires the search cache key `v2` while `application/stremio/search_cache.py` writes `v3`, and the `source="unchecked"` rule of AGENTS.md §7 is in no spec.
@@ -203,7 +203,7 @@ The rows live in the backlog's Order table; this is what each one delivers and w
 - **CHANGELOG entries.** 2,083 lines, 36 of them over 1 KB, with measurement narratives inside; the inventory suggests capping entries at one to three lines with a link and moving the narratives to the archive. Keep a Changelog allows both. The maintainer decides; until then the CHANGELOG is untouched by this plan.
 - **The device name** (the production machine's model in about 30 files): the privacy rule bans device names; row 119 applies the maintainer's decision (ledger P1).
 - **The example repository** (`cityforall`): unreachable from the dev container; its practices are adopted when it can be read (ledger B1).
-- **This plan** moves to `docs/archive/plans/` when row 119 lands.
+- **This plan** is deleted once its follow-up rows have landed; the git history keeps it (`docs/README.md` → History).
 
 ## Follow-ups
 

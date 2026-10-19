@@ -116,7 +116,7 @@ stremio:
   auto_tune_all: true # container-aware auto-tune ALL concurrency params (cgroup v2/v1)
   max_concurrent_playwright: 7 # was 5 — more parallel PW plugins
   max_results_per_plugin: 50 # was 100 — fewer results per plugin, faster turnaround
-  # Answer policy (decided 2026-10-05, docs/archive/plans/round5-measures.md): the
+  # Answer policy (docs/target/decisions/0007-plugin-timeout-of-30-s.md): the
   # answer goes out at resolve_target_count streams or when the search and
   # every resolution are done, at the latest stream_deadline_seconds after
   # the request; links resolve while plugins search, and plugins still

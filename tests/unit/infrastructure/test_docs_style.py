@@ -7,12 +7,11 @@ generator script in its purpose line and carries no further status lines; a file
 with generated tables names the script there too and keeps them. No heading names
 a round, a trial, a measurement, a proof or a finding, and no line cites a backlog
 id (``row 106``, ``finding 11``, ``N1``, ``R2``): a current or target doc states
-the behaviour, the archive says where it came from. Quoted examples (the
+the behaviour, the git history says where it came from. Quoted examples (the
 contract's own list of banned ids) stay allowed, and code fences are not read.
 
-Covered: every document under ``docs/`` outside the archive, which stays exempt.
-Every document outside the archive carries the header; plans keep their ids and
-history by the contract (``docs/plans/`` checks the header only), and
+Covered: every document under ``docs/``, each with the header; plans keep their
+ids and history by the contract (``docs/plans/`` checks the header only), and
 ``docs/backlog.md`` cites its ids. A decision record has the sections of
 ``docs/target/decisions/_template.md`` in their order, its alternatives included.
 """
@@ -26,11 +25,7 @@ import pytest
 
 _ROOT = Path(__file__).parents[3]
 _DOCS_DIR = _ROOT / "docs"
-_DOCS = [
-    doc
-    for doc in sorted(_DOCS_DIR.rglob("*.md"))
-    if "archive" not in doc.relative_to(_DOCS_DIR).parts
-]
+_DOCS = sorted(_DOCS_DIR.rglob("*.md"))
 # Documents that cite backlog ids by design
 _ID_EXEMPT = (_DOCS_DIR / "backlog.md",)
 # Plans keep their ids and their history: only the header is checked
@@ -293,7 +288,7 @@ def test_a_plan_keeps_its_ids_and_history_but_not_a_bare_header(tmp_path: Path) 
     ]
 
 
-def test_the_archive_is_exempt() -> None:
-    assert _DOCS
-    assert not [doc for doc in _DOCS if "archive" in doc.parts]
+def test_every_document_is_covered() -> None:
     assert _DOCS_DIR / "README.md" in _DOCS
+    assert _DOCS_DIR / "backlog.md" in _DOCS
+    assert not (_DOCS_DIR / "archive").exists()

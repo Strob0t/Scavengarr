@@ -30,8 +30,8 @@ log = structlog.get_logger(__name__)
 _DOMAINS = frozenset({"vixeo"})
 _FILE_ID_RE = re.compile(r"^/e/([A-Za-z0-9]{8,})(?:/|$)")
 # The player does not start itself and takes the first click at once: 6 of
-# 6 runs at 0.5 s, 2 of them on the production host, streamed after one click (row 103,
-# docs/archive/plans/pi-performance.md → The capture's autoplay wait)
+# 6 runs at 0.5 s, 2 of them on the production host, streamed after one click
+# (docs/current/hoster-resolvers.md)
 _AUTOPLAY_WAIT_S = 0.5
 
 

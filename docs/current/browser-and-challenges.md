@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr runs one headful Chromium for the work plain HTTP cannot do: the Playwright plugins, the plugin pages behind Cloudflare, the hoster captures and the link-outs.
 > **Status:** current
-> **As of:** 19b7e2c8
+> **As of:** 9d2fc4c7
 
 ## Purpose
 
@@ -252,7 +252,7 @@ The plugins' long-term record counts the searches with a challenge and those wit
 
 - The open production checks of [`openspec/changes/react-to-challenges/`](../../openspec/changes/react-to-challenges/tasks.md) and [`openspec/changes/keep-capture-state/`](../../openspec/changes/keep-capture-state/tasks.md) will compare the challenged hosters' outcomes with the baseline of [the challenge plan](../plans/challenge-reactions.md).
 - The plan's options still open (captures that pass widgets, fixes on the plugins' side, an HTTP client that impersonates a browser) wait for those numbers.
-- How long a kept capture state lasts and when Filemoon's captcha shows in a cold capture are open in [the backlog](../archive/backlog-2026-10.md).
+- How long a kept capture state lasts and when Filemoon's captcha shows in a cold capture are open in [the backlog](../backlog.md).
 
 ## References
 
@@ -260,4 +260,4 @@ The plugins' long-term record counts the searches with a challenge and those wit
 - Challenges: `src/scavengarr/infrastructure/captcha/detect.py`, `src/scavengarr/infrastructure/captcha/altcha.py`, `src/scavengarr/infrastructure/hoster_resolvers/challenge_cooldown.py`, `src/scavengarr/infrastructure/hoster_resolvers/_browser.py`.
 - Ports and plugins: `src/scavengarr/domain/ports/browser_fetcher.py`, `src/scavengarr/infrastructure/plugins/httpx_base.py`, `src/scavengarr/infrastructure/plugins/playwright_base.py`.
 - Decisions: [`0009-pass-keeper-demand-bound.md`](../target/decisions/0009-pass-keeper-demand-bound.md), [`0010-adaptive-page-budget.md`](../target/decisions/0010-adaptive-page-budget.md), [`0011-own-scripts-only-captures.md`](../target/decisions/0011-own-scripts-only-captures.md), [`0012-challenge-outside-the-breaker.md`](../target/decisions/0012-challenge-outside-the-breaker.md).
-- History: [`docs/archive/plans/playwright-engine.md`](../archive/plans/playwright-engine.md), [`docs/archive/plans/antibot-patchright.md`](../archive/plans/antibot-patchright.md), [`docs/archive/plans/captcha-solving.md`](../archive/plans/captcha-solving.md), [`docs/archive/plans/cloudflare-solvers.md`](../archive/plans/cloudflare-solvers.md), [`docs/archive/plans/browser-page-budget.md`](../archive/plans/browser-page-budget.md), [`docs/plans/challenge-reactions.md`](../plans/challenge-reactions.md).
+- The open challenge work: [`docs/plans/challenge-reactions.md`](../plans/challenge-reactions.md).

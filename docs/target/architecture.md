@@ -2,7 +2,7 @@
 
 > **Purpose:** The dependency rule, the layer contracts and the invariants.
 > **Status:** target
-> **As of:** 5b4303e4
+> **As of:** 9d2fc4c7
 
 The rules every change to `src/scavengarr/` must keep.
 How the code implements them now: [`docs/current/architecture.md`](../current/architecture.md).
@@ -106,4 +106,3 @@ Application and infrastructure meet only in the domain's ports and types, and in
 - [`docs/target/decisions/0001-dependency-rule.md`](decisions/0001-dependency-rule.md): the decision behind the rule.
 - `src/scavengarr/interfaces/composition.py`: the composition root.
 - `AGENTS.md` §3 and §5: the agents' summary of these rules and the typing rules.
-- [`docs/archive/refactor/clean-architecture-migration.md`](../archive/refactor/clean-architecture-migration.md): the migration that introduced the layers.

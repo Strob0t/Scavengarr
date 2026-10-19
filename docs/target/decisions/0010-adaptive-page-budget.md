@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why browser pages go by their work's claim, and their count adapts.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
@@ -44,4 +44,3 @@ accepted
 - `src/scavengarr/infrastructure/browser/page_gate.py`: `PageGate` and its order.
 - `src/scavengarr/infrastructure/browser/page_budget.py`: `PageBudget` and its thresholds.
 - `src/scavengarr/domain/ports/browser_fetcher.py`: `PageClaim` and `page_claim`.
-- [`docs/archive/plans/browser-page-budget.md`](../../archive/plans/browser-page-budget.md): the problem, the options and the maintainer's choice.

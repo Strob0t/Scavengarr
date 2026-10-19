@@ -2,13 +2,18 @@
 
 > **Purpose:** Records why the HLS proxy reads three segments ahead.
 > **Status:** target
-> **As of:** 01a39f90
+> **As of:** 9d2fc4c7
 
 ## Context
 
 The HLS proxy passes a playback's segments from the hoster's CDN to the player.
 One connection from the production host to some CDNs carries less than the playback needs in real time, so a playback fed one segment at a time stalls.
 Fetching the next segments while the player plays one keeps more connections in flight, at the cost of memory per playback.
+From the production host one connection to a FireStream CDN carried 0.55× real time.
+Three segments ahead (4 connections) carried 3.01×, 5 connections 3.39×, three byte ranges per segment 0.97×, and two segments ahead of three ranges each (9 connections) 3.07×.
+The sum flattens near 5 Mbit/s, and a playback at 0.44× per connection needs 4 connections by the rule below.
+Filemoon's CDN carried 34× on one connection from the dev container.
+A later playback with three segments ahead carried 0.85×, and why is not known.
 The options were one constant depth for every playback, or a depth per playback derived from its fetch times.
 
 ## Decision
@@ -38,4 +43,3 @@ accepted
 
 - `src/scavengarr/infrastructure/stremio/hls_proxy.py`: `SegmentReadAhead` and its constants.
 - [`docs/reference/metrics.md`](../../reference/metrics.md): the read-ahead's metrics.
-- [`docs/archive/plans/pi-performance.md`](../../archive/plans/pi-performance.md): the throughput per connection, the rule and what is not known.
