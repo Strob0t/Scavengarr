@@ -20,6 +20,7 @@ from scavengarr.domain.entities import (
     TorznabQuery,
 )
 from scavengarr.domain.plugins import SearchResult
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 
 async def _identity(results: list[Any]) -> list[Any]:
@@ -187,15 +188,25 @@ class TestSearchExecution:
         response = await uc.execute(q)
         assert response.items == []
 
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            RuntimeError("login failed"),
+            # The search page's failures the httpx base raises (row 139)
+            TimeoutError("filmpalast: search timed out"),
+            PluginUnreachableError("filmpalast"),
+        ],
+    )
     async def test_search_error_raises_external_error(
         self,
         mock_search_engine: AsyncMock,
         mock_crawljob_repo: AsyncMock,
+        failure: Exception,
     ) -> None:
         py_plugin = _FakePythonPlugin(name="filmpalast")
 
         async def _failing_search(query: str, category: int | None = None) -> list:
-            raise RuntimeError("login failed")
+            raise failure
 
         py_plugin.search = _failing_search  # type: ignore[assignment]
 

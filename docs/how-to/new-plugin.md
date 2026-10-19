@@ -26,7 +26,7 @@ Prefer targeted `browser_evaluate` or `browser_find` calls over full snapshots.
 
 ### 2. Choose the base class
 
-- `HttpxPluginBase` for server-rendered HTML and JSON APIs, a Cloudflare challenge included: fetch such a site's pages with `_fetch_text()`, which passes the challenge in the browser and goes on with its session.
+- `HttpxPluginBase` for server-rendered HTML and JSON APIs, a Cloudflare challenge included: fetch such a site's pages with `_fetch_text()`, which passes the challenge in the browser and goes on with its session, and the first search page with `_fetch_search_page()`, which raises on a failure of the site.
 - `PlaywrightPluginBase` for sites that need JavaScript, DDoS-Guard or a login in the browser.
 - A shared base where the site runs a backend that already has one (`DataApiPluginBase`, `XenForoPluginBase`): the plugin then sets only `name`, `provides`, `_domains` and what the base asks for.
 
@@ -93,7 +93,13 @@ Follow the search stages of [Plugins](../current/plugins.md#search-stages):
 ```python
 all_results: list[SearchResult] = []
 for page_num in range(1, _MAX_PAGES + 1):
-    html = await self._fetch_text(f"{search_url}&page={page_num}", context="search")
+    path = f"/search?q={quote_plus(query)}&page={page_num}"
+    if page_num == 1:
+        # A failure of the site raises, so the plugin record counts it
+        html = await self._fetch_search_page(path)
+    else:
+        # A later page that fails leaves the pages before it
+        html = await self._fetch_text(f"{self.base_url}{path}", context="search")
     if html is None:
         break
     items = await self._parse_results(html)
@@ -214,7 +220,7 @@ The plugin meets this checklist:
 - It sets `provides` and, for a site that is not German, `languages`.
 - It has unit tests, real-page tests and a live smoke entry.
 - It returns partial results on missing fields instead of failing.
-- It fetches through the base's helpers (`_fetch_text()`, `_safe_fetch()`, `_safe_parse_json()`).
+- It fetches through the base's helpers (`_fetch_text()`, `_safe_fetch()`, `_safe_parse_json()`), its first search page with `_fetch_search_page()`.
 
 ## Troubleshooting
 

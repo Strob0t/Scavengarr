@@ -6,6 +6,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Search Page's Failure Stays a Failure in the Plugin Record
+
+- A timeout, a transport error or a 5xx of a plugin's search page became `None` in the httpx base and `[]` in the plugin, so the plugin record counted a slow or unreachable site as a search without results, and a raised `httpx.TimeoutException` landed in the search's error branch without a counter.
+- The httpx base's new `_fetch_search_page()` fetches the first search page in the raising mode of `_fetch_text()` (`raising=True`). A timeout after the connection raises `TimeoutError`. A domain that does not answer (a 5xx without a challenge, a transport error, a connect timeout) sends the page to the domain the domain check then finds, and `PluginUnreachableError` follows when none answers or the page fails there too. A challenge and a 4xx keep `_fetch_text()`'s answer.
+- jjs (its first result page) and kinox use it; the other httpx plugins keep the lenient answer for now. Detail pages and later result pages stay lenient, so a missing one is a partial result. A kinox mirror that stops answering no longer keeps the searches on it until a restart.
+- The Stremio search counts a raised timeout under `timeouts`, with the stage outcome `timeout` and the line `stremio_plugin_page_timeout`, and a raised `PluginUnreachableError` under `unreachable_searches` as before; both leave the plugin's results missing, so a completion search asks again. The Torznab search answers both with its error answer (`TorznabExternalError`), as it answers any failure of a plugin.
+- The metrics reference names the `timeout` outcome and that `cut` is also the plugin timeout's outcome; the coding guidelines and the new-plugin guide name the search page's exception.
+
 ### Added: Every Decision Record Names Its Alternatives
 
 - The 15 decision records in `docs/target/decisions/` and their template have `## Alternatives` between Consequences and Status: the options the maintainer did not take, one line each with the reason on record, taken from the archived backlog's decisions and the plans they cite before the archive goes. Where no option or no reason is on record, the record says so instead of inventing one.

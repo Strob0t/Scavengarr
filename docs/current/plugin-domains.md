@@ -17,7 +17,8 @@ A plugin's `search()` calls `await self._verify_domain()` first.
 A plugin with one domain and no official list skips the check and uses `https://{_domains[0]}`.
 Otherwise the base tries each domain in order, with a 5 s timeout (`DEFAULT_DOMAIN_CHECK_TIMEOUT`):
 
-- A domain that works is pinned: `base_url` is set to it for the process lifetime, unless a site move replaces it.
+- A domain that works is pinned: `base_url` is set to it for the process lifetime, unless a site move replaces it or the search page finds it not answering.
+- A search page fetched with `_fetch_search_page()` whose domain does not answer (a 5xx without a challenge, a transport error, a connect timeout) unpins it and runs the check again at once, and the page is fetched once more on the domain the check chose ([Failures of the site](plugins.md#failures-of-the-site)).
 - Without a working domain, the first one that only answers serves the searches of the next 300 s (`ANSWERING_DOMAIN_RECHECK_S` of `infrastructure/plugins/constants.py`) and is checked again then, so a transient error at check time pins nothing.
 - Without an answering domain, the httpx base reads the site's official domain list, where the plugin names one.
 - When nothing answers, the base logs `<plugin>_no_domain_reachable` and raises `PluginUnreachableError`; `base_url` stays as it was, and the next search checks again.

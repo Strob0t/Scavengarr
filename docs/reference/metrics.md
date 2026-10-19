@@ -90,9 +90,10 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 ### Plugin searches
 
 - `plugin_search` records Stremio searches only; Torznab searches are not recorded.
-- Its outcomes: `hits`, `empty`, `late`, `error`, `cut` (shutdown), *`breaker_open`* and *`unreachable`*.
+- Its outcomes: `hits`, `empty`, `late`, `error`, `timeout`, `cut` (the plugin timeout or the shutdown), *`breaker_open`* and *`unreachable`*.
 - `late` is a search that returned after the request's answer budget: its results reach the cache and the next request.
-- *`unreachable`* is a plugin that failed the periodic health check or found no reachable domain in this search.
+- `timeout` is a search whose plugin raised a timeout: its search page answered too slowly ([Plugins](../current/plugins.md#failures-of-the-site)).
+- *`unreachable`* is a plugin that failed the periodic health check or found no reachable domain in this search, in its domain check or on its search page.
 - `plugin_results_total` counts the validated results.
 
 ### Hoster resolutions
@@ -157,13 +158,13 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 |---|---|---|
 | `searches` | `PluginSearchRunner` | A plugin search of a Stremio request that ran; a plugin skipped by its breaker or the health check is not counted. |
 | `results` | `PluginSearchRunner` | The validated results a search gave. |
-| `timeouts` | `PluginSearchRunner` | A search cut by the plugin timeout ([The Stremio search timing](../current/architecture.md#the-stremio-search-timing)). |
+| `timeouts` | `PluginSearchRunner` | A search cut by the plugin timeout ([The Stremio search timing](../current/architecture.md#the-stremio-search-timing)), or one whose plugin raised a timeout: its search page answered too slowly ([Plugins](../current/plugins.md#failures-of-the-site)). |
 | `dropped` | `PluginSearchRunner` | The results of a series request the episode filter dropped: another season or episode, or a show page without the requested episode. |
 | `challenges` | `PluginSearchRunner` | A search in which a page of the plugin's site showed a challenge, counted once per search. |
 | `challenges_unsolved` | `PluginSearchRunner` | A search with a challenge the plugin did not get past, counted once per search; an older day without it reads 0. |
 | `checks` | `PluginHealthMonitor` | A check of the plugin's site with a verdict; a check in which no site answered counts nothing. |
 | `unreachable` | `PluginHealthMonitor` | A check that found the site down after the 30 s retry; `unreachable_share` divides them by `checks`. |
-| `unreachable_searches` | `PluginSearchRunner` | A Stremio search in which the plugin's domain check found no domain. |
+| `unreachable_searches` | `PluginSearchRunner` | A Stremio search in which no domain of the plugin answered: its domain check, or its search page on every domain the check offered. |
 
 How the bases mark a challenge and when the health monitor checks: [Observability](../current/observability.md#the-plugin-record).
 

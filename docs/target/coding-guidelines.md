@@ -36,7 +36,8 @@ The performance and robustness rules the code of `src/` and `plugins/` follows, 
 - A repeated search must be answered from the search caches, never from a visited-URL marker, which would drop the results of a later search.
 - A plugin must bound the work, not the results: it collects up to 1000 results over the site's pages (`effective_max_results`) and fetches detail pages only for the relevant hits (`relevant_hits()` in `src/scavengarr/infrastructure/plugins/relevance.py`).
 - A parser must select only the nodes it needs, normalize text once, and reuse a parsed page instead of parsing it again.
-- A fetch that fails must give a partial result and a log line (`_safe_fetch()` returns `None`), never abort the search.
+- A fetch that fails must give a partial result and a log line (`_fetch_text()` and `_safe_fetch()` return `None`), never abort the search; the first search page is the exception.
+- A failure of the site on the first search page must raise, so that the plugin record counts a slow or unreachable site, not a search without results: `_fetch_search_page()` raises `TimeoutError` or, after the domain check found no domain that serves the page, `PluginUnreachableError` ([Plugins](../current/plugins.md#failures-of-the-site)).
 
 ### Browser pages
 

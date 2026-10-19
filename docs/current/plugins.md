@@ -111,6 +111,7 @@ Shared helpers:
 - `_timeout` (default 15 s) and `_user_agent` for every request;
 - one app-wide HTTP client with per-domain rate limiting and retries of 429 and 503 (`RetryTransport`), injected by the composition root;
 - `_fetch_text()`, a GET that loads the URL through the browser when the site answers with a Cloudflare challenge, and then goes on in httpx with the browser's session (its cookies and User-Agent);
+- `_fetch_search_page()`, the search page's GET in the raising mode of `_fetch_text()` (see [Failures of the site](#failures-of-the-site));
 - `_safe_fetch()` and `_safe_parse_json()`, which log and return `None` instead of raising;
 - `_resolve_redirect()`, `_resolve_own_links()` and `_resolve_result_links()`, which replace link-outs on the plugin's own host by their off-site targets;
 - `mirror_group`, for sites that front one database (see [Plugin selection](#plugin-selection-for-a-stremio-request));
@@ -161,6 +162,20 @@ sequenceDiagram
 
 Torznab does not de-duplicate results after the plugin, so a plugin that can return a result twice de-duplicates it itself.
 The Stremio search drops a result found again (`result_key()`: plugin, title, release and links).
+
+### Failures of the site
+
+A failure of the site on the first search page is a failure of the search, so that the plugin record does not count a slow or unreachable site as one without hits.
+`HttpxPluginBase._fetch_search_page(path, params=..., context=...)` fetches that page below `base_url` in the raising mode of `_fetch_text()` (`raising=True`):
+
+- A domain that does not answer (a 5xx without a challenge, a transport error, a connect timeout) sends the page to the domain the domain check finds then: the check runs again over every domain (`_verify_domain()`), and the page is fetched once more on the domain it chose.
+- `PluginUnreachableError` follows when no domain answers the check or the page fails on the chosen domain too, and at once for a site with one domain and no domain list.
+- A timeout after the connection (the answer too slow) raises `TimeoutError`; no other domain is tried.
+- Every other answer is `_fetch_text()`'s: a challenge goes to the browser fallback and counts in the challenge record, and a 4xx is `None`.
+- Detail pages and later result pages stay lenient (`None` with the log line): a missing one is a partial result.
+
+jjs (the first result page) and kinox fetch their search page this way; the other plugins answer `[]` after such a failure ([Limits](#limits)).
+The Stremio search counts a raised timeout under `timeouts` and `PluginUnreachableError` under `unreachable_searches` ([Observability](observability.md#the-plugin-record)), the Torznab search answers both with its error answer (`TorznabExternalError`), and the scoring probe records the timeout as `timeout`.
 
 ### Categories and relevance
 
@@ -283,7 +298,7 @@ Both are described in [Observability](observability.md).
 ## Limits
 
 - A site that changes its markup returns nothing until its parser is fixed; the live smoke tests (`poetry run pytest -m live`) find such plugins.
-- A slow or failing site also returns nothing: the base's `_fetch_text()` and `_safe_fetch()` turn a timeout, a transport error and every answer from 400 up into `None` with the line `<plugin>_timeout`, `_fetch_error` or `_http_error`, and the plugin answers `[]`, which the plugin record counts as a search without results. The live smoke skips such an empty run and names the line (`tests/live/smoke_outcome.py`); raising instead, so that the record counts a timeout, is open work ([the backlog](../backlog.md)).
+- A slow or failing site still returns nothing for most httpx plugins: only jjs and kinox fetch their search page with `_fetch_search_page()` ([Failures of the site](#failures-of-the-site)). The others' `_fetch_text()` and `_safe_fetch()` turn a timeout, a transport error and every answer from 400 up into `None` with the line `<plugin>_timeout`, `_fetch_error` or `_http_error`, and the plugin answers `[]`, which the plugin record counts as a search without results. The live smoke skips such an empty run and names the line (`tests/live/smoke_outcome.py`).
 - The confidence of a score is computed when a probe updates it, so it reflects the sample count, not the age of the samples.
 - A site that binds its clearance to the browser costs a browser page for every request for 30 minutes.
 

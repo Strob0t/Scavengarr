@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
 from scavengarr.domain.plugins.base import PluginUnreachableError
 
@@ -550,13 +551,53 @@ class TestPluginSearch:
 
     @pytest.mark.asyncio
     async def test_search_http_error(self, plugin, mock_client):
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
+        """No mirror answers the search page or the domain check: the site
+        is unreachable in the plugin record, not a search without results
+        (row 139)."""
+        refused = httpx.ConnectError("Connection refused")
+        mock_client.get = AsyncMock(side_effect=refused)
+        mock_client.head = AsyncMock(side_effect=refused)
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
+
+    @pytest.mark.asyncio
+    async def test_a_search_page_that_times_out_is_a_timeout(self, plugin, mock_client):
+        mock_client.get = AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+
+        with pytest.raises(TimeoutError):
+            await plugin.search("batman")
+
+        # A slow site is not a dead mirror: no other domain is tried
+        mock_client.head.assert_not_called()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_503_on_every_mirror_is_unreachable(self, plugin):
+        search = respx.get("https://www22.kinox.to/Search.html").respond(503)
+        respx.route(method="HEAD").respond(503)
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
+
+        assert search.call_count == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_dead_mirror_hands_the_search_to_the_next(self, plugin):
+        refused = httpx.ConnectError("Connection refused")
+        respx.get("https://www22.kinox.to/Search.html").mock(side_effect=refused)
+        respx.head("https://www22.kinox.to/").mock(side_effect=refused)
+        respx.head("https://ww22.kinox.to/").respond(200)
+        respx.get("https://ww22.kinox.to/Search.html").respond(
+            200, text=EMPTY_SEARCH_HTML
         )
+        plugin._client = httpx.AsyncClient()
 
-        results = await plugin.search("batman")
+        assert await plugin.search("batman") == []
 
-        assert results == []
+        assert plugin.base_url == "https://ww22.kinox.to"
 
     @pytest.mark.asyncio
     async def test_detail_page_failure_gives_no_result(self, plugin, mock_client):

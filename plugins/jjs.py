@@ -252,14 +252,20 @@ class JjsPlugin(HttpxPluginBase):
     async def _search_page(
         self, query: str, page: int = 1
     ) -> tuple[list[dict[str, str | int]], int]:
-        """Fetch one search results page and return (results, last_page)."""
-        encoded = quote_plus(query)
-        if page > 1:
-            url = f"{self.base_url}/page/{page}/?s={encoded}"
-        else:
-            url = f"{self.base_url}/?s={encoded}"
+        """Fetch one search results page and return (results, last_page).
 
-        html = await self._fetch_text(url, context=f"search_page_{page}")
+        The first page raises on a failure of the site (a timeout, no
+        answer), so the plugin record counts it as one; a later page that
+        fails leaves the pages before it.
+        """
+        encoded = quote_plus(query)
+        context = f"search_page_{page}"
+        if page > 1:
+            html = await self._fetch_text(
+                f"{self.base_url}/page/{page}/?s={encoded}", context=context
+            )
+        else:
+            html = await self._fetch_search_page(f"/?s={encoded}", context=context)
         if html is None:
             return [], 1
 

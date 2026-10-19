@@ -178,6 +178,7 @@ The metrics restart with the process, and the scoring snapshots age out in weeks
 `PluginHistory` (`infrastructure/plugins/history.py`) counts per plugin and UTC day; the counters are listed in [Metrics](../reference/metrics.md#the-plugin-record).
 
 - `PluginSearchRunner` counts the searches, results, timeouts, dropped results, challenges and the searches that found no domain.
+- A timeout is the plugin timeout or a `TimeoutError` the plugin raised, and a search that found no domain one whose plugin raised `PluginUnreachableError`, from its domain check or from its search page: the httpx base raises both for the search page (`_fetch_search_page()`, [Plugins](plugins.md#failures-of-the-site)), so a slow or unreachable site is no search without results.
 - A challenge counts once per search however many pages showed one: the runner sets a `ChallengeFlag` (`domain/ports/plugin_history.py`) and the plugin bases mark it.
 - The httpx base marks a challenge it saw in `_fetch_text` or `_safe_fetch`; the host then goes into the browser memo, and a later page served straight from the memo is no new sighting.
 - The Playwright base marks a navigation that landed on a challenge page before `solve_cloudflare`.

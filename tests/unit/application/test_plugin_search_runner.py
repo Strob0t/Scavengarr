@@ -384,6 +384,28 @@ class TestPluginRecord:
             ("a", "timeouts"),
         ]
 
+    @pytest.mark.parametrize(
+        ("failure", "counter"),
+        [
+            (TimeoutError("a: search timed out"), "timeouts"),
+            (PluginUnreachableError("a"), "unreachable_searches"),
+        ],
+    )
+    async def test_a_raised_failure_of_the_site_is_counted_as_one(
+        self, failure: Exception, counter: str
+    ) -> None:
+        """The search page's timeout or a site without an answer, raised by
+        the plugin's base (row 139): no search without results."""
+        history = MagicMock(spec=["count"])
+        runner = _runner(_registry({"a": _plugin(failure)}), history=history)
+
+        await _search(runner, ["a"], ["q"])
+
+        assert [c.args for c in history.count.call_args_list] == [
+            ("a", "searches"),
+            ("a", counter),
+        ]
+
     async def test_a_skipped_plugin_is_not_counted(self) -> None:
         breaker = MagicMock()
         breaker.allow.return_value = False
@@ -1067,6 +1089,7 @@ class TestTelemetry:
             ([], "empty"),
             (RuntimeError("boom"), "error"),
             (PluginUnreachableError("a"), "unreachable"),
+            (TimeoutError("a: search timed out"), "timeout"),
         ],
     )
     async def test_outcome_and_duration(
@@ -1140,6 +1163,8 @@ class TestPluginDone:
             ([_sr("https://a/1")], True),
             ([], True),
             (RuntimeError("boom"), False),
+            (TimeoutError("a: search timed out"), False),
+            (PluginUnreachableError("a"), False),
         ],
     )
     async def test_outcome(
