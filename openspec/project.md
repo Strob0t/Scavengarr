@@ -6,16 +6,20 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 
 ## Tech Stack
 
-- **Language**: Python `^3.12,<3.14` (`pyproject.toml`; Docker images use Python 3.12, ruff targets `py312`)
-- **Framework**: FastAPI + Uvicorn (ASGI) for the web server
+Every dependency with its purpose and the reason for its choice, the tools beside the Python packages and the alternatives deliberately not used: [`docs/reference/tech-stack.md`](../docs/reference/tech-stack.md) (checked against `pyproject.toml` by `tests/unit/infrastructure/test_tech_stack_doc.py`).
+In short:
+
+- **Language**: Python in the range of `pyproject.toml`; the image runs the version of its base image (`Dockerfile.prod`), and ruff targets the lowest
+- **Framework**: FastAPI on Uvicorn (ASGI), with uvloop and httptools
 - **Scraping**:
   - **httpx plugins**: `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) — `httpx` (async HTTP) + `selectolax` (lexbor HTML parser)
   - **Playwright plugins**: `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`) — Patchright (Playwright fork), one shared Chromium via `SharedBrowserPool`
-- **Hoster resolvers**: 62 resolvers in `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters)
-- **Configuration**: Pydantic Settings with precedence CLI → ENV (incl. `--dotenv` file) → YAML → defaults
+- **Hoster resolvers**: `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters; the list: `docs/reference/resolvers.md`)
+- **Configuration**: pydantic-settings with precedence CLI → ENV (incl. `--dotenv` file) → YAML → defaults
 - **Plugins**: Python plugins only (`plugins/*.py`); the YAML plugin system was removed in `42fced9`
 - **Cache**: `diskcache` (default) or Redis (`cache.backend: redis`)
 - **Logging**: `structlog` with JSON (prod) or console (dev) output
+- **Metrics and traces**: `prometheus-client` (`/metrics`), OpenTelemetry spans on demand (`telemetry.tracing_endpoint`)
 - **CLI**: stdlib `argparse` (`src/scavengarr/interfaces/cli/__main__.py`)
 - **Containerization**: Docker (`Dockerfile.prod`)
 
@@ -84,7 +88,7 @@ Understanding of German and English streaming and DDL site structures (HTML list
 
 ## Important Constraints
 
-- **Python version**: `^3.12,<3.14` (enforced via `pyproject.toml`)
+- **Python version**: the range of `pyproject.toml` (`>=3.12,<3.15`)
 - **Privacy & security**:
   - Never log secrets in plaintext (passwords, API keys, cookies)
   - SSL verification stays enabled (httpx default)
@@ -101,20 +105,11 @@ Understanding of German and English streaming and DDL site structures (HTML list
 - **Optional services**:
   - Redis (alternative cache backend)
   - TMDB API (optional API key for Stremio title lookup; IMDB/Wikidata fallback without key)
-- **Metrics**: JSON metrics at `/api/v1/stats/metrics` (Prometheus format: future)
+- **Metrics**: Prometheus at `/metrics`, JSON at `/api/v1/stats/metrics`
 
 ## Development Dependencies
 
-From `[tool.poetry.group.dev.dependencies]`:
-
-- **Poetry**: Dependency management and packaging
-- **pytest**, **pytest-asyncio**, **pytest-cov**, **pytest-mock**: Testing
-- **respx**: httpx-native HTTP mocking
-- **requests**: test helper dependency
-- **ruff**: Linting and formatting
-- **pre-commit**: Git hooks for quality enforcement
-
-Runtime libraries relevant for development: `structlog`, `httpx`, `patchright`, `pydantic-settings`, `diskcache`, `redis`, `guessit`, `rapidfuzz`, `unidecode`.
+Poetry manages the dependencies; the development group of `pyproject.toml` (pytest with its plugins, respx, ruff, basedpyright, pre-commit) is listed with its reasons in [`docs/reference/tech-stack.md`](../docs/reference/tech-stack.md#development).
 
 ## OpenSpec Integration
 

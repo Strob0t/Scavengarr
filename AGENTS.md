@@ -108,7 +108,7 @@ Invariants:
 ## 4. Dependencies
 
 - Source of truth: `pyproject.toml`. For package APIs, read the installed source in `.venv` or the official docs.
-- Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification.
+- Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification. A commit that adds, removes or replaces a dependency updates its line in `docs/reference/tech-stack.md` (purpose, reason, the alternatives not used), which `tests/unit/infrastructure/test_tech_stack_doc.py` checks against `pyproject.toml`.
 - Dependabot (`.github/dependabot.yml`) opens weekly update PRs for Poetry, GitHub Actions and the base images of `Dockerfile.prod` against `staging`; they are merged into `staging` after a green CI run, and a major update gets a look at the package's changelog first. Dependabot reads the file from the default branch `main`, so a change to it takes effect with the release that carries it.
 
 ---
@@ -186,12 +186,12 @@ Step-by-step guides:
 
 | Area | Path |
 |---|---|
-| Dependencies & tooling | `pyproject.toml`, `.pre-commit-config.yaml` |
+| Dependencies & tooling | `pyproject.toml`, `.pre-commit-config.yaml`, `docs/reference/tech-stack.md` (every dependency with its reason) |
 | Domain / use cases / adapters | `src/scavengarr/{domain,application,infrastructure}/` |
 | HTTP router, CLI, composition root | `src/scavengarr/interfaces/` (`composition.py`) |
 | Stremio addon | `src/scavengarr/interfaces/api/stremio/` |
 | Plugins | `plugins/` (generated list: `docs/reference/plugins.md`, `scripts/generate_plugin_list.py`) |
-| Contributor guide (project layout, tech stack), Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
+| Contributor guide (project layout), Docker Compose | `CONTRIBUTING.md`, `docker-compose.yml` (profiles `solver`, `redis`, `tracing`) |
 | Production diagnostics | `scripts/prodctl.py`, `scripts/probes/`, `scripts/portainer.py`, `scripts/digest.py` |
 | Docs (index: `docs/README.md`) | `docs/current/` (architecture: `docs/current/architecture.md`), `docs/target/` (`docs/target/architecture.md`, decisions: `docs/target/decisions/`), `docs/how-to/`, `docs/reference/` (settings: `docs/reference/configuration.md`), `docs/plans/`, `docs/agents/`, the queue `docs/backlog.md` |
 | Archive (closed plans, refactor history) | `docs/archive/` (index: `docs/archive/README.md`) |

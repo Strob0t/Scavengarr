@@ -364,6 +364,7 @@ The index [docs/README.md](docs/README.md) lists every document with its status 
 | Architecture as built | [docs/current/architecture.md](docs/current/architecture.md) |
 | Architecture rules | [docs/target/architecture.md](docs/target/architecture.md) |
 | Coding guidelines | [docs/target/coding-guidelines.md](docs/target/coding-guidelines.md) |
+| Tech stack and the reasons for it | [docs/reference/tech-stack.md](docs/reference/tech-stack.md) |
 | Decision records | [docs/target/decisions/](docs/target/decisions/) |
 | Plans in work | [docs/plans/](docs/plans/) |
 | The work queue | [docs/backlog.md](docs/backlog.md) |
@@ -380,7 +381,8 @@ Most of Scavengarr's code was written with AI coding assistants — it is, openl
 
 - **Test-driven development.** Tests come first; the suite has about 7,000 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
 - **Clean Architecture.** Strict layers (domain, application, infrastructure, interfaces) with a dependency rule, ports as protocols and a single composition root.
-- **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code, pre-commit hooks and the full test suite before anything is committed.
+- **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code checked by basedpyright, pre-commit hooks and the full test suite before anything is committed.
+- **Dependencies with their reasons.** Every package in `pyproject.toml` has its line in [docs/reference/tech-stack.md](docs/reference/tech-stack.md) with what it does and why it was chosen, beside the alternatives deliberately not used; a test fails when a dependency comes or goes without it.
 - **Written plans and measurements.** Larger changes start with a plan in [`docs/plans/`](docs/plans), and performance changes are measured against real requests before and after.
 - **Documentation ships with the code.** Behaviour, configuration and architecture changes update the docs and the changelog in the same commit.
 

@@ -109,19 +109,8 @@ Scavengarr follows Clean Architecture: outer layers depend on inner ones only, a
 
 ## Tech stack
 
-| Component | Library |
-|---|---|
-| HTTP framework | FastAPI + Uvicorn |
-| Static scraping | httpx |
-| HTML parsing | `selectolax` (lexbor, C, CSS selectors) |
-| Browser scraping | Patchright (Playwright fork, Chromium) |
-| Title matching | RapidFuzz |
-| Release parsing | guessit |
-| Configuration | pydantic-settings, PyYAML, python-dotenv |
-| Caching | diskcache (SQLite) / Redis |
-| Logging | structlog |
-| Metrics and tracing | prometheus-client, OpenTelemetry (OTLP) |
-| CLI | argparse (stdlib) |
+Every dependency with its purpose and the reason for its choice, the tools beside the Python packages and the alternatives deliberately not used are in [docs/reference/tech-stack.md](docs/reference/tech-stack.md).
+A commit that adds, removes or replaces a dependency updates that file in the same commit; `tests/unit/infrastructure/test_tech_stack_doc.py` checks it against `pyproject.toml`.
 
 ---
 

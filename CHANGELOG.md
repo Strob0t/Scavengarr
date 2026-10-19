@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Tech Stack With the Reasons for It
+
+- `docs/reference/tech-stack.md` lists every runtime and development dependency of `pyproject.toml` with what it does here and why it is the one (the measurements behind selectolax, uvloop, Patchright, guessit's cache and the HTTP/2 setting included), the tools beside the Python packages (Poetry, Chromium, Xvfb, curl, the Compose services, Node in the dev container) and the alternatives deliberately not used with their reasons: playwright-stealth, Camoufox, nodriver, Selenium, a required solver service, Scrapy, BeautifulSoup and lxml, other HTTP clients, curl_cffi, paid solver services, difflib, Typer, Pydantic in the domain, mypy and Pylance, black, isort and flake8, OpenTelemetry metrics and its auto-instrumentation.
+- The rule: a commit that adds, removes or replaces a dependency updates the file in the same commit. `tests/unit/infrastructure/test_tech_stack_doc.py` fails when a dependency has no line, a line names no dependency, or a package listed as not used is a dependency.
+- `CONTRIBUTING.md`'s tech-stack table becomes the link, `AGENTS.md` §4 names the rule, and the README (its documentation table and "How Scavengarr is built"), `docs/README.md` and `openspec/project.md` link the file; `openspec/project.md` loses its drifted copy (a Python range, the image's Python, a resolver count, "Prometheus format: future" and the old development list).
+
 ### Removed: Two Development Dependencies Nothing Used
 
 - `requests` and `pytest-mock` leave the dev group of `pyproject.toml`: no file imports `requests`, and no test takes pytest-mock's `mocker` fixture (the tests use `unittest.mock`). Both came with the first commits, with no recorded reason.
