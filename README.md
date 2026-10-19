@@ -336,7 +336,7 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 ## Documentation
 
-The index [docs/README.md](docs/README.md) lists every document with its status and the rules the documents follow. By topic:
+The index [docs/README.md](docs/README.md) maps the document groups, states what the docs cover and what is open, and lists every document with its status and the rules the documents follow. By topic:
 
 | Topic | Link |
 |---|---|

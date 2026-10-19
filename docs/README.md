@@ -1,9 +1,43 @@
 # Scavengarr documentation
 
 > **Status:** reference
-> **As of:** ad8ef2f5
+> **As of:** 33b3d913
 
 The one index of the documentation: one line per document with its status.
+
+## The map
+
+```mermaid
+flowchart LR
+    rules["AGENTS.md<br/>the rules for every change"]
+    target["target/<br/>architecture, coding guidelines, decisions"]
+    current["current/<br/>how each part works now"]
+    howto["how-to/<br/>the steps of one task"]
+    reference["reference/<br/>settings, metrics, plugins, resolvers, tech stack"]
+    agents["agents/<br/>skills, MCP servers, orchestration"]
+    plans["plans/ and backlog.md<br/>open work and its evidence"]
+    rules --> target
+    rules --> agents
+    target -->|"must hold in"| current
+    plans -->|"a landed row changes"| current
+    plans -->|"a decision changes"| target
+    current -->|"settings and metrics in"| reference
+    howto -->|"works with"| current
+    howto -->|"looks up"| reference
+```
+
+`AGENTS.md` points to the `target` documents and the agent tooling.
+The `target` documents say what must hold, and the `current` documents describe the code that holds it.
+A row of the backlog or a plan changes a `current` document when it lands, and a decision record changes a `target` document.
+The `how-to` guides work with the `current` documents and look up the `reference` tables.
+
+## The state
+
+The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
+Open in the docs: the production machine's device name in two code comments, `AGENTS.md` as rules only with the dev container as a how-to, a glossary, a purpose line in every header, the alternatives in every decision record, and the archive's removal in favour of the git history.
+Open in the hoster resolvers and the browser: Filemoon's cold capture on the production host, its captcha pass kept warm, and sto's link-outs through the resolvers.
+Open in the plugins: a search page's network failure that stays a failure in the plugin record, first in the base and then in the httpx plugins, and a plugin for the public broadcasters' media libraries.
+The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
 
 ## Start here
 

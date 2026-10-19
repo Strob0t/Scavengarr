@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: The Docs Index Shows the Map and the State
+
+- `docs/README.md` starts with a Mermaid map of the document groups (`AGENTS.md`, target, current, how-to, reference, agents, plans and the backlog) and how they change one another.
+- A status paragraph below it says what the current docs cover and what is open, by area (the docs, the hoster resolvers and the browser, the plugins); the row that opens or closes an area's work updates it in the same commit. The root `README.md`'s sentence about the index names both.
+
 ### Changed: The Production Machine Is "the Production Host" Everywhere
 
 - The production machine's device name gave way to "the production host" in 34 files: 13 code comments and docstrings in `src/` and `plugins/` (among them the HLS transcoding setting's description, so `docs/reference/configuration.md` is regenerated), 7 tests, 14 CHANGELOG lines, `README.md` (the image's platforms without an example device), `data/config.yaml`, `.github/workflows/image.yml`, 3 OpenSpec files (`add-container-image` and the archived `add-observability`), `docs/plans/docs-overhaul.md`, the backlog and 5 files of the archive (their text only; the archive goes as a whole later). A benchmark on another device of that kind reads "an arm64 board", and the arm64 platform stays where it is the point.
