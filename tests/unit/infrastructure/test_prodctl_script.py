@@ -9,8 +9,9 @@ import py_compile
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
+import httpx
 import pytest
 import respx
 
@@ -309,6 +310,50 @@ class TestCommands:
             _mod.main(["metrics"])
 
 
+class TestStreamAnswers:
+    def test_the_times_to_the_headers_and_to_the_end(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The body's end comes after the headers: a slow body shows."""
+        clock = iter([10.0, 12.5, 14.0])
+        monkeypatch.setattr(
+            _mod, "time", SimpleNamespace(monotonic=lambda: next(clock))
+        )
+        with respx.mock:
+            respx.get("https://addon.test/stream/movie/tt1.json").respond(
+                json={"streams": [{"url": "x"}]}, headers={"X-Request-ID": "r1"}
+            )
+
+            [answer] = _mod.stream_answers(
+                "https://addon.test", ["movie/tt1"], insecure=False, timeout=5
+            )
+
+        assert (answer.headers_seconds, answer.seconds) == (2.5, 4.0)
+        assert (answer.status, answer.request_id, len(answer.streams)) == (200, "r1", 1)
+
+    def test_an_error_keeps_its_time_without_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = iter([10.0, 15.0])
+        monkeypatch.setattr(
+            _mod, "time", SimpleNamespace(monotonic=lambda: next(clock))
+        )
+        with respx.mock:
+            respx.get("https://addon.test/stream/movie/tt1.json").mock(
+                side_effect=httpx.ReadTimeout("slow")
+            )
+
+            [answer] = _mod.stream_answers(
+                "https://addon.test", ["movie/tt1"], insecure=False, timeout=5
+            )
+
+        assert (answer.error, answer.seconds, answer.headers_seconds) == (
+            "ReadTimeout",
+            5.0,
+            None,
+        )
+
+
 class TestCheck:
     _ADDON = "https://addon.test/api/v1/stremio"
     _CODES = {
@@ -364,6 +409,7 @@ class TestCheck:
                     event="http_request",
                     request_id="r1",
                     path="/api/v1/stremio/stream/series/tt0388629:5:2.json",
+                    duration_ms=412.5,
                     client_host="10.0.0.9",
                 ),
             ]
@@ -402,8 +448,10 @@ class TestCheck:
             " breakers 6 |",
             "| plugin_history_restored | PASS   | plugins 17, days 68 |",
             "| series/tt0388629:5:2    | PASS   | 1 streams, all S05E02; logged;"
-            " no placement record (DEBUG), 0.0 s |",
-            "| movie/tt0816692         | PASS   | 1 streams in 0.0 s; logged |",
+            " no placement record (DEBUG); client 0.0 s to headers, 0.0 s to the"
+            " end, server 0.4 s |",
+            "| movie/tt0816692         | PASS   | 1 streams; logged; client 0.0 s"
+            " to headers, 0.0 s to the end, server 0.4 s |",
             "| network                 | PASS   | cache and dns answered |",
         ]
         for row in rows:
@@ -430,7 +478,8 @@ class TestCheck:
         )
         assert (
             "| series/tt0388629:5:2    | FAIL   | 1 streams, none S05E02"
-            " (first: Show.S05E03); logged, 0.0 s |"
+            " (first: Show.S05E03); logged; client 0.0 s to headers, 0.0 s to the"
+            " end, server 0.4 s |"
         ) in out
         assert (
             "| network                 | FAIL   | no answer at the last probe: dns |"

@@ -47,6 +47,9 @@ _STARTUP = "app_startup_complete"
 _RESTORED = ("hoster_state_restored", "plugin_history_restored")
 _CODE = re.compile(r"S\d{2}E\d{2}", re.I)
 # The readiness probe's gauge per check (cache, dns)
+# More than this between the server's duration and the client's: the time
+# went on the way (the proxy, the network), not into the search
+_GAP_WARN_S = 5.0
 _NETWORK = re.compile(r'^scavengarr_network_ok\{check="(\w+)"\} (\S+)$', re.M)
 
 
@@ -64,9 +67,11 @@ class Answer:
     id: str
     status: int | None
     streams: list[dict[str, Any]] = field(default_factory=list)
+    # to the body's end; ``headers_seconds`` to the response headers
     seconds: float = 0.0
     request_id: str | None = None
     error: str | None = None
+    headers_seconds: float | None = None
 
 
 def parse_time(value: str) -> float:
@@ -155,6 +160,33 @@ def _request_records(
     return [r for r in records if r.get("request_id") == request_id]
 
 
+def _timing(answer: Answer, own: Sequence[dict[str, Any]]) -> tuple[str, float]:
+    """The client's times beside the server's ``duration_ms`` of the request's
+    ``http_request`` record, and how much longer the client took (0 without
+    the record)."""
+    if answer.headers_seconds is None:
+        client = f"client {answer.seconds:.1f} s"
+    else:
+        client = (
+            f"client {answer.headers_seconds:.1f} s to headers,"
+            f" {answer.seconds:.1f} s to the end"
+        )
+    served = next(
+        (
+            r
+            for r in own
+            if r.get("event") == "http_request" and r.get("duration_ms") is not None
+        ),
+        None,
+    )
+    if served is None:
+        return client, 0.0
+    server = float(served["duration_ms"]) / 1000
+    gap = answer.seconds - server
+    more = f" ({gap:.1f} s more on the way)" if gap > _GAP_WARN_S else ""
+    return f"{client}, server {server:.1f} s{more}", gap
+
+
 def stream_checks(
     answers: Sequence[Answer],
     records: Sequence[dict[str, Any]],
@@ -184,6 +216,7 @@ def stream_checks(
             else "no placement record (DEBUG)"
         )
         count = len(answer.streams)
+        timing, gap = _timing(answer, own)
         if name in expected:
             code = expected[name]
             with_code = [
@@ -211,30 +244,19 @@ def stream_checks(
                 sample = _first_line(answer.streams[0]) if answer.streams else "none"
                 detail = f"{count} streams, none {code} (first: {sample}); {seen}"
                 status = "fail"
-            checks.append(Check(name, status, f"{detail}, {answer.seconds:.1f} s"))
+        elif count and answer.seconds <= deadline_s:
+            detail, status = f"{count} streams; {seen}", "pass"
+        elif not count:
+            detail, status = "no streams", "fail"
         else:
-            within = answer.seconds <= deadline_s
-            if count and within:
-                checks.append(
-                    Check(
-                        name,
-                        "pass",
-                        f"{count} streams in {answer.seconds:.1f} s; {seen}",
-                    )
-                )
-            elif not count:
-                checks.append(
-                    Check(name, "fail", f"no streams, {answer.seconds:.1f} s")
-                )
-            else:
-                checks.append(
-                    Check(
-                        name,
-                        "fail",
-                        f"{count} streams but {answer.seconds:.1f} s over the"
-                        f" {deadline_s:.0f} s deadline",
-                    )
-                )
+            detail = (
+                f"{count} streams but {answer.seconds:.1f} s over the"
+                f" {deadline_s:.0f} s deadline"
+            )
+            status = "fail"
+        if status == "pass" and gap > _GAP_WARN_S:
+            status = "warn"
+        checks.append(Check(name, status, f"{detail}; {timing}"))
     return checks
 
 

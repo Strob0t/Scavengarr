@@ -1,7 +1,7 @@
 # Operate production
 
 > **Status:** how-to
-> **As of:** abec3c31
+> **As of:** a4b5f7d8
 
 ## Goal
 
@@ -100,6 +100,7 @@ It costs ten Portainer requests (the container list, its inspection for the star
 5. Three anime ids (`series/<Anime A>:5:2`, `series/kitsu:<Anime A>:1089`, `series/<Anime H>:2:1`) answer streams whose description carries `S05E02`, `S22E04` and `S02E01`; one stream of another episode fails the check.
 6. The log holds each request's `http_request` record (`X-Request-ID`), and the placement record `stremio_episode_ref` is shown when the log level has it (it is DEBUG, so production prints `no placement record (DEBUG)`).
 7. `movie/<Movie F>` answers at least one stream within `--deadline` (default 60 s, `stremio.stream_deadline_seconds`); `--timeout` bounds each stream request (default 120 s).
+   Each stream row ends with the client's time to the response headers and to the body's end beside the server's `duration_ms` of that `http_request` record (`client 4.1 s to headers, 4.2 s to the end, server 3.9 s`); a client more than 5 s slower than the server turns a passed row into a warning that names the gap (`27.0 s more on the way`): the time went into the proxy or the network, not the search.
 8. The readiness probe's gauge `scavengarr_network_ok` reads 1 for the cache backend and the DNS ([Readiness](../current/observability.md#readiness)); a check at 0 fails, and no sample yet (nothing asked `/api/v1/readyz` since the start) is a warning.
 
 The stream requests are its only writes to production (four searches).

@@ -316,7 +316,9 @@ def stream_answers(
         for sid in ids:
             started = time.monotonic()
             try:
-                resp = http.get(f"{base}/stream/{sid}.json")
+                with http.stream("GET", f"{base}/stream/{sid}.json") as resp:
+                    headers_seconds = time.monotonic() - started
+                    resp.read()
             except httpx.HTTPError as exc:
                 answers.append(
                     Answer(
@@ -341,6 +343,7 @@ def stream_answers(
                     streams,
                     seconds,
                     resp.headers.get("X-Request-ID"),
+                    headers_seconds=headers_seconds,
                 )
             )
     return answers
