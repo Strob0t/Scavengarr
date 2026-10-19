@@ -863,7 +863,7 @@ The twelfth round's Series D S01E01 got no stream from a stale entry whose only 
 | 41d6958 | +1 h 26 min | 1 | 0 | none to fill; read before row 105's rebuild signal |
 | 4429aff | +44 min 23 s | 4 | 0 | none to fill; read before row 107's rebuild signal |
 | 85e9e5d | +1 h 29 min | 8 | 0 | none to fill; read before the rebuild signal for rows 106, 108 and 109 (four of the eight stale answers are the repeated post-deploy check's own requests) |
-| d8f375bc | +about 1 h | 0 | 0 | no Stremio request in this container's first hour (the counter did not exist yet); read before the rebuild signal for rows 121 and 122; the stack was recreated twice on this build, and the two earlier containers (9 h 50 min and about 4 h) went unread |
+| d8f375bc | +about 1 h and +about 2 h | 0 | 0 | none to fill: no Stremio request in the first hour, then 34 answers by the second reading (18 searches with streams, 15 from the cache, 1 search empty, none stale); read before the rebuild signal for rows 121, 122 and 134; the stack was recreated twice on this build, and the two earlier containers (9 h 50 min and about 4 h) went unread |
 
 ## AIOStreams
 
