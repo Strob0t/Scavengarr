@@ -1,5 +1,6 @@
 # 0007: A plugin's search gets 30 s, and the answer waits for its target
 
+> **Purpose:** Records why a plugin's search gets 30 s, and the answer waits for its target.
 > **Status:** target
 > **As of:** 5b4303e4
 

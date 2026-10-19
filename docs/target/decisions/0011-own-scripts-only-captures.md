@@ -1,5 +1,6 @@
 # 0011: Captures that opt in load only their page's own scripts
 
+> **Purpose:** Records why captures that opt in load only their page's own scripts.
 > **Status:** target
 > **As of:** 5b4303e4
 

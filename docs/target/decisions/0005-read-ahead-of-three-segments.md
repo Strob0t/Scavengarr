@@ -1,5 +1,6 @@
 # 0005: The HLS proxy reads three segments ahead
 
+> **Purpose:** Records why the HLS proxy reads three segments ahead.
 > **Status:** target
 > **As of:** 5b4303e4
 

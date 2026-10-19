@@ -1,5 +1,6 @@
 # Link validation
 
+> **Purpose:** Sites often list dead, expired or blocked download URLs.
 > **Status:** current
 > **As of:** bdd3f0c4
 

@@ -1,5 +1,6 @@
 # Orchestration
 
+> **Purpose:** The three sessions' roles, working rules, worktrees, production access and the maintainer's standing decisions.
 > **Status:** reference
 > **As of:** 22fb988b
 

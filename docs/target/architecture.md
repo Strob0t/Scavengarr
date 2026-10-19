@@ -1,5 +1,6 @@
 # Architecture rules
 
+> **Purpose:** The dependency rule, the layer contracts and the invariants.
 > **Status:** target
 > **As of:** 5b4303e4
 

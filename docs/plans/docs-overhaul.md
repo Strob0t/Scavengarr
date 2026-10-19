@@ -1,5 +1,6 @@
 # Docs overhaul: one style, target and current state only, history archived
 
+> **Purpose:** The target layout of these docs, the document contract and the steps to get there.
 > **Status:** plan (open); the work is rows 110 to 120 of `docs/backlog.md`
 > **As of:** 6786e014
 > **Evidence:** an inventory of every Markdown file in the repository (117 files, 21,870 lines, 2.43 MB; the numbers below are its final pass)

@@ -1,5 +1,6 @@
 # Measure performance
 
+> **Purpose:** Measuring stream requests, a playback under load and the title set before and after a change.
 > **Status:** how-to
 > **As of:** d8f375bc
 

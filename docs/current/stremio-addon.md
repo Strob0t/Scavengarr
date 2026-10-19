@@ -1,5 +1,6 @@
 # Stremio addon
 
+> **Purpose:** The Stremio addon answers a Stremio player's request for the streams of a movie or an episode with the links Scavengarr's plugins find, resolved by its hoster resolvers and ranked.
 > **Status:** current
 > **As of:** 19b7e2c8
 

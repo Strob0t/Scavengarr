@@ -1,5 +1,6 @@
 # MCP servers
 
+> **Purpose:** The MCP servers of `.mcp.json` and what installs them.
 > **Status:** reference
 > **As of:** d17c66f7
 

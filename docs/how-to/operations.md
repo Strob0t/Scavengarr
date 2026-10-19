@@ -1,5 +1,6 @@
 # Operate production
 
+> **Purpose:** Reading production with `scripts/prodctl.py`: logs, metrics, the digest, the post-deploy check and the probes.
 > **Status:** how-to
 > **As of:** a4b5f7d8
 

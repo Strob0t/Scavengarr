@@ -1,5 +1,6 @@
 # Deploy Scavengarr
 
+> **Purpose:** Running the container image: tags, Compose profiles, Redis, a VPN container, a reverse proxy, the build identity.
 > **Status:** how-to
 > **As of:** bdd3f0c4
 

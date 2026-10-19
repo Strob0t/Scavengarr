@@ -1,5 +1,6 @@
 # Observability
 
+> **Purpose:** Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution, every stealth browser page and every HLS proxy request.
 > **Status:** current
 > **As of:** 54ee500c
 

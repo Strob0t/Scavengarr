@@ -1,5 +1,6 @@
 # Tech stack
 
+> **Purpose:** Every dependency with its purpose and the reason for it, the tools beside the Python packages and the alternatives not used.
 > **Status:** reference
 > **As of:** 587aa704
 

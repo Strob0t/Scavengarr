@@ -1,5 +1,6 @@
 # 0013: Mirror sites form a group, and a Stremio request asks one of them
 
+> **Purpose:** Records why mirror sites form a group, and a Stremio request asks one of them.
 > **Status:** target
 > **As of:** 5b4303e4
 

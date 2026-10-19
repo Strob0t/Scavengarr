@@ -1,5 +1,6 @@
 # 0012: A challenge is an outcome of its own, outside the circuit breaker
 
+> **Purpose:** Records why a challenge is an outcome of its own, outside the circuit breaker.
 > **Status:** target
 > **As of:** 5b4303e4
 

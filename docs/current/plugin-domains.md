@@ -1,5 +1,6 @@
 # Plugin domains
 
+> **Purpose:** Sites move between domains, keep mirrors and get blocked by name.
 > **Status:** current
 > **As of:** 5b4303e4
 

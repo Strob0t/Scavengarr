@@ -1,5 +1,6 @@
 # Add a hoster resolver
 
+> **Purpose:** Adding or repairing a hoster resolver, from the unresolved hosters to the regenerated resolver list.
 > **Status:** how-to
 > **As of:** eb83019c
 

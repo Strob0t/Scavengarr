@@ -1,5 +1,6 @@
 # Known issues
 
+> **Purpose:** The open defects of the current release, one line each, with where each is tracked.
 > **Status:** current
 > **As of:** d8f375bc
 

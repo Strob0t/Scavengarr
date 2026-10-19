@@ -1,5 +1,6 @@
 # Deploying the Stremio addon
 
+> **Purpose:** Deploying the addon with a streaming server, a VPN container and AIOStreams.
 > **Status:** how-to
 > **As of:** 19b7e2c8
 

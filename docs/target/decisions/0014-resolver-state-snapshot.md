@@ -1,5 +1,6 @@
 # 0014: The resolver registry's state outlives a restart as one snapshot
 
+> **Purpose:** Records why the resolver registry's state outlives a restart as one snapshot.
 > **Status:** target
 > **As of:** 5b4303e4
 

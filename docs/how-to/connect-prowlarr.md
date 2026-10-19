@@ -1,5 +1,6 @@
 # Connect Prowlarr
 
+> **Purpose:** Connecting Prowlarr, Sonarr, Radarr and JDownloader to Scavengarr.
 > **Status:** how-to
 > **As of:** bdd3f0c4
 

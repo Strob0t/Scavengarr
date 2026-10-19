@@ -1,5 +1,6 @@
 # 0003: The answer budget bounds the answer, not the plugins
 
+> **Purpose:** Records why the answer budget bounds the answer, not the plugins.
 > **Status:** target
 > **As of:** 5b4303e4
 

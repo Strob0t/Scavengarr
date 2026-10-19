@@ -1,5 +1,6 @@
 # Adding a plugin
 
+> **Purpose:** Writing a new plugin, from the site analysis to the regenerated plugin list.
 > **Status:** how-to
 > **As of:** e238c723
 

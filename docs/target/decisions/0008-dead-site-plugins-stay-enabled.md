@@ -1,5 +1,6 @@
 # 0008: A plugin whose site is down stays enabled
 
+> **Purpose:** Records why a plugin whose site is down stays enabled.
 > **Status:** target
 > **As of:** 5b4303e4
 

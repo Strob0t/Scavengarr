@@ -1,5 +1,6 @@
 # Torznab and CrawlJobs
 
+> **Purpose:** Prowlarr and the Arr apps expect a Torznab indexer whose items link to a downloadable file.
 > **Status:** current
 > **As of:** 4bb4aaa2
 

@@ -1,5 +1,6 @@
 # Architecture
 
+> **Purpose:** This document maps the modules of `src/scavengarr/` to their layers, follows a Torznab search and a Stremio stream request through them, and gives the order in which the app starts and stops.
 > **Status:** current
 > **As of:** 54ee500c
 

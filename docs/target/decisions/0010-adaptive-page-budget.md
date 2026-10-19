@@ -1,5 +1,6 @@
 # 0010: Browser pages go by their work's claim, and their count adapts
 
+> **Purpose:** Records why browser pages go by their work's claim, and their count adapts.
 > **Status:** target
 > **As of:** 5b4303e4
 

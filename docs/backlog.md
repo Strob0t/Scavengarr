@@ -1,5 +1,6 @@
 # Backlog
 
+> **Purpose:** The open rows of the work queue and the ideas not yet taken up; a coder's hashes and Mr. Fable's acceptance go on the row's line.
 > **Status:** plan
 > **As of:** 6786e014
 

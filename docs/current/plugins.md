@@ -1,5 +1,6 @@
 # Plugins
 
+> **Purpose:** A plugin knows how to search one site and returns normalised `SearchResult` objects.
 > **Status:** current
 > **As of:** e238c723
 

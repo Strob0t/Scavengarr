@@ -1,5 +1,6 @@
 # NNNN: <Decision in a few words>
 
+> **Purpose:** <one sentence: records why …>
 > **Status:** target
 > **As of:** <short hash of the staging commit the text describes>
 

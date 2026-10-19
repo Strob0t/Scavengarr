@@ -1,5 +1,6 @@
 # 0002: Anime ids from the Anime Kitsu addon, Fribb's list as the fallback
 
+> **Purpose:** Records why anime ids come from the Anime Kitsu addon, with Fribb's list as the fallback.
 > **Status:** target
 > **As of:** 5b4303e4
 

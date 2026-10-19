@@ -1,5 +1,6 @@
 # 0006: Address-bound direct files go through Scavengarr's proxy
 
+> **Purpose:** Records why address-bound direct files go through Scavengarr's proxy.
 > **Status:** target
 > **As of:** 5b4303e4
 

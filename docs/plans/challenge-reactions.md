@@ -1,5 +1,6 @@
 # Plan: Reactive Challenge Handling (Round 2)
 
+> **Purpose:** What Scavengarr does once a page shows a challenge or a captcha.
 > **Status:** plan
 > **As of:** ebad43ac
 

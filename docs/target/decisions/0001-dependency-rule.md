@@ -1,5 +1,6 @@
 # 0001: Source code depends inward only
 
+> **Purpose:** Records why source code depends inward only.
 > **Status:** target
 > **As of:** 5b4303e4
 

@@ -1,5 +1,6 @@
 # Browser and challenges
 
+> **Purpose:** Scavengarr runs one headful Chromium for the work plain HTTP cannot do: the Playwright plugins, the plugin pages behind Cloudflare, the hoster captures and the link-outs.
 > **Status:** current
 > **As of:** 19b7e2c8
 

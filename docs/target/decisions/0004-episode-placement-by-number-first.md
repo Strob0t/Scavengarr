@@ -1,5 +1,6 @@
 # 0004: A located episode is placed by its number first
 
+> **Purpose:** Records why a located episode is placed by its number first.
 > **Status:** target
 > **As of:** 5b4303e4
 

@@ -1,5 +1,6 @@
 # Claude Code skills
 
+> **Purpose:** The Claude Code skills of the dev container and their sources.
 > **Status:** reference
 > **As of:** b33f1b84
 

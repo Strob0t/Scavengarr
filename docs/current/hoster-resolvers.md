@@ -1,5 +1,6 @@
 # Hoster resolvers
 
+> **Purpose:** A plugin's search delivers hoster links: the embed pages of streaming hosters and the file pages of direct-download hosters.
 > **Status:** current
 > **As of:** 54ee500c
 

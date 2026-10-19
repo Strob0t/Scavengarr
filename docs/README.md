@@ -1,7 +1,8 @@
 # Scavengarr documentation
 
+> **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** 33b3d913
+> **As of:** 75ba8a27
 
 The one index of the documentation: one line per document with its status.
 
@@ -209,16 +210,19 @@ Open plans stay in `docs/plans/`; a closed plan moves to the archive with its ou
 
 ## Documentation rules
 
-Every document under `docs/` outside the archive and the generated reference files starts with its title and a status block:
+Every document under `docs/` outside the archive starts with its title and a status block:
 
 ```markdown
 # <Title>
 
+> **Purpose:** <one sentence: what the document is for>
 > **Status:** current | target | how-to | reference | plan
 > **As of:** <short hash of the staging commit the text describes>
 ```
 
-An archived document keeps its text and gets `> **Status:** archived` plus `> **Superseded by:** <path>`; the generated reference files carry their generator's name on line 3 instead.
+A `current` document's purpose line is the first sentence of its Purpose section, and a decision record's says what it records.
+A generated reference file names its generator in its purpose line and carries no further status lines; a reference file with generated tables names the generator there too and keeps them.
+An archived document keeps its text and gets `> **Status:** archived` plus `> **Superseded by:** <path>`.
 
 Sections in a fixed order per kind:
 

@@ -1,5 +1,6 @@
 # 0015: Docs and commit texts tell nothing about what the maintainer watches
 
+> **Purpose:** Records why docs and commit texts tell nothing about what the maintainer watches.
 > **Status:** target
 > **As of:** 6786e014
 

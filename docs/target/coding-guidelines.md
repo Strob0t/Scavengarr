@@ -1,5 +1,6 @@
 # Coding guidelines
 
+> **Purpose:** The rules the code follows for the event loop, shared resources, concurrency, scraping, browser pages, caching, retries and logging.
 > **Status:** target
 > **As of:** d8f375bc
 

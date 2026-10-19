@@ -1,5 +1,6 @@
 # Plan: Stremio Response Time and Playable Streams
 
+> **Purpose:** The Stremio response time and playable streams, with its open investigation.
 > **Status:** plan
 > **As of:** e4b4371c
 

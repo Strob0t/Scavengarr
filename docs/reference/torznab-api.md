@@ -1,5 +1,6 @@
 # Torznab API
 
+> **Purpose:** The Torznab and download endpoints, their parameters, XML and errors.
 > **Status:** reference
 > **As of:** 4bb4aaa2
 

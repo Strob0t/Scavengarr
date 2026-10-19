@@ -1,5 +1,6 @@
 # 0009: Filemoon's captcha pass is kept only while there is demand
 
+> **Purpose:** Records why Filemoon's captcha pass is kept only while there is demand.
 > **Status:** target
 > **As of:** 5b4303e4
 
