@@ -51,7 +51,7 @@ One line per feature, with the document that describes it.
 | Structured logging | structlog writes JSON or console lines, and every request's lines carry its `request_id`. | [Observability](current/observability.md#request-id) |
 | Metrics and tracing | The core's stages are Prometheus metrics, and OpenTelemetry traces on demand. | [Observability](current/observability.md), [Metrics](reference/metrics.md) |
 | Health endpoints | `/api/v1/healthz` reports the build and `/api/v1/readyz` answers once the startup has finished. | [Torznab API](reference/torznab-api.md#application-health) |
-| Graceful shutdown | In-flight requests and background work end before the cache closes. | [Architecture](current/architecture.md#shutdown) |
+| Graceful shutdown | In-flight requests get up to 5 s, then the background work ends before the cache closes. | [Architecture](current/architecture.md#shutdown) |
 | Tests | Unit, integration and end-to-end tests run on every commit, live tests against the sites on demand. | [Contributing](../CONTRIBUTING.md#running-tests) |
 
 ## Repository root

@@ -126,6 +126,10 @@ def start(argv: Iterable[str] | None = None) -> None:
         # The app's http_request line is the access log, its query masked;
         # uvicorn's own repeated each request with the CDN's tokens
         access_log=False,
+        # An open proxied playback holds the drain; after 5 s uvicorn cancels
+        # it, so the lifespan shutdown (snapshots, closes) ends inside
+        # Docker's 10 s stop grace
+        timeout_graceful_shutdown=5,
     )
 
 

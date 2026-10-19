@@ -56,3 +56,11 @@ def test_uvicorn_access_log_is_off(run_mock: MagicMock) -> None:
     cli.start([])
 
     assert run_mock.call_args.kwargs["access_log"] is False
+
+
+def test_uvicorn_bounds_the_graceful_shutdown(run_mock: MagicMock) -> None:
+    # An open proxied playback would hold the drain past Docker's 10 s stop
+    # grace; after 5 s uvicorn cancels it and the lifespan shutdown still runs
+    cli.start([])
+
+    assert run_mock.call_args.kwargs["timeout_graceful_shutdown"] == 5

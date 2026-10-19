@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Graceful Shutdown Is Bounded at 5 s
+
+- Uvicorn runs with `timeout_graceful_shutdown=5` (`src/scavengarr/interfaces/cli/__main__.py`): a connection still answering 5 s after the stop signal, such as a proxied playback, is cancelled, so the app's cleanup (the drain, the last snapshots of the resolver state and the plugin record, the closes) runs inside Docker's 10 s stop grace instead of being cut off by its kill. Uvicorn waited without a limit before. On the dev server a stop with a proxied file playback held open by a slow reader took 5.2 to 5.3 s until the process was gone (before: still waiting after 20 s), a stop without an open connection 0.25 s. `docs/current/architecture.md` → Shutdown, the README and the index state the bound; `tests/unit/interfaces/test_cli.py` checks the argument.
+
 ### Changed: Dependabot Opens Its Pull Requests Against `staging`
 
 - `.github/dependabot.yml` sets `target-branch: "staging"` for Poetry, GitHub Actions and the Docker base images, so an update reaches `main` only through `staging`; AGENTS.md §4 says the PRs are merged into `staging` after a green CI run, and `tests/unit/infrastructure/test_repository_files.py` fails when an ecosystem names another branch or none.

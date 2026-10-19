@@ -1,7 +1,7 @@
 # Architecture
 
 > **Status:** current
-> **As of:** 5b4303e4
+> **As of:** f3edb532
 
 ## Purpose
 
@@ -390,8 +390,11 @@ flowchart TD
         close["The listening sockets close"] --> conns["Each connection is asked to shut down: an idle one closes, an active one after its response"]
         conns --> waitc["Wait until every connection is closed"]
         waitc --> waitt["Wait until every request task has ended"]
+        waitc -. "5 s after the signal" .-> cancel["The request tasks still running are cancelled"]
+        waitt -. "5 s after the signal" .-> cancel
     end
     waitt --> drain
+    cancel --> drain
     subgraph app["The app: lifespan() cleanup"]
         drain["GracefulShutdown.wait_for_drain() for up to 10 s, readyz answers 503"] --> stop["The background work ends: Stremio searches and resolutions, anime ids, StremioLinks, segment read-ahead, pass keeper"]
         stop --> reg["The resolver registry's half-open probes and challenged captures end"]
@@ -404,8 +407,11 @@ flowchart TD
     signal -. "a second SIGINT" .-> force["force_exit: the waits end and the app's cleanup is skipped"]
 ```
 
-Uvicorn waits without a time limit: the CLI sets no `timeout_graceful_shutdown`.
-Only after every connection has closed and every request task has ended does it send the lifespan shutdown event.
+Uvicorn's two waits together last up to 5 s: the CLI sets `timeout_graceful_shutdown=5`.
+A connection still answering then, such as a proxied playback, is cancelled with the line `Cancel 1 running task(s), timeout graceful shutdown exceeded` and the cancelled task's `Exception in ASGI application` at error level.
+Only after every connection has closed and every request task has ended or been cancelled does it send the lifespan shutdown event.
+So the app's cleanup ends inside Docker's default stop grace of 10 s, after which Docker would kill the process and the cleanup would not run.
+On the dev server a stop with a proxied file playback held open by a slow reader took 5.2 to 5.3 s from SIGTERM until the process was gone, the cleanup 0.03 to 0.13 s of it, and 0.25 s without an open connection; without the bound the process still waited for the connection after 20 s.
 The app then marks itself shutting down, so `/api/v1/readyz` answers 503, and waits up to 10 s for the requests it still counts in flight.
 The background work ends before the resources it uses: the searches and resolutions before the browser, the HTTP client and the cache.
 The snapshots are written last before the cache closes, and the telemetry closes after everything else so the last spans still go out.
