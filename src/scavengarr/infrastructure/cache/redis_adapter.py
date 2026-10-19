@@ -192,6 +192,21 @@ class RedisAdapter:
             self._answered()
             return exists > 0
 
+    async def ping(self) -> bool:
+        """PING: whether Redis answers (the readiness probe's cache check);
+        a failure counts toward the outage like any call's."""
+        if self._client is None:
+            return False
+
+        async with self._semaphore:
+            try:
+                await self._client.ping()
+            except RedisError as e:
+                self._log_failure("redis_ping_error", e)
+                return False
+            self._answered()
+            return True
+
     async def clear(self) -> None:
         """FLUSHDB (delete ALL keys in current DB)."""
         if self._client is None:

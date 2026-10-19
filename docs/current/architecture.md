@@ -207,6 +207,7 @@ Metadata, Torznab, validation, telemetry and the runtime services:
 | `infrastructure/circuit_breaker.py` | `PluginCircuitBreaker` | The circuit breaker of plugins and hosters: closed, open, half-open. |
 | `infrastructure/concurrency.py` | `ConcurrencyPool`, `RequestBudget` | The global fair-share httpx and Playwright slots. |
 | `infrastructure/graceful_shutdown.py` | `GracefulShutdown` | The readiness flag and the drain of in-flight requests. |
+| `infrastructure/network_probe.py` | `NetworkProbe` | The readiness probe's network checks: the cache backend's ping and a public name's DNS resolution; both failing for 5 min is a lost network. |
 | `infrastructure/resource_detector.py` | `detect_resources`, `ResourceSampler` | The container's CPU and memory (cgroup v2 or v1), its load and its free memory. |
 | `infrastructure/version.py` | `APP_VERSION`, `APP_USER_AGENT`, `build_identity` | The version from the package metadata, and the build's commit. |
 

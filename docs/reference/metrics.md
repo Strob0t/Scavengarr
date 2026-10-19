@@ -49,6 +49,7 @@ prometheus-client adds `process_*` (the Python process), `python_gc_*` and `pyth
 | `scavengarr_hoster_pass_keep_total` | counter | `outcome` |  | Captures of Filemoon's captcha pass keeper by outcome |
 | `scavengarr_hoster_resolve_seconds` | histogram | `resolver` | 0.5, 1, 2, 4, 7, 15 | Hoster resolutions: duration |
 | `scavengarr_hoster_resolve_total` | counter | `resolver`, `outcome` |  | Hoster resolutions by outcome |
+| `scavengarr_network_ok` | gauge | `check` |  | 1 when the readiness probe's check answered at its last run, else 0 |
 | `scavengarr_plugin_results_total` | counter | `plugin` |  | Validated results of plugin searches |
 | `scavengarr_plugin_search_seconds` | histogram | `plugin` | 1, 2, 4, 7, 10, 15, 30 | Plugin searches of Stremio requests: duration |
 | `scavengarr_plugin_search_total` | counter | `plugin`, `outcome` |  | Plugin searches of Stremio requests by outcome |

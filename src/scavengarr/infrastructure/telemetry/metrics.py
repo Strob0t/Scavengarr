@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from prometheus_client import (
     CollectorRegistry,
     Counter,
+    Gauge,
     GCCollector,
     Histogram,
     Info,
@@ -217,7 +218,7 @@ class Telemetry:
             )
             for name, spec in _STAGES.items()
         }
-        self._values: dict[ValueName, Counter | Histogram] = {
+        self._values: dict[ValueName, Counter | Gauge | Histogram] = {
             "stremio_streams": Histogram(
                 "scavengarr_stremio_streams",
                 "Streams per Stremio answer",
@@ -234,6 +235,13 @@ class Telemetry:
                 "scavengarr_hls_proxy_bytes",
                 "Bytes the HLS proxy sent",
                 ("kind",),
+                registry=self.registry,
+            ),
+            # The readiness probe's checks at its last run (NetworkProbe)
+            "network_ok": Gauge(
+                "scavengarr_network_ok",
+                "1 when the readiness probe's check answered at its last run, else 0",
+                ("check",),
                 registry=self.registry,
             ),
         }
@@ -268,6 +276,8 @@ class Telemetry:
         child = metric.labels(**labels) if labels else metric
         if isinstance(child, Histogram):
             child.observe(value)
+        elif isinstance(child, Gauge):
+            child.set(value)
         else:
             child.inc(value)
 
@@ -367,7 +377,7 @@ class Telemetry:
 
 
 def _samples(
-    metric: Counter | Histogram, suffix: str
+    metric: Counter | Gauge | Histogram, suffix: str
 ) -> Iterator[tuple[dict[str, str], float]]:
     """The labels and values of *metric*'s samples named ``…<suffix>``."""
     for family in metric.collect():

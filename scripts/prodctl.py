@@ -26,7 +26,8 @@ Usage (``poetry run python scripts/prodctl.py ...``):
                                          the post-deploy check: the container,
                                          the start's records, four stream
                                          requests through the public addon URL
-                                         (``--base``, up to ``/api/v1/stremio``);
+                                         (``--base``, up to ``/api/v1/stremio``),
+                                         the readiness probe's network gauge;
                                          one table, exit 1 on a failed check
                                          (``deploy_check.py``)
 
@@ -52,6 +53,7 @@ from deploy_check import (
     Answer,
     container_check,
     failed,
+    network_check,
     parse_time,
     startup_checks,
     stream_checks,
@@ -345,8 +347,11 @@ def stream_answers(
 
 
 def _check(args: argparse.Namespace) -> int:
-    """The post-deploy check: two Portainer requests (the containers, the
-    log since the start) and four stream requests; read-only beyond those."""
+    """The post-deploy check: ten Portainer requests (the containers, the
+    container's start and the log since the start through one client,
+    ``/metrics`` in one exec of three requests through another, each client
+    with its endpoint lookup and container listing first) and four stream
+    requests; read-only beyond those."""
     client = portainer_client(args.container)
     checks = [container_check(client.containers(), args.container)]
     started_at = parse_time(client.inspect()["State"]["StartedAt"])
@@ -358,6 +363,8 @@ def _check(args: argparse.Namespace) -> int:
     records = parse_records(client.logs(int(started_at) - 1, timestamps=True))
     checks += startup_checks(records, started_at)
     checks += stream_checks(answers, records, deadline_s=args.deadline)
+    metrics = _fetch(args.container, "/metrics")["/metrics"]
+    checks.append(network_check(metrics if isinstance(metrics, str) else None))
     print(mask(render_checks(checks)))
     return 1 if failed(checks) else 0
 

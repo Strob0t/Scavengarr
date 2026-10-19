@@ -166,6 +166,16 @@ class TestCountAndRecord:
         with pytest.raises(ValueError):
             t.record("hls_proxy_bytes", 100)
 
+    def test_record_gauge(self) -> None:
+        """A state: the last value counts (the network probe's checks)."""
+        t = Telemetry()
+        t.record("network_ok", 0.0, check="dns")
+        t.record("network_ok", 1.0, check="dns")
+        t.record("network_ok", 0.0, check="cache")
+
+        assert _sample(t, "scavengarr_network_ok", check="dns") == 1.0
+        assert _sample(t, "scavengarr_network_ok", check="cache") == 0.0
+
 
 class TestRender:
     def test_text_format_with_standard_families(self) -> None:

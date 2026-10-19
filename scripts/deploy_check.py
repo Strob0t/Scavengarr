@@ -1,9 +1,9 @@
 """The post-deploy check's evaluation: pass or fail per check, one table.
 
 ``prodctl.py check`` gathers the inputs (the container's row and start time,
-its log since the start, four stream answers through the public endpoint)
-and this module judges them, so the judgement is tested from fixtures
-without a network:
+its log since the start, its ``/metrics``, four stream answers through the
+public endpoint) and this module judges them, so the judgement is tested
+from fixtures without a network:
 
 1. the container is running and healthy;
 2. the newest ``app_startup_complete`` record is younger than the
@@ -15,7 +15,9 @@ without a network:
    stream builder adds); the request's ``http_request`` record shows it
    reached the container, and its ``stremio_episode_ref`` record (DEBUG)
    names the placement when the log level has it;
-6. the movie id answers within the deadline with at least one stream.
+6. the movie id answers within the deadline with at least one stream;
+7. the readiness probe's gauge ``scavengarr_network_ok`` reads 1 for the
+   cache backend and the DNS (none yet: a warning).
 
 Stream descriptions are the only site data in the table; the caller masks
 the output (``portainer.mask``).
@@ -44,6 +46,8 @@ MOVIE_ID = "movie/tt0816692"
 _STARTUP = "app_startup_complete"
 _RESTORED = ("hoster_state_restored", "plugin_history_restored")
 _CODE = re.compile(r"S\d{2}E\d{2}", re.I)
+# The readiness probe's gauge per check (cache, dns)
+_NETWORK = re.compile(r'^scavengarr_network_ok\{check="(\w+)"\} (\S+)$', re.M)
 
 
 @dataclass(frozen=True)
@@ -232,6 +236,23 @@ def stream_checks(
                     )
                 )
     return checks
+
+
+def network_check(metrics: str | None) -> Check:
+    """Check 7: the readiness probe's gauge, from ``/metrics`` (``None``:
+    the endpoint did not answer). Every check must have answered at the
+    probe's last run; no sample yet means nothing asked readiness."""
+    if metrics is None:
+        return Check("network", "fail", "/metrics did not answer")
+    values = {check: float(value) for check, value in _NETWORK.findall(metrics)}
+    if not values:
+        return Check("network", "warn", "no scavengarr_network_ok sample yet")
+    down = sorted(check for check, value in values.items() if value != 1.0)
+    if down:
+        return Check(
+            "network", "fail", f"no answer at the last probe: {', '.join(down)}"
+        )
+    return Check("network", "pass", f"{' and '.join(sorted(values))} answered")
 
 
 def failed(checks: Iterable[Check]) -> bool:

@@ -197,7 +197,8 @@ Passing `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT` as build arguments from the c
 # Liveness: version, commit, build time, plugin count, hosters
 curl http://localhost:7979/api/v1/healthz
 
-# Readiness: 200; the port opens only after the startup has finished
+# Readiness: 200; the port opens only after the startup has finished, and a
+# network lost for 5 min turns it 503 (the image's healthcheck asks it)
 curl http://localhost:7979/api/v1/readyz
 
 # The loaded plugins
@@ -213,14 +214,15 @@ Next: [connect Prowlarr](connect-prowlarr.md) or add the Stremio addon ([Stremio
 |---|---|
 | The app runs on its built-in defaults; the log says the config directory is not writable. | Make the mounted directory writable for uid 1000 (`chown 1000:1000 ./data`). |
 | A changed default of a new release does not apply. | The seeded `config.yaml` stays as it is; compare it with `data/config.yaml` of the release. |
-| Healthy, but every search and lookup fails after the VPN container was updated. | The namespace went with the old VPN container; recreate Scavengarr (step 6). |
+| Every search and lookup fails after the VPN container was updated; after 5 min and three failed checks the container turns unhealthy (with Redis; diskcache keeps it healthy). | The namespace went with the old VPN container; recreate Scavengarr (step 6). |
 | Most German plugins find no site. | A German ISP's resolver blocks the domains of the CUII list, most German streaming sites among them; use a resolver that does not apply the block, such as the VPN container's (step 6). |
 | Links come out as `http://` behind the proxy, and the browser blocks them as mixed content. | The proxy's address is not in `FORWARDED_ALLOW_IPS` (step 7). |
 | `commit=unknown built=unknown` in the startup line. | The build had neither `.git` nor build arguments (step 8). |
 | The Docker log fills the disk. | Docker's `json-file` driver keeps every record without a bound; set a rotation as below. |
 
-The healthcheck asks `/api/v1/healthz` over loopback, a liveness probe that needs no network, so a container without a network keeps reporting healthy.
-The app logs such an outage once where it can (`redis_unavailable` and `redis_recovered` for Redis; `query_pool_unavailable` when the scoring scheduler cannot reach IMDb), and a log rotation keeps the rest bounded:
+The healthcheck asks `/api/v1/readyz`, which answers 503 once the cache backend's ping and the DNS resolution of a public name have both failed for longer than 5 min ([Readiness](../current/observability.md#readiness)); the third failed check in a row, 30 s apart, marks the container unhealthy, and Docker restarts nothing by itself.
+With the diskcache backend the cache check needs no network, so a container without a network keeps reporting healthy there.
+The app logs such an outage once where it can (`network_lost` and `network_recovered` for the readiness probe; `redis_unavailable` and `redis_recovered` for Redis; `query_pool_unavailable` when the scoring scheduler cannot reach IMDb), and a log rotation keeps the rest bounded:
 
 ```yaml
     logging:

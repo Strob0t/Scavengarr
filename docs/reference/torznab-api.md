@@ -306,8 +306,13 @@ GET /api/v1/healthz
 GET /api/v1/readyz
 ```
 
-`{"status": "ready"}` with 200 once the startup has finished, else `{"status": "not_ready"}` with 503.
-Under uvicorn the port opens only after the startup and closes before the shutdown, so a starting app refuses connections and a reachable one answers 200.
+`{"status": "ready"}` with 200 once the startup has finished while the app reaches its network.
+503 otherwise: `{"status": "not_ready"}` before the startup has finished, `{"status": "not_ready", "reason": "network"}` once the cache backend's ping and the DNS resolution of a fixed public name (`example.com.`) have both failed for longer than 5 minutes.
+The checks run at most once every 30 s, each within 3 s, and a request in between gets the last result; a single miss or one check failing alone keeps the 200.
+With the diskcache backend the cache check needs no network, so only a deployment with Redis reports a lost network.
+Every check sets the gauge `scavengarr_network_ok{check="cache"|"dns"}` ([Metrics](metrics.md)).
+The image's `HEALTHCHECK` asks this endpoint, so a container without its network turns unhealthy; `healthz` stays the liveness check ([Readiness](../current/observability.md#readiness)).
+Under uvicorn the port opens only after the startup and closes before the shutdown, so a starting app refuses connections.
 
 ## Rate limiting
 

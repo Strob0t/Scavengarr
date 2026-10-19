@@ -90,7 +90,7 @@ poetry run python scripts/prodctl.py check --base https://scavengarr.example/api
 ```
 
 `check` is the post-deploy check as one command, judged in `scripts/deploy_check.py` (tested from fixture records and answers, no network) and printed as one table; it exits 1 when a check failed.
-It costs two Portainer requests (the container list with its inspection for the start time, the log since that start) and four stream requests through the public addon URL; `--insecure` skips the TLS check for a local CA.
+It costs ten Portainer requests (the container list, its inspection for the start time, the log since that start, `/metrics` through one exec of three requests, and the endpoint lookup with its container listing for each of its two clients) and four stream requests through the public addon URL; `--insecure` skips the TLS check for a local CA.
 
 1. The container is running and healthy.
 2. The newest `app_startup_complete` record is younger than the container's start and names the version.
@@ -99,6 +99,7 @@ It costs two Portainer requests (the container list with its inspection for the 
 5. Three anime ids (`series/<Anime A>:5:2`, `series/kitsu:<Anime A>:1089`, `series/<Anime H>:2:1`) answer streams whose description carries `S05E02`, `S22E04` and `S02E01`; one stream of another episode fails the check.
 6. The log holds each request's `http_request` record (`X-Request-ID`), and the placement record `stremio_episode_ref` is shown when the log level has it (it is DEBUG, so production prints `no placement record (DEBUG)`).
 7. `movie/<Movie F>` answers at least one stream within `--deadline` (default 60 s, `stremio.stream_deadline_seconds`); `--timeout` bounds each stream request (default 120 s).
+8. The readiness probe's gauge `scavengarr_network_ok` reads 1 for the cache backend and the DNS ([Readiness](../current/observability.md#readiness)); a check at 0 fails, and no sample yet (nothing asked `/api/v1/readyz` since the start) is a warning.
 
 The stream requests are its only writes to production (four searches).
 The stream descriptions are the only site data in the table, and the output passes `portainer.mask()`.

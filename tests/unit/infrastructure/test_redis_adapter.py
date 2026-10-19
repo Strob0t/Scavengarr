@@ -126,3 +126,35 @@ class TestOutage:
         assert [e["event"] for e in logs if e["log_level"] == "error"] == [
             "redis_get_error"
         ]
+
+
+class TestPing:
+    """The readiness probe's cache check (``NetworkProbe``, row 125)."""
+
+    async def test_a_pong_answers(
+        self, adapter: RedisAdapter, client: AsyncMock
+    ) -> None:
+        client.ping.return_value = True
+
+        assert await adapter.ping() is True
+
+    async def test_an_unreachable_redis_does_not_answer_and_is_an_outage(
+        self, adapter: RedisAdapter, client: AsyncMock
+    ) -> None:
+        down = RedisConnectionError("Temporary failure in name resolution")
+        client.ping.side_effect = [down, down, True]
+
+        with capture_logs() as logs:
+            assert await adapter.ping() is False
+            assert await adapter.ping() is False
+            assert await adapter.ping() is True
+
+        assert [e["event"] for e in logs if e["event"].startswith("redis_")] == [
+            "redis_unavailable",
+            "redis_ping_error",
+            "redis_ping_error",
+            "redis_recovered",
+        ]
+
+    async def test_without_a_client_it_does_not_answer(self) -> None:
+        assert await RedisAdapter().ping() is False

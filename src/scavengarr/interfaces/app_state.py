@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.hoster_resolvers.state_store import (
         HosterStateStore,
     )
+    from scavengarr.infrastructure.network_probe import NetworkProbe
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.plugins.history import PluginHistory
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
@@ -100,6 +101,9 @@ class AppState(State):
 
     # Graceful shutdown (request tracking + drain)
     graceful_shutdown: GracefulShutdown
+
+    # Readiness beyond the startup: the cache backend and the DNS (readyz)
+    network_probe: NetworkProbe
 
     # Plugin scoring (optional — requires scoring.enabled=True)
     plugin_score_store: PluginScoreStorePort | None

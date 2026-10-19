@@ -128,6 +128,11 @@ class DiskcacheAdapter:
             exists = await asyncio.to_thread(lambda: key in cache)
             return exists
 
+    async def ping(self) -> bool:
+        """Whether the cache is open: a local file answers without a network
+        (the readiness probe's cache check)."""
+        return self._cache is not None
+
     async def clear(self) -> None:
         """Delete ALL keys."""
         if self._cache is None:

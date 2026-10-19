@@ -266,3 +266,34 @@ class TestRender:
 
         assert _mod.render(checks).endswith("PASS: 1 checks, 0 failed, 0 warnings")
         assert not _mod.failed(checks)
+
+
+class TestNetwork:
+    """Check 7: the readiness probe's gauge (row 125)."""
+
+    _METRICS = (
+        "# HELP scavengarr_network_ok Whether the network probe's check answered\n"
+        "# TYPE scavengarr_network_ok gauge\n"
+        'scavengarr_network_ok{check="cache"} 1.0\n'
+        'scavengarr_network_ok{check="dns"} 1.0\n'
+    )
+
+    def test_both_checks_answering_pass(self) -> None:
+        check = _mod.network_check(self._METRICS)
+
+        assert (check.name, check.status) == ("network", "pass")
+
+    def test_a_check_that_failed_fails_and_is_named(self) -> None:
+        check = _mod.network_check(self._METRICS.replace('"dns"} 1.0', '"dns"} 0.0'))
+
+        assert check.status == "fail"
+        assert "dns" in check.detail
+        assert "cache" not in check.detail
+
+    def test_without_a_probe_yet_it_warns(self) -> None:
+        check = _mod.network_check('scavengarr_build_info{version="0.3.0"} 1.0\n')
+
+        assert check.status == "warn"
+
+    def test_metrics_that_did_not_answer_fail(self) -> None:
+        assert _mod.network_check(None).status == "fail"

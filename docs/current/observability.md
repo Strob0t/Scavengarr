@@ -35,10 +35,10 @@ The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`)
 - The code sets the outcome (`stage.outcome = "hits"`); otherwise it is `ok`, `cut` for a cancellation (a deadline, an answer that is due, shutdown), `timeout` for a `TimeoutError` and `error` for any other exception.
 - Exceptions always propagate, and `stage.label(...)` sets a label known only later.
 - `count(name, outcome, **labels)` counts an outcome without a run, such as a plugin skipped by its open breaker or a resolution from the cache.
-- `record(name, value, **labels)` records a value that is not a duration: streams per answer, bytes.
+- `record(name, value, **labels)` records a value that is not a duration: streams per answer, bytes, the state of a readiness check.
 
 The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown.
-Eight places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, Filemoon's pass keeper (`PassKeeper`), the stealth browser's page gate (`PageGate`), the HLS proxy route with its read-ahead (`SegmentReadAhead`) and the event-loop monitor.
+Nine places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, Filemoon's pass keeper (`PassKeeper`), the stealth browser's page gate (`PageGate`), the HLS proxy route with its read-ahead (`SegmentReadAhead`), the event-loop monitor and the readiness probe (`NetworkProbe`).
 Plugins and resolvers contain no metrics code, so a new one is recorded without changes.
 A component without a wired port gets `NO_TELEMETRY`, which records nothing, as in most tests.
 
@@ -107,6 +107,17 @@ docker run --rm --entrypoint promtool -v ./docker:/rules prom/prometheus check r
 | `ScavengarrEventLoopLag` | The event loop's lag p99 is above 100 ms for 15 min: CPU work on the loop delays every timeout. | CPU panels, `scripts/stremio_profile.py --py-spy` |
 | `ScavengarrNoStreams` | More than half of the last hour's Stremio requests (at least 3) ended `empty` (for 15 min); requests that ended `no_title`, `no_plugins`, `error` or `cut` count only in the denominator. | search state and plugin outcomes |
 
+### Readiness
+
+Production's container once lost its network namespace for 33 h (the VPN container it shares was recreated without it) and stayed healthy all the while: `/api/v1/healthz` answers over loopback whatever fails outside.
+`/api/v1/readyz` therefore asks `NetworkProbe` (`infrastructure/network_probe.py`) too, and the image's `HEALTHCHECK` asks `/api/v1/readyz`; `healthz` stays the liveness check ([Application health](../reference/torznab-api.md#application-health)).
+
+- The probe pings the cache backend (`CachePort.ping()`) and resolves the fully qualified public name `example.com.` concurrently, each check within 3 s, at most once every 30 s; a request in between gets the last probe's verdict. It runs only when asked: the image's healthcheck asks every 30 s, and without a caller the gauge has no sample.
+- The network counts as lost once both checks have failed for longer than 5 min; `/api/v1/readyz` then answers 503 with `"reason": "network"`. A single miss changes nothing, and neither does one check failing alone (a Redis restart, a DNS hiccup).
+- Every probe sets `scavengarr_network_ok{check="cache"}` and `scavengarr_network_ok{check="dns"}` to 1 or 0; no alert rule reads it, the post-deploy check does ([Operations](../how-to/operations.md#5-check-a-deploy)).
+- The loss logs `network_lost` once (error, with `seconds`, `probes` and `dns_error`), its end `network_recovered` (`seconds`, `probes`); a failed Redis ping counts toward the cache's `redis_unavailable` and `redis_recovered` lines.
+- Docker marks the container unhealthy after three failed checks and restarts nothing by itself.
+
 ### Queries
 
 ```promql
@@ -137,6 +148,9 @@ sum(rate(scavengarr_hls_proxy_bytes_total[5m]))
 
 # p90 wait for a stealth browser page, by what it is for
 histogram_quantile(0.9, sum by (le, kind) (rate(scavengarr_browser_page_wait_seconds_bucket[1h])))
+
+# Readiness checks that failed at a scrape of the last day (0) or never (1)
+min_over_time(scavengarr_network_ok[1d])
 ```
 
 ### Request id
@@ -226,6 +240,7 @@ Reading production's metrics, logs and records: [Operations](../how-to/operation
 - The rule's first selector counts every outcome, so a plugin that was only skipped, unreachable or behind an open breaker counts as asked.
 - Label combinations exist only once they occurred, so the series grow with the plugins and resolvers in use.
 - Torznab searches are not recorded as plugin searches; only their stealth browser pages count (`browser_page` with `kind="plugin"`).
+- The readiness probe reports a lost network only when both checks fail: a DNS that fails while the cache backend answers keeps the 200, and with the diskcache backend, whose check needs no network, only the startup and the shutdown answer 503.
 
 ## Target
 
@@ -236,5 +251,6 @@ Reading production's metrics, logs and records: [Operations](../how-to/operation
 - `src/scavengarr/domain/ports/telemetry.py`: the port and `NO_TELEMETRY`.
 - `src/scavengarr/infrastructure/telemetry/`: `Telemetry`, the scrape-time collectors and the tracing.
 - `src/scavengarr/infrastructure/plugins/history.py`: the plugin record.
+- `src/scavengarr/infrastructure/network_probe.py`: the readiness probe.
 - `docker/grafana-dashboard.json`, `docker/prometheus-alerts.yml`, `docker/tempo.yaml`: the dashboard, the alert rules and Tempo.
 - [Metrics](../reference/metrics.md), [Operations](../how-to/operations.md), [Architecture](architecture.md).

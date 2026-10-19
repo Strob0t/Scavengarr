@@ -94,6 +94,16 @@ def test_the_build_context_holds_what_the_image_copies() -> None:
         assert source.strip("/").split("/")[0] not in ignored, source
 
 
+def test_the_image_healthcheck_asks_readiness() -> None:
+    """Liveness answers over loopback while every outbound call fails: the
+    image asks readiness, which tells a lost network (row 125)."""
+    text = (_ROOT / "Dockerfile.prod").read_text()
+    healthcheck = text[text.index("HEALTHCHECK") :].split("\n\n")[0]
+
+    assert "/api/v1/readyz" in healthcheck
+    assert "/api/v1/healthz" not in healthcheck
+
+
 @pytest.mark.skipif(
     shutil.which("git") is None or not (_ROOT / ".git").exists(),
     reason="needs a git checkout",

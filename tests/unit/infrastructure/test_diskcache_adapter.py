@@ -60,3 +60,15 @@ class TestWrites:
             assert await asyncio.gather(*(cache.get("k") for _ in range(4))) == [1] * 4
 
             assert overlap.peak > 1
+
+
+class TestPing:
+    """The readiness probe's cache check: a local cache answers while open."""
+
+    async def test_an_open_cache_answers_and_a_closed_one_not(
+        self, tmp_path: Path
+    ) -> None:
+        async with DiskcacheAdapter(directory=tmp_path) as cache:
+            assert await cache.ping() is True
+
+        assert await cache.ping() is False

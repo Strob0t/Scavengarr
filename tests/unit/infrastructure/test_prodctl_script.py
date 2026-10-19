@@ -293,8 +293,18 @@ class TestCheck:
     def _stream(description: str) -> dict[str, str]:
         return {"name": "Scavengarr\n1080p", "description": description, "url": "x"}
 
-    def _mock_production(self, *, healthy: bool = True) -> None:
+    def _mock_production(self, *, healthy: bool = True, dns: float = 1.0) -> None:
         status = "Up 2 hours (healthy)" if healthy else "Up 2 hours (unhealthy)"
+        # /metrics in one exec: the readiness probe's gauge per check
+        metrics = (
+            f'scavengarr_network_ok{{check="cache"}} 1.0\n'
+            f'scavengarr_network_ok{{check="dns"}} {dns}\n'
+        )
+        respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(json={"Id": "e1"})
+        respx.post(f"{_DOCKER}/exec/e1/start").respond(
+            content=_frame(json.dumps({"/metrics": metrics}) + "\n")
+        )
+        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
         # the same pattern as the fixture's route replaces it (ps lists ?all=1)
         respx.get(f"{_DOCKER}/containers/json").respond(
             json=[{"Names": ["/scavengarr"], "State": "running", "Status": status}]
@@ -354,7 +364,7 @@ class TestCheck:
 
         out = capsys.readouterr().out
         assert code == 0, out
-        assert out.endswith("PASS: 9 checks, 0 failed, 1 warnings\n")
+        assert out.endswith("PASS: 10 checks, 0 failed, 1 warnings\n")
         rows = [
             "| container               | PASS   | running, Up 2 hours (healthy) |",
             "| startup                 | PASS   | version 0.3.0 at 11:09:08 UTC |",
@@ -365,6 +375,7 @@ class TestCheck:
             "| series/tt0388629:5:2    | PASS   | 1 streams, all S05E02; logged;"
             " no placement record (DEBUG), 0.0 s |",
             "| movie/tt0816692         | PASS   | 1 streams in 0.0 s; logged |",
+            "| network                 | PASS   | cache and dns answered |",
         ]
         for row in rows:
             assert row in out, row
@@ -377,7 +388,7 @@ class TestCheck:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
-        self._mock_production(healthy=False)
+        self._mock_production(healthy=False, dns=0.0)
         self._mock_streams({**self._CODES, "series/tt0388629:5:2": "S05E03"})
 
         code = _mod.main(["check", "--base", self._ADDON])
@@ -392,7 +403,11 @@ class TestCheck:
             "| series/tt0388629:5:2    | FAIL   | 1 streams, none S05E02"
             " (first: Show.S05E03); logged, 0.0 s |"
         ) in out
-        assert out.endswith("FAIL: 9 checks, 2 failed, 1 warnings\n")
+        assert (
+            "| network                 | FAIL   | no answer at the last probe: dns |"
+            in out
+        )
+        assert out.endswith("FAIL: 10 checks, 3 failed, 1 warnings\n")
 
 
 class TestCpuCores:

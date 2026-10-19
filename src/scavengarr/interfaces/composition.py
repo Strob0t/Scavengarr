@@ -79,6 +79,7 @@ from scavengarr.infrastructure.hoster_resolvers.vinovo import VinovoResolver
 from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
+from scavengarr.infrastructure.network_probe import NetworkProbe
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -542,6 +543,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await cache.__aenter__()
     state.cache = cache
     log.info("cache_initialized", backend=config.cache.backend)
+    # readyz: the cache backend and the DNS, so a lost network shows
+    state.network_probe = NetworkProbe(state.cache, telemetry=state.telemetry)
 
     if config.environment == "dev":
         await cache.clear()

@@ -129,7 +129,7 @@ flowchart LR
 ### Operations
 
 - Single container with Docker Compose from a published `linux/amd64` and `linux/arm64` image; optional Byparr, Redis and Tempo profiles
-- Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics` with a Grafana dashboard and alert rules in `docker/`, `/api/v1/stats/metrics`)
+- Health, readiness and metrics endpoints (`/api/v1/healthz`; `/api/v1/readyz`, which the image's healthcheck asks and which answers 503 once the network is lost for 5 min; Prometheus `/metrics` with a Grafana dashboard and alert rules in `docker/`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
 - A record per plugin and day, kept 180 days: searches, results, timeouts, challenges and site checks (`/api/v1/stats/plugins`), the evidence for keeping or dropping a plugin whose site died
 - Graceful shutdown that drains in-flight requests, bounded at 5 s so a playback still open cannot hold the stop past Docker's grace
