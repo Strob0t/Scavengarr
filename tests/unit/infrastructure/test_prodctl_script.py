@@ -163,6 +163,35 @@ class TestProbes:
         assert "from __future__ import annotations" in source
 
 
+class TestHttpErrors:
+    """A Portainer error ends with the masked message, not a traceback that
+    names Portainer's address, port and the request's path."""
+
+    def test_a_403_on_the_logs_call_prints_the_host_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        portainer = "http://192.0.2.7:9443"
+        docker = f"{portainer}/api/endpoints/3/docker"
+        monkeypatch.setattr(_mod, "credentials", lambda: (portainer, "key"))
+        monkeypatch.setattr(_mod, "_BUDGET", tmp_path / "budget.json")
+        with respx.mock:
+            respx.get(f"{portainer}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
+            respx.get(f"{docker}/containers/json").respond(json=[])
+            respx.get(f"{docker}/containers/scavengarr/logs").respond(403)
+
+            assert _mod.main(["logs", "--since", "5m"]) == 1
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "403 Forbidden" in captured.err
+        assert "http://<ip>:9443/…" in captured.err
+        assert "192.0.2.7" not in captured.err
+        assert "/containers/" not in captured.err
+
+
 class TestCommands:
     def test_logs_print_masked_lines_and_a_count(
         self, portainer: Path, capsys: pytest.CaptureFixture[str]

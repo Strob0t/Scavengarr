@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: `prodctl` Masks Its HTTP Errors
+
+- An HTTP error from Portainer ended `scripts/prodctl.py` in a traceback whose last line named the whole request URL, Portainer's address and port included, against the rule that everything it prints passes `portainer.mask()`. `main()` now catches `httpx.HTTPError` and prints `<command> failed: <message>` masked on stderr, exit code 1. `tests/unit/infrastructure/test_prodctl_script.py` checks a 403 on the logs call (the host masked, no path, nothing on stdout); against production, `logs` for an unknown container printed `logs failed: Server error '500 Internal Server Error' for url 'http://<ip>:9000/…'` with exit code 1. `docs/how-to/operations.md` names it.
+
 ### Changed: The Live Smoke Skips a Slow Site Instead of Failing Its Parser
 
 - A plugin run that answers nothing after a fetch the base logged as failed (`<plugin>_timeout`, `_fetch_error` or `_http_error`: `_fetch_text()` and `_safe_fetch()` answer those with `None`, and 32 httpx plugins then answer `[]`) skips with the line, its context and status in the reason, instead of failing as a broken parser; a run without such a line keeps the old assertion. The decision is `failed_fetch()` in `tests/live/smoke_outcome.py`, tested by `tests/unit/infrastructure/test_plugin_smoke_outcome.py`; `tests/live/test_plugin_smoke.py` captures each search's log lines.

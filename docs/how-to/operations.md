@@ -1,7 +1,7 @@
 # Operate production
 
 > **Status:** how-to
-> **As of:** d8f375bc
+> **As of:** abec3c31
 
 ## Goal
 
@@ -14,6 +14,7 @@ Read a production deployment behind Portainer from a development machine without
 - For `check`: the public addon URL, up to `/api/v1/stremio`.
 
 `scripts/prodctl.py` prints everything through `portainer.mask()`: URLs keep only scheme and host, IP addresses and secret-like values are replaced.
+Its errors too: an HTTP error from Portainer (a 403 for a container outside the label access, a 500 for an unknown one) ends with one masked line on stderr, such as `logs failed: Client error '403 Forbidden' for url 'http://<ip>:9000/…'`, and exit code 1 instead of a traceback with Portainer's address and the request's path.
 A budget shared by all processes on the machine allows 100 Portainer requests per minute.
 Overloaded or unreachable Portainer requests are retried with backoff, an exec only when Portainer refused it before it ran.
 Rebuilds and restarts stay with the maintainer.

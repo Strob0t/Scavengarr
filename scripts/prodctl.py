@@ -435,7 +435,12 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except httpx.HTTPError as exc:
+        # httpx names the whole URL, Portainer's address and port included
+        print(mask(f"{args.command} failed: {exc}"), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
