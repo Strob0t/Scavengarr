@@ -394,6 +394,46 @@ class TestSearchHappyPath:
         assert resp.status_code == 200
         py_plugin.search.assert_called_once_with("test", category=5000)
 
+    def test_several_kinds_answer_each_kind(self) -> None:
+        """Prowlarr's RSS sync sends the indexer's whole list: films and
+        series both come back, a kind it did not ask for does not."""
+        results = [
+            _make_search_result(
+                "Movie.2024", "https://example.com/dl/1", category=2000
+            ),
+            _make_search_result(
+                "Show.S01E01", "https://example.com/dl/2", category=5000
+            ),
+            _make_search_result(
+                "Album.2024", "https://example.com/dl/3", category=3000
+            ),
+        ]
+        py_plugin = _FakePythonPlugin()
+        py_plugin.search = AsyncMock(return_value=results)  # type: ignore[method-assign]
+        plugins = MagicMock()
+        plugins.get.return_value = py_plugin
+
+        async def valid(batch: list[SearchResult]) -> list[SearchResult]:
+            return batch
+
+        engine = AsyncMock()
+        engine.validate_results = AsyncMock(side_effect=valid)
+
+        app = _make_app(
+            plugins=plugins, search_engine=engine, crawljob_repo=AsyncMock()
+        )
+        client = TestClient(app)
+
+        resp = client.get(f"{_PREFIX}/torznab/boerse?t=search&q=test&cat=2000,5000")
+
+        assert resp.status_code == 200
+        py_plugin.search.assert_called_once_with("test", category=None)
+        items = _parse_xml(resp.content).findall(".//item")
+        assert [item.findtext("title") for item in items] == [
+            "Movie.2024",
+            "Show.S01E01",
+        ]
+
     def test_crawljob_generated_and_stored(self) -> None:
         result = _make_search_result()
         py_plugin = _FakePythonPlugin()

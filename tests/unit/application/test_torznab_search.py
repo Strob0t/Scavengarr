@@ -339,6 +339,13 @@ class TestSearchCacheKey:
         key_zero = _search_cache_key("filmpalast", "test", 0)
         assert key_none != key_zero
 
+    def test_the_kinds_are_part_of_the_key(self) -> None:
+        key_none = _search_cache_key("filmpalast", "test", None)
+        key_kinds = _search_cache_key("filmpalast", "test", None, (2000, 5000))
+
+        assert key_kinds != key_none
+        assert key_kinds == _search_cache_key("filmpalast", "test", None, (2000, 5000))
+
     def test_different_plugins_different_keys(self) -> None:
         key1 = _search_cache_key("filmpalast", "test", None)
         key2 = _search_cache_key("boerse", "test", None)
@@ -991,3 +998,43 @@ class TestPageValidation:
         assert response.items == []
         # the raw plugin results are cached; each page validates on demand
         assert mock_cache.set.await_args.args[1] == results
+
+
+class TestSeveralKinds:
+    """A query over several kinds (``cat=2000,5000``): the plugin searches
+    unfiltered and the results whose label one of the kinds covers stay."""
+
+    async def test_the_plugin_searches_unfiltered_and_the_kinds_filter(
+        self, mock_crawljob_repo: AsyncMock
+    ) -> None:
+        results = [
+            SearchResult(
+                title=f"r{label}", download_link=f"https://x/{label}", category=label
+            )
+            for label in (2000, 2040, 3000, 5070, 7000)
+        ]
+        plugin = _FakePythonPlugin()
+        plugin.search = AsyncMock(return_value=results)  # type: ignore[method-assign]
+        registry = MagicMock()
+        registry.get.return_value = plugin
+        engine = AsyncMock()
+        engine.validate_results.side_effect = _identity
+        cache = AsyncMock()
+        cache.get.return_value = None
+
+        uc = _make_uc(registry, engine, mock_crawljob_repo, cache=cache)
+        response = await uc.execute(
+            TorznabQuery(
+                action="search",
+                plugin_name="boerse",
+                query="test",
+                kinds=(2000, 5000),
+            )
+        )
+
+        plugin.search.assert_awaited_once_with("test", category=None)
+        assert [item.category for item in response.items] == [2000, 2040, 5070]
+        # What is cached is what the kinds keep, under the kinds' key
+        key, stored = cache.set.call_args.args
+        assert key == _search_cache_key("boerse", "test", None, (2000, 5000))
+        assert [r.category for r in stored] == [2000, 2040, 5070]

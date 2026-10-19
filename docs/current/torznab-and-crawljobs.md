@@ -1,7 +1,7 @@
 # Torznab and CrawlJobs
 
 > **Status:** current
-> **As of:** bdd3f0c4
+> **As of:** 4bb4aaa2
 
 ## Purpose
 
@@ -24,7 +24,7 @@ sequenceDiagram
     participant F as CrawlJobFactory
     participant J as CrawlJob repository
     A->>R: GET /api/v1/torznab/{plugin}?t=search&q=...
-    R->>U: query, category, offset, limit
+    R->>U: query, category or kinds, offset, limit
     U->>C: get search:<hash>
     alt cache miss
         U->>P: search(query, category)
@@ -42,8 +42,8 @@ sequenceDiagram
 ```
 
 1. The router resolves the plugin through the registry; an unknown name answers an empty feed with 404.
-1. `TorznabSearchUseCase` looks up the search cache under `search:<sha256(plugin:query:category)[:16]>`, the query lower-cased and trimmed and a missing category counted as `none`.
-1. On a miss it calls `plugin.search(query, category=...)`, and the plugin runs its own search, detail and link stages ([Plugins](plugins.md#search-stages)).
+1. `TorznabSearchUseCase` looks up the search cache under `search:<sha256(plugin:query:category)[:16]>`, the query lower-cased and trimmed, a missing category counted as `none` and the sorted kinds of a search over several kinds appended.
+1. On a miss it calls `plugin.search(query, category=...)`, and the plugin runs its own search, detail and link stages ([Plugins](plugins.md#search-stages)); a search over several kinds keeps only the results of its kinds ([the category filter](#the-category-filter)).
 1. Non-empty results are cached unvalidated, for `cache.search_ttl_seconds` or the plugin's `cache_ttl` (`0` turns the cache off).
 1. Only the requested page is validated: the results go through `validate_results()` in order, `limit` at a time, until `offset + limit` valid ones exist ([Link validation](link-validation.md)).
 1. A 1000-result search with `limit=100` thus checks about 300 links instead of 3000, and a later page gets the links checked before from the validator's cache.
@@ -53,6 +53,21 @@ sequenceDiagram
 
 A failure of the plugin search or of the validation becomes `TorznabExternalError`: 502 in `dev` and `test`, an empty feed with 200 in `prod` ([errors](../reference/torznab-api.md#errors)).
 A search without `q` is Prowlarr's test and probes the site instead ([test mode](../reference/torznab-api.md#prowlarr-test-mode)).
+
+### The category filter
+
+The router reads every id of `cat` and groups the ids by kind, the thousands: 2040 and 2000 are movies, 5030 and 5070 are TV.
+
+| `cat` | The query | The plugin searches | The results |
+|---|---|---|---|
+| none or empty | no category | unfiltered | all |
+| ids of one kind (`5030,5040`, Sonarr's) | the first id | with that id | what the plugin's own filter keeps |
+| ids of several kinds (`2000,5000,…`, Prowlarr's own searches and its RSS sync) | the kinds, no category | unfiltered (`category=None`) | those whose label one of the kinds covers |
+
+With one kind the plugin answers the first id as `served_category()` maps it: a child the site does not tell apart becomes its parent ([Plugins](plugins.md#categories-and-relevance)).
+With several kinds a plugin that picks a site section by category searches all its sections, and the use case keeps the results whose label `category_matches()` puts under one of the kinds, before the results are cached.
+The rule `category_matches()` and the kind `category_kind()` live in `domain/entities/torznab.py`, so the use case and the plugins read the same rule.
+A non-numeric id anywhere in `cat` answers an empty feed with 400.
 
 ### The CrawlJob
 

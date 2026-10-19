@@ -20,7 +20,7 @@ from scavengarr.domain.entities import (
     TorznabQuery,
     TorznabUnsupportedAction,
 )
-from scavengarr.domain.entities.torznab import TorznabItem
+from scavengarr.domain.entities.torznab import TorznabItem, category_kind
 from scavengarr.domain.plugins import PluginNotFoundError
 from scavengarr.infrastructure.torznab.presenter import render_caps_xml, render_rss_xml
 from scavengarr.infrastructure.version import APP_VERSION
@@ -165,15 +165,22 @@ async def _handle_extended_probe(
     return _xml(rendered.payload, status_code=503)
 
 
-def _parse_category(cat: str) -> int | None:
-    """Return the first Torznab category ID from ``cat`` (``"2000,5000"``)."""
-    first = cat.split(",")[0].strip()
-    if not first:
-        return None
+def _parse_category(cat: str) -> tuple[int | None, tuple[int, ...]]:
+    """The category and the kinds of ``cat`` (``"2000,5000"``).
+
+    Ids of one kind (``5030,5040``, Sonarr's) give the first id and no kinds:
+    the plugin maps a child it does not tell apart to its parent. Ids of
+    several kinds (Prowlarr's own searches and its RSS sync send the
+    indexer's whole list) give no category and the kinds, sorted.
+    """
     try:
-        return int(first)
+        ids = [int(part) for part in cat.split(",") if part.strip()]
     except ValueError:
         raise TorznabBadRequest(f"Invalid cat={cat!r}: expected numeric IDs") from None
+    kinds = tuple(sorted({category_kind(category) for category in ids}))
+    if len(kinds) > 1:
+        return None, kinds
+    return (ids[0] if ids else None), ()
 
 
 async def _handle_search(
@@ -195,13 +202,14 @@ async def _handle_search(
         cache=getattr(state, "cache", None),
         search_ttl=state.config.cache.search_ttl_seconds,
     )
-    category = _parse_category(cat)
+    category, kinds = _parse_category(cat)
     response = await search_uc.execute(
         TorznabQuery(
             action="search",
             query=q,
             plugin_name=plugin_name,
             category=category,
+            kinds=kinds,
             offset=offset,
             limit=limit,
         )

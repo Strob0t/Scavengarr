@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Torznab Search over Several Kinds Answers Every Kind
+
+- `cat=` with ids of several kinds (`cat=2000,5000,…`, which Prowlarr's own searches and its RSS sync send with the indexer's whole category list) answered the first kind only, so the TV results never reached Prowlarr. The router now reads every id and groups them by kind (the thousands): ids of one kind give the first id as before (Sonarr's `5030,5040` through `served_category()`); ids of several kinds make the plugin search unfiltered and the use case keep the results whose label one of the kinds covers, before they are cached under a key that carries the sorted kinds. A non-numeric id anywhere in `cat` answers 400 (before: only the first was checked). On the dev server a filmpalast search with `cat=2000,5000` answered 10 movies and 27 TV results, the sum of `cat=2000` and `cat=5000`; the code before answered the 10 movies only.
+- `category_matches()` and the new `category_kind()` live in `domain/entities/torznab.py`; `infrastructure/plugins/categories.py` imports the rule from there, so the plugins' imports stay. `docs/current/torznab-and-crawljobs.md` → The category filter and `docs/reference/torznab-api.md` (the `cat` parameter) describe it.
+
 ### Changed: The Graceful Shutdown Is Bounded at 5 s
 
 - Uvicorn runs with `timeout_graceful_shutdown=5` (`src/scavengarr/interfaces/cli/__main__.py`): a connection still answering 5 s after the stop signal, such as a proxied playback, is cancelled, so the app's cleanup (the drain, the last snapshots of the resolver state and the plugin record, the closes) runs inside Docker's 10 s stop grace instead of being cut off by its kill. Uvicorn waited without a limit before. On the dev server a stop with a proxied file playback held open by a slow reader took 5.2 to 5.3 s until the process was gone (before: still waiting after 20 s), a stop without an open connection 0.25 s. `docs/current/architecture.md` → Shutdown, the README and the index state the bound; `tests/unit/interfaces/test_cli.py` checks the argument.

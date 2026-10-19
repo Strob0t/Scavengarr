@@ -1,7 +1,7 @@
 # Torznab API
 
 > **Status:** reference
-> **As of:** bdd3f0c4
+> **As of:** 4bb4aaa2
 
 The endpoints, parameters, XML and error answers of Scavengarr's Torznab API for Prowlarr and the other Arr apps, and the download endpoints of its CrawlJobs.
 How a search becomes a feed and a grab becomes a `.crawljob` file is described in [Torznab and CrawlJobs](../current/torznab-and-crawljobs.md).
@@ -123,12 +123,13 @@ GET /api/v1/torznab/{plugin_name}?t=search&q={query}
 | `plugin_name` | path | yes | The plugin. |
 | `t` | query | yes | `search`; any value but `caps` and `search` answers 422. |
 | `q` | query | no | The query; without it see [Prowlarr test mode](#prowlarr-test-mode). |
-| `cat` | query | no | Category ids, comma-separated; only the first is read, and only with a `q`. |
+| `cat` | query | no | Category ids, comma-separated, read only with a `q`: ids of one kind give the first id, ids of several kinds give those kinds. |
 | `extended` | query | no | Read only without `q`: `1` is the reachability probe. |
 | `offset` | query | no | The first item to return (default `0`). |
 | `limit` | query | no | The number of items (default `100`; not capped at the caps' `max`). |
 
-`cat=2000,abc` searches 2000, since later ids are neither checked nor used; a non-numeric first id answers an empty feed with 400.
+`cat=5030,5040` searches 5030, as one kind; `cat=2000,5000` searches unfiltered and answers the movies and the TV results, not the rest ([the category filter](../current/torznab-and-crawljobs.md#the-category-filter)).
+A non-numeric id anywhere (`cat=2000,abc`) answers an empty feed with 400.
 The answer is `application/xml` with an `X-Cache` header: `HIT` when the plugin's results came from the search cache, else `MISS`.
 
 ```xml
@@ -327,7 +328,7 @@ The Torznab endpoint maps the domain's exceptions to statuses, each answered as 
 
 | Exception | `dev`, `test` | `prod` | Trigger |
 |---|---|---|---|
-| `TorznabBadRequest` | 400 | 400 | An invalid query, such as a non-numeric first `cat` id. |
+| `TorznabBadRequest` | 400 | 400 | An invalid query, such as a non-numeric `cat` id. |
 | `TorznabPluginNotFound`, `PluginNotFoundError` | 404 | 404 | An unknown plugin (caps, search, test probe). |
 | `TorznabUnsupportedAction` | 422 | 422 | `t` is neither `caps` nor `search`. |
 | `TorznabExternalError` | 502 | 200 | The plugin search or the link validation failed. |

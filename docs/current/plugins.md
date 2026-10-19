@@ -167,7 +167,7 @@ The Stremio search drops a result found again (`result_key()`: plugin, title, re
 
 - `served_category(requested, offered)` gives the category to match against the labels the site can give: a child the site does not tell apart becomes its parent, and a family the site lacks gives `None`, which the plugin answers with `[]` without a request.
 - `filter_by_category(results, category)` keeps the matching results.
-- `category_matches()` is the Torznab parent and child rule: `None` matches everything, 5000 matches 5000 to 5999, 5070 matches only 5070.
+- `category_matches()` is the Torznab parent and child rule: `None` matches everything, 5000 matches 5000 to 5999, 5070 matches only 5070; it is the domain's (`domain/entities/torznab.py`), which the Torznab search filters several kinds by too.
 - `stream_category(genres, is_series=...)` labels film and series sites: films 2000 whatever the genre, series 5000, anime and animation series 5070.
 - `is_series_title(title)` tells episode and season-pack names from films for sites without a series label.
 
