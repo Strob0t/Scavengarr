@@ -50,7 +50,7 @@ Rules:
 
   | Change | Documents to update |
   |---|---|
-  | Behaviour | its `docs/current/` doc (`docs/reference/metrics.md` regenerated for a metric), `CHANGELOG.md` |
+  | Behaviour | its `docs/current/` doc and every how-to whose steps change (`docs/reference/metrics.md` regenerated for a metric), `CHANGELOG.md` |
   | Configuration | `docs/reference/configuration.md` (`scripts/generate_config_doc.py`), `CHANGELOG.md` |
   | Architecture decision | a record in `docs/target/decisions/`, the `docs/target/` doc it changes, this file if a rule changes, `CHANGELOG.md` |
   | Dependency | its line in `docs/reference/tech-stack.md`, `CHANGELOG.md` |
