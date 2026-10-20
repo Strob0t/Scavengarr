@@ -11,12 +11,14 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 from uvicorn.middleware.proxy_headers import _TrustedHosts
 
 _ROOT = Path(__file__).resolve().parents[3]
+_WORKFLOWS = _ROOT / ".github" / "workflows"
 
 _EXECUTED_DIRECTLY = [
     "docker/entrypoint.sh",
@@ -61,6 +63,35 @@ def test_dependabot_opens_its_pull_requests_against_staging() -> None:
         "github-actions": "staging",
         "docker": "staging",
     }
+
+
+def _workflow(name: str) -> dict[Any, Any]:
+    """A workflow of `.github/workflows`; YAML 1.1 reads its key `on` as true."""
+    return yaml.safe_load((_WORKFLOWS / name).read_text())
+
+
+def test_ci_ends_in_the_one_check_the_main_ruleset_requires() -> None:
+    """The `main` ruleset requires `CI passed`, not the matrix legs, so the
+    matrix changes without the ruleset. It runs after a failed or cancelled
+    leg too: a skipped required check counts as passed."""
+    gate = _workflow("ci.yml")["jobs"]["passed"]
+
+    assert gate["name"] == "CI passed"
+    assert gate["needs"] == "check"
+    assert gate["if"] == "always()"
+    (step,) = gate["steps"]
+    assert step["env"] == {"RESULT": "${{ needs.check.result }}"}
+    assert step["run"] == 'test "$RESULT" = success'
+
+
+@pytest.mark.parametrize("name", sorted(p.name for p in _WORKFLOWS.glob("*.yml")))
+def test_workflow_scripts_take_their_values_through_env(name: str) -> None:
+    """An expression inside `run:` is pasted into the script before the shell
+    reads it, so a branch name or commit message could run as code; the
+    values come through `env:` and the script quotes them."""
+    for job in _workflow(name)["jobs"].values():
+        for step in job["steps"]:
+            assert "${{" not in step.get("run", ""), (job.get("name"), step)
 
 
 def test_shipped_config_has_no_container_only_paths() -> None:

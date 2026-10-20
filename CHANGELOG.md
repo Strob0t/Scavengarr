@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: CI Ends in One Required Check and Runs Weekly
+
+- `.github/workflows/ci.yml` ends in the job `CI passed`, which needs both Python legs and fails unless both passed. It runs after a failed or cancelled leg too (`if: always()`), as a required check that is skipped counts as passed. `main`'s ruleset requires this one name, so the matrix can change without the ruleset.
+- A weekly run on `main` (`schedule`; GitHub runs a schedule on the default branch only) shows a break that comes without a push: a new runner image, Python patch or Poetry release.
+- `tests/unit/infrastructure/test_repository_files.py` checks the gate job, and that no workflow step puts an expression into its `run:` script: the values come through `env:`, so a branch name or commit message cannot run as code. AGENTS.md (the CI sentence; the release merge waits for `CI passed`), `CONTRIBUTING.md` and `openspec/project.md` say so.
+
 ### Changed: Tests Check a URL's Host Exactly
 
 - 37 test lines checked a URL by substring (`"host" in url`), which CodeQL's default setup reports as `py/incomplete-url-substring-sanitization`: none was a gap in the code, but a lookalike host (`d0000d.com.evil.test`) passed them, and they buried a real finding. Each is now an exact check: the parsed host (`urlparse(url).hostname == ...`), `request.url.host == ...` in the fake transports' handlers, a prefix ending in the host's slash, and for a domain list, a hoster list or the Cloudflare block map the exact members or keys instead of `in`.

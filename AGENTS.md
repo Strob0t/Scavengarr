@@ -40,7 +40,7 @@ poetry run pre-commit run --all-files
 poetry run pytest -n auto
 ```
 
-pre-commit runs ruff and basedpyright (`standard` mode; `src/` and `plugins/` are clean, keep them so). `poetry run pytest` excludes live tests and benchmarks, and `-n auto` runs it on pytest-xdist workers; a single test file runs faster without `-n`. Live smoke tests (`poetry run pytest -m live`) hit real websites: their failures signal broken plugins or resolvers, not a commit blocker. CI (`.github/workflows/ci.yml`) runs the same two commands on every push to `staging` and on pull requests; a red run after a push is fixed before the next change. `.github/workflows/image.yml` publishes the production image to `ghcr.io/strob0t/scavengarr` (tags: `docs/how-to/deploy.md`, step 1).
+pre-commit runs ruff and basedpyright (`standard` mode; `src/` and `plugins/` are clean, keep them so). `poetry run pytest` excludes live tests and benchmarks, and `-n auto` runs it on pytest-xdist workers; a single test file runs faster without `-n`. Live smoke tests (`poetry run pytest -m live`) hit real websites: their failures signal broken plugins or resolvers, not a commit blocker. CI (`.github/workflows/ci.yml`) runs the same two commands on every push to `staging`, on pull requests and weekly on `main`, whose ruleset requires its job `CI passed`; a red run after a push is fixed before the next change. `.github/workflows/image.yml` publishes the production image to `ghcr.io/strob0t/scavengarr` (tags: `docs/how-to/deploy.md`, step 1).
 
 Rules:
 - Fix all errors before committing (warnings can be acceptable depending on the check).
@@ -65,7 +65,7 @@ Rules:
 ### Working efficiently (agents)
 - Find code by symbol, then read only the lines you need: the `LSP` tool (definitions, references; `basedpyright-lsp`, §9) or `grep -n`, then a ranged read. Whole-file reads of large modules cost the most context.
 - Package APIs: the installed source in `.venv` (§4); the Context7 MCP server serves current library docs where it is configured.
-- Keep tool output short: pipe pytest, pre-commit and git output through `tail` or `grep`. Full test runs use `-n auto`; a single test file runs faster without it.
+- Keep tool output short: pipe pytest, pre-commit and git output through `tail` or `grep`.
 - Run slow work in the background and wait for its notification instead of polling with `sleep`: after a push `gh run watch <run-id> --exit-status`, likewise live tests and benchmarks.
 - Production only through `scripts/prodctl.py` (§9). A probe needed twice belongs in `scripts/probes/`, not in a throwaway script.
 
@@ -73,7 +73,7 @@ Rules:
 1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted). It is the only place: the app, the Stremio manifest, Torznab caps and the default User-Agent read it through `infrastructure/version.py` (package metadata; `poetry install` refreshes it in the dev venv).
 2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
 3. Commit & push to `staging`.
-4. `gh pr create --base main --head staging --title "..." --body "..."` then `gh pr merge --merge`. When the merge waits for the maintainer, push the release commit to `release/vX.Y.Z` and open the PR from there instead, so that later pushes to `staging` stay out of the release; delete the branch after the merge.
+4. `gh pr create --base main --head staging --title "..." --body "..."`; `gh pr merge --merge` after `gh pr checks <n> --watch --required`. When the merge waits for the maintainer, push the release commit to `release/vX.Y.Z` and open the PR from there instead, so that later pushes to `staging` stay out of the release; delete the branch after the merge.
 5. Tag the release on the merge commit: `git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z`; the image workflow publishes `vX.Y.Z` and `latest`.
 6. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
 
