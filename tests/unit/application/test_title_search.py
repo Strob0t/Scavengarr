@@ -40,6 +40,7 @@ from .stremio_support import (
     make_search_result,
     make_use_case,
     memory_cache,
+    running_links,
 )
 
 
@@ -301,7 +302,7 @@ class TestSearchCache:
         }
         uc = cached_use_case(sites, memory_cache(), hard=10.0)
         request = asyncio.create_task(uc.execute(make_request()))
-        await asyncio.sleep(0.1)
+        await eventually(lambda: running_links(uc) == ["https://voe.sx/e/fast"])
 
         await uc.aclose()
 

@@ -288,6 +288,14 @@ def cached_links(cache: AsyncMock) -> list[str]:
     return sorted(r.download_link for r in entry.results) if entry else []
 
 
+def running_links(uc: StremioStreamUseCase) -> list[str]:
+    """The links the running search for ``SEARCH_KEY`` has matched so far:
+    the title search's own state, as no public surface tells when a result
+    is in (it reaches the search after the title match's worker thread)."""
+    progress = uc._title_search._searches.get(SEARCH_KEY)
+    return sorted(r.download_link for r in progress.results) if progress else []
+
+
 class Resolutions:
     """Resolver registry stand-in: resolve() caches, cached() peeks.
 
