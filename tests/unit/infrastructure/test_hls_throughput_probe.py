@@ -18,7 +18,7 @@ _PROBES = Path(__file__).resolve().parents[3] / "scripts" / "probes"
 
 
 def _load() -> ModuleType:
-    # By path: on sys.path the probes' redis.py would shadow the redis package
+    # By path: scripts/probes/ is no package
     spec = importlib.util.spec_from_file_location(
         "hls_throughput_probe", _PROBES / "hls_throughput.py"
     )
@@ -176,7 +176,7 @@ class TestInFlight:
 
     @respx.mock
     async def test_after_a_429_the_run_asks_no_more(self) -> None:
-        """A throttling CDN gets no further requests: the Pi's address
+        """A throttling CDN gets no further requests: the production host's address
         shares it with the playbacks."""
         respx.get("https://cdn.example/s1.ts").respond(429)
         later = respx.get(url__regex=r"https://cdn\.example/s[23]\.ts").respond(

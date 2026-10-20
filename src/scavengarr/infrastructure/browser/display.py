@@ -1,7 +1,7 @@
 """Headful vs. headless decision for Chromium launches.
 
 Interactive Cloudflare Turnstile rejects every headless browser, while a
-headful Patchright Chromium passes (docs/plans/antibot-patchright.md).
+headful Patchright Chromium passes (docs/current/browser-and-challenges.md).
 Headful needs an X display (``DISPLAY``, e.g. Xvfb); without one the launch
 would fail, so we fall back to headless and warn once.
 """

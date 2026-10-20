@@ -938,18 +938,21 @@ class TestSearch:
         mock_client.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_search_network_failure(self) -> None:
+    async def test_a_search_no_domain_serves_is_unreachable(self) -> None:
+        """The search page and the domain check both get no answer: a
+        failure in the plugin record, not a search without results."""
         plugin = _make_plugin()
         plugin._domain_verified = True
         plugin.base_url = "https://s.to"
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        refused = httpx.ConnectError("refused")
+        mock_client.get = AsyncMock(side_effect=refused)
+        mock_client.head = AsyncMock(side_effect=refused)
         plugin._client = mock_client
 
-        results = await plugin.search("test")
-
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("test")
 
 
 # ---------------------------------------------------------------------------
@@ -1014,8 +1017,8 @@ class TestCloudflareFallback:
 class TestGatedStreamRequest:
     """A stream request (season and episode) answers with resolved hoster
     links only: a link-out that stayed on the site reaches the serienstream
-    resolver, which cannot follow it (``serienstream_invalid_url``, the Pi's
-    VPN address, 2026-10-07). Torznab never asks for one episode."""
+    resolver, which cannot follow it (``serienstream_invalid_url``, the production
+    host's VPN address, 2026-10-07). Torznab never asks for one episode."""
 
     @pytest.fixture(autouse=True)
     def _reset_fetcher(self) -> Iterator[None]:
@@ -1281,6 +1284,7 @@ class TestLocatesEpisodes:
                 "season": 5,
                 "episode": 2,
                 "absolute": 62,
+                "absolute_source": "position",
                 "site_season": 2,
                 "site_episode": 1,
                 "located_by": "number",
@@ -1332,6 +1336,29 @@ class TestLocatesEpisodes:
             missed.items() >= {"slug": "one-piece", "absolute": 999, "rows": 3}.items()
         )
 
+    async def test_a_partial_series_without_titles_gives_no_anime_result(
+        self,
+    ) -> None:
+        """s.to's anime rows show the number alone, and on a series that is a
+        shorter form of the request's title the number counts another
+        series: nothing is located."""
+        plugin, paths = _anime_plugin()
+        ref = EpisodeRef(
+            5, 2, _LABOON, absolute=62, titles=("One Piece: Episode of Laboon",)
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=5, episode=2, episode_ref=ref
+            )
+
+        assert [r for r in results if r.category == 5070] == []
+        assert not any(
+            "/serie/one-piece/" in path and "/episode-" in path for path in paths
+        )
+        missed = next(e for e in logs if e["event"] == "sto_episode_not_located")
+        assert missed["partial"] is True
+
     async def test_without_a_reference_the_page_comes_from_the_numbers(self) -> None:
         plugin, paths = _anime_plugin()
 
@@ -1369,3 +1396,18 @@ class TestLocatesEpisodes:
 
         assert len([r for r in results if r.category == 5070]) == 1
         assert not any(path.endswith(("/staffel-1", "/staffel-2")) for path in paths)
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://serienstream.to/suche").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

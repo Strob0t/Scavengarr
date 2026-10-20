@@ -1,0 +1,63 @@
+{
+ "result": {
+  "results": [
+   {
+    "channel": "ARD",
+    "topic": "The Whale",
+    "title": "The Whale (Audiodeskription)",
+    "description": "Spielfilm USA 2022 Für den stark adipösen Literaturdozenten Charlie gibt es nur wenige Dinge, die ihm etwas bedeuten. Seit dem Tod seines geliebten Partners, für den er vor acht Jahren seine Frau Mary und seine Tochter Ellie verlassen hat, lässt er sich nur noch gehen. Charlie verschanzt sich in seiner abgedunkelten Wohnung, gibt Onlineseminare ohne Bild und vermeidet sogar die Begegnung mit dem Pizzaboten....",
+    "timestamp": 1792361100,
+    "duration": 6552,
+    "size": 980418560,
+    "url_website": "https://www.ardmediathek.de/video/Y3JpZDovL2FyZC5kZS9wbGFuQVJEXzgxOGNhMDYyLTkwNTMtNGQ4Mi1iZWJhLWU4OGQyODU4ZGE3MF9nYW56ZVNlbmR1bmc",
+    "url_subtitle": "https://api.ardmediathek.de/player-service/subtitle/ebutt/urn:ard:subtitle:bdf858921022e573",
+    "url_video": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_audiodeskription_1280x720-50p-3200kbit.mp4",
+    "url_video_low": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_audiodeskription_640x360-50p-1200kbit.mp4",
+    "url_video_hd": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_audiodeskription_1920x1080-50p-5000kbit.mp4",
+    "filmlisteTimestamp": 1792297500,
+    "id": "5MFhVKSGd2yfNx7d7XfE3qB3BqhsjRzLKM9FuxLGo/g="
+   },
+   {
+    "channel": "ARD",
+    "topic": "The Whale",
+    "title": "The Whale (Originalversion)",
+    "description": "Spielfilm USA 2022 Für den stark adipösen Literaturdozenten Charlie gibt es nur wenige Dinge, die ihm etwas bedeuten. Seit dem Tod seines geliebten Partners, für den er vor acht Jahren seine Frau Mary und seine Tochter Ellie verlassen hat, lässt er sich nur noch gehen. Charlie verschanzt sich in seiner abgedunkelten Wohnung, gibt Onlineseminare ohne Bild und vermeidet sogar die Begegnung mit dem Pizzaboten....",
+    "timestamp": 1792361100,
+    "duration": 6552,
+    "size": 980418560,
+    "url_website": "https://www.ardmediathek.de/video/Y3JpZDovL2FyZC5kZS9wbGFuQVJEXzgxOGNhMDYyLTkwNTMtNGQ4Mi1iZWJhLWU4OGQyODU4ZGE3MF9nYW56ZVNlbmR1bmc",
+    "url_subtitle": "https://api.ardmediathek.de/player-service/subtitle/ebutt/urn:ard:subtitle:bdf858921022e573",
+    "url_video": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_originalversion_1280x720-50p-3200kbit.mp4",
+    "url_video_low": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_originalversion_640x360-50p-1200kbit.mp4",
+    "url_video_hd": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_originalversion_1920x1080-50p-5000kbit.mp4",
+    "filmlisteTimestamp": 1792297500,
+    "id": "ZEfIJZa+8l14aMNN5DNd34YKo2vCcnSHPovDBlfhYDU="
+   },
+   {
+    "channel": "ARD",
+    "topic": "The Whale",
+    "title": "The Whale",
+    "description": "Spielfilm USA 2022 Für den stark adipösen Literaturdozenten Charlie gibt es nur wenige Dinge, die ihm etwas bedeuten. Seit dem Tod seines geliebten Partners, für den er vor acht Jahren seine Frau Mary und seine Tochter Ellie verlassen hat, lässt er sich nur noch gehen. Charlie verschanzt sich in seiner abgedunkelten Wohnung, gibt Onlineseminare ohne Bild und vermeidet sogar die Begegnung mit dem Pizzaboten....",
+    "timestamp": 1792361100,
+    "duration": 6552,
+    "size": 980418560,
+    "url_website": "https://www.ardmediathek.de/video/Y3JpZDovL2FyZC5kZS9wbGFuQVJEXzgxOGNhMDYyLTkwNTMtNGQ4Mi1iZWJhLWU4OGQyODU4ZGE3MF9nYW56ZVNlbmR1bmc",
+    "url_subtitle": "https://api.ardmediathek.de/player-service/subtitle/ebutt/urn:ard:subtitle:bdf858921022e573",
+    "url_video": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_sendeton_1280x720-50p-3200kbit.mp4",
+    "url_video_low": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_sendeton_640x360-50p-1200kbit.mp4",
+    "url_video_hd": "https://ctv-videos.daserste.de/de/2026/10/18/DEGSM251564/DEGSM251564_3867993_sendeton_1920x1080-50p-5000kbit.mp4",
+    "filmlisteTimestamp": 1792297500,
+    "id": "1kmn7jGKNAF9aNEqxEo6TS3IX0SqXw3Komhs7kTraJI="
+   }
+  ],
+  "queryInfo": {
+   "filmlisteTimestamp": 1792445460,
+   "searchEngineTime": "2.49",
+   "resultCount": 3,
+   "totalResults": 3,
+   "totalRelation": "eq",
+   "totalEntries": 721383
+  }
+ },
+ "err": null
+}

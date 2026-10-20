@@ -242,13 +242,18 @@ class MovieblogPlugin(HttpxPluginBase):
         query: str,
         page: int,
     ) -> tuple[list[dict[str, str | int]], str]:
-        """Fetch one page, return (results, next_page_url)."""
+        """Fetch one page, return (results, next_page_url).
+
+        A failure of the site on the first page raises (a timeout, the site
+        not answering), so the plugin record counts it; a later page that
+        fails ends the pagination. One domain: no other to fail over to.
+        """
         if page == 1:
             url = f"{self.base_url}/?s={quote_plus(query)}"
         else:
             url = f"{self.base_url}/page/{page}/?s={quote_plus(query)}"
 
-        resp = await self._safe_fetch(url)
+        resp = await self._safe_fetch(url, raising=page == 1)
         if resp is None or resp.status_code != 200:
             return [], ""
 

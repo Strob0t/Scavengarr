@@ -27,4 +27,6 @@ class TestNullObject:
         )
 
         assert await NO_ANIME_IDS.kitsu_episode(request) is None
+        # Nothing counts a series whole: the position is all there is
+        assert await NO_ANIME_IDS.has_whole_series_entry("tt0388629") is False
         await NO_ANIME_IDS.aclose()

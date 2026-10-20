@@ -244,9 +244,9 @@ class StreamkistePlugin(HttpxPluginBase):
                 "subaction": "search",
                 "story": query,
             }
-            html = await self._fetch_text(
-                f"{self.base_url}/index.php", params=params, context="search"
-            )
+            # The first page raises on a failure of the site, so the plugin
+            # record counts it; a later page that fails ends the pagination
+            html = await self._fetch_search_page("/index.php", params=params)
         else:
             form_data: dict[str, str] = {
                 "do": "search",

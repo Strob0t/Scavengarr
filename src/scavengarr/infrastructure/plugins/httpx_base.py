@@ -16,7 +16,7 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -235,6 +235,12 @@ class HttpxPluginBase:
             )
         return self._client
 
+    @property
+    def _single_domain(self) -> bool:
+        """Whether the site has one domain only and no domain list, so the
+        domain check has nothing to choose from."""
+        return len(self._domains) <= 1 and not self.domain_list_url
+
     async def _verify_domain(self) -> None:
         """Find and cache a working domain from the fallback list.
 
@@ -251,8 +257,7 @@ class HttpxPluginBase:
         ``PluginUnreachableError`` when none answers; the next search
         checks again.
         """
-        single = len(self._domains) <= 1 and not self.domain_list_url
-        if self._domain_verified or single:
+        if self._domain_verified or self._single_domain:
             self._domain_verified = True
             return
         if time.monotonic() < self._domain_recheck_at:
@@ -414,6 +419,7 @@ class HttpxPluginBase:
         *,
         method: str = "GET",
         context: str = "",
+        raising: bool = False,
         **kwargs: Any,
     ) -> httpx.Response | None:
         """Fetch *url* with structured error logging.
@@ -427,6 +433,11 @@ class HttpxPluginBase:
         into the browser memo, so the plugin's ``_fetch_text()`` calls go
         to the browser; the fallback itself stays with ``_fetch_text()``,
         a plugin behind a challenge fetches its pages with it.
+
+        *raising* is the search page's mode, as in ``_fetch_text()``: a
+        domain that does not answer (a 5xx without a challenge, a transport
+        error, a connect timeout) raises ``PluginUnreachableError``, a later
+        timeout ``TimeoutError``; a challenge and a 4xx stay ``None``.
         """
         client = await self._ensure_client()
 
@@ -442,30 +453,22 @@ class HttpxPluginBase:
             resp.raise_for_status()
             self._follow_site_move(resp)
             return resp
-        except httpx.TimeoutException:
-            self._undo_site_move(url)
-            self._log.warning(
-                f"{self.name}_timeout",
-                url=url,
-                context=context,
-            )
         except httpx.HTTPStatusError as exc:
-            self._log_http_error(url, exc.response, context)
+            challenge = self._log_http_error(url, exc.response, context)
+            if raising and challenge is None and exc.response.status_code >= 500:
+                raise PluginUnreachableError(self.name) from exc
         except Exception as exc:  # noqa: BLE001
-            if isinstance(exc, httpx.TransportError):
-                self._undo_site_move(url)
-            self._log.warning(
-                f"{self.name}_fetch_error",
-                url=url,
-                error=str(exc),
-                context=context,
-            )
+            failure = self._request_failed(url, exc, context)
+            if raising and failure is not None:
+                raise failure from exc
         return None
 
-    def _log_http_error(self, url: str, resp: httpx.Response, context: str) -> None:
+    def _log_http_error(
+        self, url: str, resp: httpx.Response, context: str
+    ) -> str | None:
         """Log an error answer to ``_safe_fetch()``: a challenge as
         ``<plugin>_challenge`` with the host put into the browser memo, else
-        ``<plugin>_http_error``."""
+        ``<plugin>_http_error``. Returns the challenge, ``None`` for none."""
         challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
         if challenge is not None:
             self._mark_cf_blocked(url)
@@ -479,13 +482,14 @@ class HttpxPluginBase:
                 challenge=challenge,
                 context=context,
             )
-            return
+            return challenge
         self._log.warning(
             f"{self.name}_http_error",
             url=url,
             status=resp.status_code,
             context=context,
         )
+        return None
 
     async def _fetch_text(
         self,
@@ -494,6 +498,7 @@ class HttpxPluginBase:
         params: dict[str, str] | None = None,
         context: str = "",
         headers: dict[str, str] | None = None,
+        raising: bool = False,
     ) -> str | None:
         """GET *url* and return the body text (``None`` on failure).
 
@@ -504,6 +509,11 @@ class HttpxPluginBase:
         a fetcher this behaves like a plain GET with ``_safe_fetch()``-style
         logging.  A host in the browser memo goes straight to the browser.
         *headers* go with the httpx request (the browser sends its own).
+
+        *raising* is the search page's mode (``_fetch_search_page()``): a
+        domain that does not answer (a 5xx without a challenge, a transport
+        error, a connect timeout) raises ``PluginUnreachableError``, and a
+        later timeout ``TimeoutError``; every other failure stays ``None``.
         """
         memo_fetcher = self._cf_fetcher_for(url)
         if memo_fetcher is not None:
@@ -521,22 +531,51 @@ class HttpxPluginBase:
 
         try:
             resp = await client.get(url, **kwargs)
-        except httpx.TimeoutException:
-            self._undo_site_move(url)
-            self._log.warning(f"{self.name}_timeout", url=url, context=context)
-            return None
         except Exception as exc:  # noqa: BLE001
-            if isinstance(exc, httpx.TransportError):
-                self._undo_site_move(url)
-            self._log.warning(
-                f"{self.name}_fetch_error", url=url, error=str(exc), context=context
-            )
+            failure = self._request_failed(url, exc, context)
+            if raising and failure is not None:
+                raise failure from exc
             return None
 
         if resp.status_code < 400:
             self._follow_site_move(resp)
             return resp.text
+        return await self._error_answer(url, resp, context=context, raising=raising)
 
+    def _request_failed(
+        self, url: str, exc: Exception, context: str
+    ) -> Exception | None:
+        """Log a request of ``_fetch_text()`` or ``_safe_fetch()`` that got no
+        answer, and return what their raising mode raises for it.
+
+        A timeout or a transport error sends the base URL back to where the
+        site moved from (``_undo_site_move()``). A domain that does not
+        answer (a transport error, a connect timeout) is
+        ``PluginUnreachableError``, as in the domain check, a later timeout
+        ``TimeoutError``; another error (a bad URL) stays lenient (``None``).
+        """
+        if isinstance(exc, httpx.TransportError):  # a timeout is one too
+            self._undo_site_move(url)
+        if isinstance(exc, httpx.TimeoutException):
+            self._log.warning(f"{self.name}_timeout", url=url, context=context)
+            if isinstance(exc, httpx.ConnectTimeout):
+                return PluginUnreachableError(self.name)
+            return TimeoutError(f"{self.name}: {context or 'page'} timed out")
+        self._log.warning(
+            f"{self.name}_fetch_error", url=url, error=str(exc), context=context
+        )
+        if isinstance(exc, httpx.TransportError):
+            return PluginUnreachableError(self.name)
+        return None
+
+    async def _error_answer(
+        self, url: str, resp: httpx.Response, *, context: str, raising: bool
+    ) -> str | None:
+        """An answer from 400 up to ``_fetch_text()``: a Cloudflare page goes
+        to the browser fetcher; anything else is logged as
+        ``<plugin>_http_error`` (a challenge marked unsolved) and is
+        ``None``, or ``PluginUnreachableError`` for a 5xx without a
+        challenge in the raising mode."""
         challenge = detect_challenge(resp.status_code, resp.text, resp.headers)
         fetcher = self._browser_fetcher
         if fetcher is not None and challenge == "cloudflare_page":
@@ -554,7 +593,68 @@ class HttpxPluginBase:
             context=context,
             challenge=challenge,
         )
+        if raising and challenge is None and resp.status_code >= 500:
+            raise PluginUnreachableError(self.name)
         return None
+
+    async def _fetch_search_page(
+        self,
+        path: str,
+        *,
+        params: dict[str, str] | None = None,
+        context: str = "search",
+        method: Literal["GET", "POST"] = "GET",
+        data: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> str | None:
+        """Fetch the search page *path* below ``base_url`` in the raising
+        mode and return its text: a failure of the site stays one, so the
+        plugin record counts a timeout or an unreachable site instead of a
+        search without results.
+
+        A GET goes through ``_fetch_text()``, a POST (a search form, an API;
+        *data* or *json_body* as its body) through ``_safe_fetch()``; *headers*
+        go on top of the plugin's own. A domain that does not answer sends
+        the page to the domain the domain check finds then
+        (``_verify_domain()``), and ``PluginUnreachableError`` follows when
+        none answers or the page fails there too. A later timeout raises
+        ``TimeoutError``. Every other answer is the lenient one: a challenge
+        goes to the browser (a GET) or the challenge record, a 4xx is
+        ``None``.
+        """
+
+        async def fetch() -> str | None:
+            url = f"{self.base_url}{path}"
+            if method == "GET":
+                return await self._fetch_text(
+                    url, params=params, context=context, headers=headers, raising=True
+                )
+            sent = {
+                "params": params,
+                "headers": headers,
+                "data": data,
+                "json": json_body,
+            }
+            resp = await self._safe_fetch(
+                url,
+                method=method,
+                context=context,
+                raising=True,
+                **{key: value for key, value in sent.items() if value is not None},
+            )
+            return None if resp is None else resp.text
+
+        try:
+            return await fetch()
+        except PluginUnreachableError:
+            if self._single_domain:
+                raise
+        # The domain stopped answering: the check looks at every domain again
+        self._domain_verified = False
+        self._domain_recheck_at = 0.0
+        await self._verify_domain()
+        return await fetch()
 
     async def _fetch_via_browser(
         self,
@@ -566,8 +666,8 @@ class HttpxPluginBase:
     ) -> str | None:
         """Load *url* in the browser and let httpx go on with its session.
 
-        The browser passes the site's challenge once (seconds; on a Raspberry
-        Pi several); every further page through it would cost that again.
+        The browser passes the site's challenge once (seconds; on the production
+        host several); every further page through it would cost that again.
         The site's cookies and the browser's User-Agent pass the same check
         through httpx, so later requests carry them. The host stays in the
         browser memo while the browser works (parallel requests do not try
@@ -575,7 +675,7 @@ class HttpxPluginBase:
         taken over less than ``_SESSION_TRUST_S`` ago: that site binds its
         clearance to the browser. The solve runs on when the Stremio deadline
         cuts the request that started it, so the next request gets the
-        session (on a Raspberry Pi under load a solve took 20 s).
+        session (on the production host under load a solve took 20 s).
         """
         host = urlparse(url).hostname or ""
         self._mark_cf_blocked(url)
@@ -744,9 +844,10 @@ class HttpxPluginBase:
         """
         memo_fetcher = self._cf_fetcher_for(url)
         if memo_fetcher is not None:
-            return await memo_fetcher.resolve_redirect(
+            redirect = await memo_fetcher.resolve_redirect(
                 url, timeout=_BROWSER_FETCH_TIMEOUT_S
             )
+            return redirect.target
 
         client = await self._ensure_client()
         kwargs = self._request_kwargs(client, url)
@@ -778,9 +879,13 @@ class HttpxPluginBase:
                 resp.status_code, resp.text
             ):
                 self._mark_cf_blocked(current)
-                return await fetcher.resolve_redirect(
+                redirect = await fetcher.resolve_redirect(
                     current, timeout=_BROWSER_FETCH_TIMEOUT_S
                 )
+                # Past the challenge, a link-out without a target is dead, not
+                # unsolved (code review 2026-10-12, finding 14)
+                settle_challenge(solved=redirect.passed)
+                return redirect.target
             self._log.debug(
                 f"{self.name}_no_redirect",
                 url=current,

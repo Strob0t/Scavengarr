@@ -198,17 +198,18 @@ class Nima4kPlugin(HttpxPluginBase):
     _domains = _DOMAINS
 
     async def _search_post(self, query: str) -> list[dict[str, str | list[str]]]:
-        """Execute POST search and return parsed results."""
-        resp = await self._safe_fetch(
-            f"{self.base_url}/search",
-            method="POST",
-            context="search",
-            data={"search": query},
+        """Execute POST search and return parsed results.
+
+        A failure of the site raises (a timeout, the site not answering), so
+        the plugin record counts it.
+        """
+        html = await self._fetch_search_page(
+            "/search", method="POST", data={"search": query}
         )
-        if resp is None:
+        if html is None:
             return []
 
-        parser = await parse_page(_ListingParser(self.base_url), resp.text)
+        parser = await parse_page(_ListingParser(self.base_url), html)
 
         self._log.info("nima4k_search_post", query=query, count=len(parser.results))
         return parser.results

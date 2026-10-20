@@ -81,7 +81,7 @@ def test_every_setting_is_read_or_declared_unused() -> None:
     assert unread == [], (
         "settings loaded but read nowhere in src/ outside the config package:"
         f" {unread}; wire each where its name says, or declare it unused in its"
-        " description (and in docs/features/configuration.md)"
+        " description (and in docs/reference/configuration.md)"
     )
 
 

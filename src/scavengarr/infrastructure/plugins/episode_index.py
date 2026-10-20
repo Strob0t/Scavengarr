@@ -6,10 +6,15 @@ IMDb's seasons (One Piece S5E2 is its ``staffel-2/episode-1``), so a
 request's numbers do not place the episode there. The index holds every
 row of the series' season pages, ``(season, episode, german, english,
 absolute)``, cached per series for 7 days; ``locate`` finds the row a
-request's ``EpisodeRef`` means: by the absolute number the row shows
-(``[Episode 062]`` in the English title) confirmed by the title, else by
-the title alone. A plugin passes its page selectors and its fetcher and
-logs the outcome itself.
+request's ``EpisodeRef`` means: the row that shows its absolute number
+(``[Episode 062]`` in the English title), whatever its title; without
+one, by the title. An unchecked number (the catalog's position where a
+Kitsu entry may count the series one off) takes a titled row only where
+the title confirms it. On a series named only by a shorter form of the
+request's titles (``is_partial_series``: Bleach for the Thousand-Year
+Blood War, which the sites keep as Bleach's season 17) the number counts
+another series, and the title alone places the episode. A plugin passes
+its page selectors and its fetcher and logs the outcome itself.
 """
 
 from __future__ import annotations
@@ -25,28 +30,29 @@ from rapidfuzz import fuzz
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 from unidecode import unidecode
 
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import EpisodeRef, is_partial_title
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.infrastructure.plugins.dom import parse_page
 
 INDEX_TTL_SECONDS = 7 * 24 * 3600
 
-# A row within this many numbers of the reference's absolute number is a
-# candidate the title confirms (the catalog's position is an estimate: One
-# Piece 1088 where the site counts 1089)
+# When no row shows the reference's absolute number (the site's count skips
+# it or ends before it), a row within this many numbers of it is a candidate
+# the title confirms
 _NUMBER_SLACK = 5
 # The title match a candidate row needs; the titles are translations of
 # the Japanese ones and differ in wording ("The Man Who Will Become the
 # Pirate King" against "The Man Who's Gonna Be King of the Pirates": 0.82)
 _NEIGHBOUR_MIN = 0.6
-# The title match a row needs without a number
+# The title match a row needs anywhere in the index
 _TITLE_MIN = 0.85
 
 _ABSOLUTE_RE = re.compile(r"\[?\s*episode\s+(\d+)\s*\]?\s*$", re.IGNORECASE)
 _DIGITS_RE = re.compile(r"\d+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
 
-LocatedBy = Literal["number", "title"]
+# The rule of ``locate`` that placed the row
+LocatedBy = Literal["number", "neighbour", "title", "fuzzy_title"]
 
 
 @dataclass(frozen=True)
@@ -206,37 +212,74 @@ def _best(rows: Iterable[EpisodeRow], title: str) -> tuple[EpisodeRow, float] | 
     return best
 
 
-def locate(index: list[EpisodeRow], ref: EpisodeRef) -> Located | None:
+def is_partial_series(titles: Iterable[str], ref: EpisodeRef) -> bool:
+    """Whether the site's series, named *titles*, is only a shorter form of
+    the request's series titles (``is_partial_title``): the request's
+    parent, whose rows count another series, or the site's short name for
+    it. Without the request's titles no series is."""
+    return is_partial_title(
+        map(normalize_title, titles), map(normalize_title, ref.titles)
+    )
+
+
+def locate(
+    index: list[EpisodeRow], ref: EpisodeRef, *, partial: bool = False
+) -> Located | None:
     """The row *ref* means, or ``None``.
 
-    1. With an absolute number: the rows numbered within ``_NUMBER_SLACK``
-       of it, the best title match of at least ``_NEIGHBOUR_MIN`` among
-       them; the row with the number itself when there is no title to
-       compare (the reference has none, or the row shows the number in
-       place of a title, as s.to's anime rows do).
-    2. The row whose normalised English title equals the reference's.
-    3. The best title match of at least ``_TITLE_MIN`` over the index.
+    1. ``number``: the row that shows the reference's absolute number,
+       whatever its title (the first one where the parts of a
+       double-length episode share the number, as Detective Conan's do).
+
+    Without that row, or without a number, the title decides:
+
+    2. ``neighbour``: among the rows numbered within ``_NUMBER_SLACK`` of
+       the number, the best English title match of at least
+       ``_NEIGHBOUR_MIN``.
+    3. ``title``: the row whose normalised English title equals the
+       reference's.
+    4. ``fuzzy_title``: the best title match of at least ``_TITLE_MIN``
+       over the index.
+
+    An unchecked number (``EpisodeRef.source``) may lie one off the
+    site's count, so rule 1 places only a row without an English title
+    (s.to's anime rows) or a reference without one; a titled row needs
+    rule 2 (``number`` where it is the number's row, which wins a tie)
+    or the rules after it (code review of 2026-10-12, finding 1). On a
+    *partial* series (``is_partial_series``) the number counts another
+    series: only rules 3 and 4 apply.
     """
+    absolute = None if partial else ref.absolute
     title = normalize_title(ref.title) if ref.title else ""
-    if ref.absolute is not None:
-        near = [
-            row
-            for row in index
-            if row.absolute is not None
-            and abs(row.absolute - ref.absolute) <= _NUMBER_SLACK
-        ]
-        exact = next((row for row in near if row.absolute == ref.absolute), None)
-        if exact is not None and (not title or not exact.english):
+    if absolute is not None:
+        exact = next((row for row in index if row.absolute == absolute), None)
+        if exact is not None and (
+            ref.source != "unchecked" or not title or not exact.english
+        ):
             return Located(exact, "number")
-        if title:
-            best = _best(near, title)
-            if best is not None and best[1] >= _NEIGHBOUR_MIN:
-                return Located(best[0], "number")
-    if title:
-        for row in index:
-            if row.english and normalize_title(row.english) == title:
-                return Located(row, "title")
-        best = _best(index, title)
-        if best is not None and best[1] >= _TITLE_MIN:
-            return Located(best[0], "title")
+    if not title:
+        return None
+    if absolute is not None:
+        # The number's row first: ``_best`` keeps the first of equal
+        # matches, so it wins a tie (a neighbour whose title is a word
+        # subset of the reference's matches as fully as the identical one)
+        near = sorted(
+            (
+                row
+                for row in index
+                if row.absolute is not None
+                and abs(row.absolute - absolute) <= _NUMBER_SLACK
+            ),
+            key=lambda row: row.absolute != absolute,
+        )
+        best = _best(near, title)
+        if best is not None and best[1] >= _NEIGHBOUR_MIN:
+            row = best[0]
+            return Located(row, "number" if row.absolute == absolute else "neighbour")
+    for row in index:
+        if row.english and normalize_title(row.english) == title:
+            return Located(row, "title")
+    best = _best(index, title)
+    if best is not None and best[1] >= _TITLE_MIN:
+        return Located(best[0], "fuzzy_title")
     return None

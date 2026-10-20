@@ -24,7 +24,7 @@ class TestGuessRelease:
         assert guess.get("screen_size") == "1080p"
 
     def test_each_name_is_parsed_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """On a Raspberry Pi guessit took 25-33% of the Python CPU of a
+        """On the production host guessit took 25-33% of the Python CPU of a
         stream request: the title matcher, the release parser and the
         episode filter parsed the same names again (2026-10-04)."""
         calls: list[str] = []

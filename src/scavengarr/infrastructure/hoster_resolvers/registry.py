@@ -24,12 +24,22 @@ from scavengarr.domain.ports.hoster_resolver import (
     HosterResolverPort,
 )
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
-from scavengarr.infrastructure.browser.page_gate import PageBusy, work_clock
+from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
+    PageBusy,
+    PageGate,
+    ResolutionChallenge,
+    challenge_mark,
+    work_clock,
+)
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import (
     PlaybackCheck,
     check_playable,
+)
+from scavengarr.infrastructure.hoster_resolvers.challenge_cooldown import (
+    ChallengeCooldown,
 )
 
 log = structlog.get_logger(__name__)
@@ -54,6 +64,20 @@ _MAX_UNRESOLVED = 1000
 # Streaming playlists, which plugins sometimes hand out directly. Not file
 # suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
 _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
+# The content types an HLS playlist comes with: the registered one, RFC 8216's
+# audio/mpegurl, and the older x- ones (SRF's and funk's CDNs send
+# application/x-mpegURL)
+_HLS_CONTENT_TYPES = (
+    "application/vnd.apple.mpegurl",
+    "application/x-mpegurl",
+    "audio/mpegurl",
+    "audio/x-mpegurl",
+)
+
+# A capture the resolve bound cut after a challenge runs on for this long
+# (_complete): with production's bound of 10 s, 30 s of work in all, past the
+# production host's cold captures of 13.3 to 17.8 s (2026-10-11)
+_COMPLETION_S = 20.0
 
 
 def _is_playlist_url(url: str) -> bool:
@@ -97,6 +121,36 @@ def _from_plain(data: dict[str, Any]) -> ResolvedStream:
     return ResolvedStream(**known)
 
 
+def _started(
+    resolve: Callable[[], Awaitable[ResolvedStream | None]],
+    clock: asyncio.Timeout,
+    mark: ChallengeMark,
+) -> asyncio.Task[ResolvedStream | None]:
+    """*resolve* as a task under *clock* (``work_clock``) and *mark*
+    (``challenge_mark``). Awaited through ``asyncio.shield``, the bound does
+    not cancel it, so a challenged capture can run on past the cut."""
+    clock_token = work_clock.set(clock)
+    mark_token = challenge_mark.set(mark)
+    try:
+        return asyncio.ensure_future(resolve())
+    finally:
+        work_clock.reset(clock_token)
+        challenge_mark.reset(mark_token)
+
+
+def _cancels() -> int:
+    """The cancel requests pending on the running task (``cancelling()``)."""
+    task = asyncio.current_task()
+    return 0 if task is None else task.cancelling()
+
+
+async def _cancelled(task: asyncio.Task[Any]) -> None:
+    """Cancel *task* and wait for its cleanup (a capture closes its page),
+    whatever it ends with."""
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 class _CacheEntry[T]:
     """Time-bounded cache entry (resolver results, redirect targets); a
     result keeps the name of the resolver that produced it."""
@@ -120,8 +174,14 @@ class HosterResolverRegistry:
     Caches resolution outcomes and redirect mappings in-memory. With a
     *circuit_breaker*, a resolver whose resolutions keep running into the
     timeout or giving unplayable streams is skipped for a while (keyed by
-    resolver name, so a hoster's mirror domains share it). Every resolution
-    is recorded in *telemetry* by resolver name (``direct`` for a probe).
+    resolver name, so a hoster's mirror domains share it). A resolution
+    whose capture met a challenge ends as ``challenge`` instead: the
+    resolver's links wait out a challenge cooldown (``ChallengeCooldown``),
+    and the breaker does not count it. A capture the bound cut after its
+    challenge runs on in the background and leaves its stream in the cache
+    (``_complete``), on a page of the stealth browser's *pages* (a page
+    stays free for the others). Every resolution is recorded in *telemetry*
+    by resolver name (``direct`` for a probe).
     """
 
     def __init__(
@@ -132,6 +192,7 @@ class HosterResolverRegistry:
         verify_playback: bool = False,
         circuit_breaker: PluginCircuitBreaker | None = None,
         telemetry: TelemetryPort = NO_TELEMETRY,
+        pages: PageGate | None = None,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
@@ -140,6 +201,7 @@ class HosterResolverRegistry:
         self._resolve_timeout = resolve_timeout
         self._circuit_breaker = circuit_breaker
         self._telemetry = telemetry
+        self._pages = pages
         # Resolver results must also pass check_playable (needs http_client)
         self._verify_playback = verify_playback and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
@@ -147,8 +209,22 @@ class HosterResolverRegistry:
         # Resolutions and redirects cached (export_state's content)
         self._changes = 0
         self._resolve_count = 0
+        # When a request last looked up a link of each resolver (demand_age)
+        self._demand: dict[str, float] = {}
         # Half-open probes run on when their request is cut (see _resolve_with)
         self._probes: set[asyncio.Task[ResolvedStream | None]] = set()
+        self._challenges = ChallengeCooldown()
+        # Challenged captures that run on past the bound, by resolver
+        # (_hand_over): the completion and the capture it awaits; and the
+        # completions by the cache key of their link (_joined)
+        self._completions: dict[
+            str,
+            tuple[
+                asyncio.Task[ResolvedStream | None],
+                asyncio.Task[ResolvedStream | None],
+            ],
+        ] = {}
+        self._completing: dict[str, asyncio.Task[ResolvedStream | None]] = {}
         # Probes of links no resolver claims, by hoster (unresolved_hosts)
         self._unresolved: Counter[str] = Counter()
         for resolver in resolvers or []:
@@ -193,19 +269,20 @@ class HosterResolverRegistry:
             or self._domain_map.get(name)
         )
 
+    def resolver_name(self, url: str) -> str | None:
+        """Name of the resolver the dispatch takes for *url* (step 1 of
+        ``resolve()``): a host a resolver claims, then the second-level
+        domain as a resolver's name or alias. ``None`` without one, where
+        the dispatch follows redirects or probes the content type.
+        """
+        url = url.strip()
+        resolver = self._resolver_for(url, extract_domain(url))
+        return resolver.name if resolver is not None else None
+
     @property
     def supported_hosters(self) -> list[str]:
         """Return list of hosters with registered resolvers."""
         return list(self._resolvers.keys())
-
-    @property
-    def supported_domains(self) -> frozenset[str]:
-        """Return second-level domains that dispatch to a resolver.
-
-        Resolver names plus every alias from ``supported_domains``
-        (e.g. ``filelions`` for the vidhide resolver).
-        """
-        return frozenset(self._resolvers) | frozenset(self._domain_map)
 
     def canonical_hoster(self, name: str) -> str | None:
         """Resolver name for a hoster label, second-level domain or host.
@@ -234,12 +311,39 @@ class HosterResolverRegistry:
 
         ``(True, stream)`` for a cached stream, ``(True, None)`` for a link
         cached as dead, ``(False, None)`` when ``resolve()`` would have to
-        resolve it.
+        resolve it. A cached outcome a request takes is demand for its
+        resolver (``demand_age()``).
         """
         cached = self._result_cache.get(url.strip())
         if cached is None or cached.is_expired:
             return False, None
+        self._demand[cached.resolver] = time.monotonic()
         return True, cached.value
+
+    def demand_age(self, resolver: str) -> float | None:
+        """Seconds since a lookup last asked for a link of *resolver*:
+        ``resolve()`` (its cache hits included) and ``cached()``, not a
+        lookup without demand (Filemoon's pass keeper); ``None`` without
+        one. It outlives a restart with the state (``export_state()``)."""
+        last = self._demand.get(resolver)
+        return None if last is None else time.monotonic() - last
+
+    def last_stream(self, resolver: str) -> str | None:
+        """The link of *resolver*'s newest cached stream (the one to expire
+        last), as ``resolve()`` was asked for it; ``None`` without one: the
+        link Filemoon's pass keeper resolves again (``PassKeeper``)."""
+        now = time.monotonic()
+        newest = max(
+            (
+                (entry.expires_at, url)
+                for url, entry in self._result_cache.items()
+                if entry.resolver == resolver
+                and entry.value is not None
+                and entry.expires_at > now
+            ),
+            default=None,
+        )
+        return None if newest is None else newest[1]
 
     @property
     def changes(self) -> int:
@@ -247,10 +351,11 @@ class HosterResolverRegistry:
         :meth:`export_state` holds changed (the state store writes then)."""
         return self._changes
 
-    def export_state(self) -> dict[str, list[dict[str, Any]]]:
+    def export_state(self) -> dict[str, Any]:
         """The unexpired resolutions and redirects with their lifetime left
-        (``remaining``, seconds), oldest first, in builtins only: a snapshot
-        that outlives the process (``HosterStateStore``)."""
+        (``remaining``, seconds), oldest first, and each resolver's demand
+        (``demand``: seconds since its last lookup), in builtins only: a
+        snapshot that outlives the process (``HosterStateStore``)."""
         now = time.monotonic()
         results = [
             {
@@ -267,16 +372,18 @@ class HosterResolverRegistry:
             for url, entry in self._redirect_cache.items()
             if entry.expires_at > now
         ]
-        return {"results": results, "redirects": redirects}
+        demand = {name: now - last for name, last in self._demand.items()}
+        return {"results": results, "redirects": redirects, "demand": demand}
 
     def import_state(self, state: Mapping[str, Any], age_s: float) -> tuple[int, int]:
         """Restore :meth:`export_state`'s entries with their lifetime
         shortened by *age_s* (the time since the export); the ones that ran
-        out meanwhile stay out. Returns the numbers of resolutions and
-        redirects restored.
+        out meanwhile stay out. The demand grows older by *age_s* (a
+        snapshot without it has none). Returns the numbers of resolutions
+        and redirects restored.
 
-        Raises ``KeyError``, ``TypeError`` or ``ValueError`` for a malformed
-        entry, before changing anything.
+        Raises ``AttributeError``, ``KeyError``, ``TypeError`` or
+        ``ValueError`` for a malformed entry, before changing anything.
         """
         results: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         for entry in state["results"]:
@@ -294,6 +401,13 @@ class HosterResolverRegistry:
                 redirects[str(entry["url"])] = _CacheEntry(
                     str(entry["target"]), remaining
                 )
+        now = time.monotonic()
+        demand = {
+            str(name): now - float(ago) - age_s
+            for name, ago in (state.get("demand") or {}).items()
+        }
+        for name, last in demand.items():
+            self._demand[name] = max(last, self._demand.get(name, last))
         self._result_cache.update(results)
         self._enforce_max_size(self._result_cache)
         self._redirect_cache.update(redirects)
@@ -301,13 +415,24 @@ class HosterResolverRegistry:
         return len(results), len(redirects)
 
     async def resolve(
-        self, url: str, hoster: str = "", *, refresh: bool = False
+        self,
+        url: str,
+        hoster: str = "",
+        *,
+        refresh: bool = False,
+        demand: bool = True,
+        bound: float | None = None,
     ) -> ResolvedStream | None:
-        """Resolve a hoster embed URL to a playable video URL.
+        """Resolve a hoster embed URL to a playable video URL. The lookup is
+        demand for the resolver it goes to (``demand_age()``), a cache hit
+        too, unless *demand* is false (Filemoon's pass keeper: the app's own
+        lookup). *bound* replaces the resolve bound for this lookup (the
+        keeper's again: no request waits for its capture).
 
         1. Check result cache for previously resolved URL (not with
-           *refresh*: the CDN refused the cached stream); probe a streaming
-           playlist URL (``.m3u8``, ``.mpd``) directly.
+           *refresh*: the CDN refused the cached stream, and a refresh
+           passes the challenge cooldown too); probe a streaming playlist
+           URL (``.m3u8``, ``.mpd``) directly.
         2. Try the specific hoster resolver (URL domain takes priority over hint).
         3. If URL domain has no resolver, follow HTTP redirects and retry.
         4. Try hoster hint if different from URL domain (handles redirect domains).
@@ -328,6 +453,8 @@ class HosterResolverRegistry:
         if cached is not None and not cached.is_expired:
             log.debug("hoster_resolve_cache_hit", url=url)
             self._telemetry.count("hoster_resolve", "cached", resolver=cached.resolver)
+            if demand:
+                self._demand[cached.resolver] = time.monotonic()
             return cached.value
 
         # URL domain is authoritative; fall back to plugin-provided hint
@@ -343,7 +470,15 @@ class HosterResolverRegistry:
         #    match, then domain alias)
         resolver = self._resolver_for(url, hoster_name)
         if resolver is not None:
-            return await self._resolve_with(resolver, hoster_name, url, url)
+            return await self._resolve_with(
+                resolver,
+                hoster_name,
+                url,
+                url,
+                refresh=refresh,
+                demand=demand,
+                bound=bound,
+            )
 
         # 2. No resolver for this domain — try following redirects
         final_url = await self._follow_redirects(url)
@@ -358,7 +493,13 @@ class HosterResolverRegistry:
                     url=final_url,
                 )
                 return await self._resolve_with(
-                    resolver, redirected_hoster, final_url, url
+                    resolver,
+                    redirected_hoster,
+                    final_url,
+                    url,
+                    refresh=refresh,
+                    demand=demand,
+                    bound=bound,
                 )
 
         # 3. Try hoster hint if different from URL domain
@@ -372,7 +513,15 @@ class HosterResolverRegistry:
                     url_domain=hoster_name,
                     url=url,
                 )
-                return await self._resolve_with(resolver, hoster, url, url)
+                return await self._resolve_with(
+                    resolver,
+                    hoster,
+                    url,
+                    url,
+                    refresh=refresh,
+                    demand=demand,
+                    bound=bound,
+                )
 
         # 4. Fallback: content-type probing
         self._count_unresolved(hoster_name)
@@ -442,10 +591,16 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         result: ResolvedStream | None,
+        *,
+        started: float,
+        challenge: ResolutionChallenge | None = None,
     ) -> tuple[str, ResolvedStream | None, bool]:
         """Classify a resolver's answer: ``dead`` link, ``unplayable``,
         ``check_error`` or a ``stream``; the stream only for the last, and
-        whether the outcome may be cached.
+        whether the outcome may be cached. The success log names the
+        *challenge* the capture passed on its way (a cold capture), ``None``
+        for a warm one, and the attempt's wall time since *started*
+        (``time.monotonic()``) as ``duration_ms``.
 
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
@@ -473,14 +628,23 @@ class HosterResolverRegistry:
                 self._record(resolver, failed=True)
                 return "unplayable", None, True
             result = _measured(result, check)
-        log.info("hoster_resolve_success", hoster=hoster_name, is_hls=result.is_hls)
+        log.info(
+            "hoster_resolve_success",
+            hoster=hoster_name,
+            is_hls=result.is_hls,
+            challenge=challenge,
+            duration_ms=round((time.monotonic() - started) * 1000),
+        )
         self._record(resolver, failed=False)
         if getattr(resolver, "address_bound", False) is True:
             result = replace(result, address_bound=True)
         return "stream", _stamped(result), True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:
-        """Report a resolution's outcome to the circuit breaker."""
+        """Report a resolution's outcome to the circuit breaker; a stream
+        also ends the resolver's challenge cooldown."""
+        if not failed:
+            self._challenges.streamed(resolver.name)
         breaker = self._circuit_breaker
         if breaker is None:
             return
@@ -533,20 +697,69 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         cache_key: str,
+        *,
+        refresh: bool = False,
+        demand: bool = True,
+        bound: float | None = None,
     ) -> ResolvedStream | None:
-        """Resolve *url* with *resolver*; cache the outcome under *cache_key*."""
+        """Resolve *url* with *resolver*; cache the outcome under *cache_key*.
+        A link whose capture runs on in the background joins it instead
+        (``_joined``). With *demand* the lookup is the resolver's demand;
+        *bound* replaces the resolve bound."""
+        if demand:
+            self._demand[resolver.name] = time.monotonic()
+        if bound is None:
+            bound = self._resolve_timeout
+        completion = self._completing.get(cache_key)
+        if completion is not None:
+            return await self._joined(completion, resolver, url, bound)
         return await self._guarded(
-            resolver, url, partial(self._attempt, resolver, hoster_name, url, cache_key)
+            resolver,
+            url,
+            partial(self._attempt, resolver, hoster_name, url, cache_key, bound),
+            refresh=refresh,
         )
+
+    async def _joined(
+        self,
+        completion: asyncio.Task[ResolvedStream | None],
+        resolver: HosterResolverPort,
+        url: str,
+        bound: float,
+    ) -> ResolvedStream | None:
+        """Wait for the background *completion* of *url*'s capture, at most
+        the lookup's *bound*, and answer the stream it cached; ``None``
+        without one in time. A second capture of the link would end without
+        the first's challenge and cache the link as dead over the
+        completion's stream (code review 2026-10-12, finding 9). The wait
+        leaves the completion running when the bound or the request ends
+        it."""
+        log.info("hoster_resolve_joined", hoster=resolver.name, url=url)
+        self._telemetry.count("hoster_resolve", "joined", resolver=resolver.name)
+        await asyncio.wait((completion,), timeout=bound)
+        if not completion.done() or completion.cancelled():
+            return None
+        if completion.exception() is not None:
+            return None
+        return completion.result()
 
     async def _guarded(
         self,
         resolver: HosterResolverPort,
         url: str,
         attempt: Callable[[], Coroutine[Any, Any, ResolvedStream | None]],
+        *,
+        refresh: bool = False,
     ) -> ResolvedStream | None:
-        """Run *attempt* unless the circuit breaker skips *resolver*.
+        """Run *attempt* unless the challenge cooldown or the circuit breaker
+        skips *resolver*.
 
+        The cooldown goes first: the breaker's ``allow()`` starts a half-open
+        trial, and a link the cooldown skips must not take the trial's slot.
+        A *refresh* (the CDN refused a stored stream at play time) passes the
+        cooldown, which spares captures for links nobody plays yet; only an
+        open breaker refuses it, as before the cooldown (code review
+        2026-10-12, finding 5: playback failed at once in a cooldown).
         A half-open probe runs to its end even when the request is cut: cut
         by the resolve grace, Filemoon's probes never reported, so the
         breaker probed again after every cooldown without doubling it
@@ -556,6 +769,17 @@ class HosterResolverRegistry:
         probe slot, so the next link probes (it held the slot for a whole
         cooldown, code review 2026-10-06).
         """
+        if not refresh and (left := self._challenges.left(resolver.name)):
+            log.info(
+                "hoster_resolve_challenge_cooldown",
+                hoster=resolver.name,
+                url=url,
+                left_s=round(left),
+            )
+            self._telemetry.count(
+                "hoster_resolve", "challenge_cooldown", resolver=resolver.name
+            )
+            return None
         breaker = self._circuit_breaker
         if breaker is None:
             return await attempt()
@@ -579,19 +803,26 @@ class HosterResolverRegistry:
         hoster_name: str,
         url: str,
         cache_key: str,
+        bound: float,
     ) -> ResolvedStream | None:
-        """One resolution of *url*; its outcome is cached under *cache_key*."""
-        result, cacheable = await self._try_resolver(resolver, hoster_name, url)
+        """One resolution of *url* within *bound*; its outcome is cached
+        under *cache_key*."""
+        result, cacheable = await self._try_resolver(
+            resolver, hoster_name, url, cache_key=cache_key, bound=bound
+        )
         if cacheable:
             self._cache_result(cache_key, result, resolver.name)
         return result
 
     async def aclose(self) -> None:
-        """Cancel the half-open probes still running (at shutdown)."""
-        probes = list(self._probes)
-        for probe in probes:
-            probe.cancel()
-        await asyncio.gather(*probes, return_exceptions=True)
+        """Cancel the half-open probes and the challenged captures that run
+        on past the bound, with their completions (at shutdown)."""
+        running: list[asyncio.Task[Any]] = [*self._probes]
+        for completion, work in self._completions.values():
+            running += (completion, work)
+        for task in running:
+            task.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
 
     async def _try_resolver(
         self,
@@ -600,15 +831,17 @@ class HosterResolverRegistry:
         url: str,
         *,
         resolve: Callable[[], Awaitable[ResolvedStream | None]] | None = None,
+        cache_key: str | None = None,
+        bound: float | None = None,
     ) -> tuple[ResolvedStream | None, bool]:
         """Attempt resolution with a specific resolver, logging success/failure.
 
         Returns the stream (None = failed) and whether the outcome may be
-        cached. The resolver gets ``resolve_timeout`` in total (the
-        resolvers' own request timeouts add up over several requests); the
-        clock stops while it waits for a stealth browser page
-        (``work_clock``). *resolve* replaces ``resolver.resolve(url)`` (a
-        player's resolution).
+        cached. The resolver gets ``resolve_timeout`` in total, or the
+        lookup's own *bound* (the resolvers' own request timeouts add up
+        over several requests); the clock stops while it waits for a
+        stealth browser page (``work_clock``). *resolve* replaces
+        ``resolver.resolve(url)`` (a player's resolution).
 
         The circuit breaker counts a timeout and an unplayable stream; a
         stream resets it. A dead link, a failed request and a cut neither
@@ -617,17 +850,66 @@ class HosterResolverRegistry:
         video, and five of them opened the breakers of healthy hosters
         (code review, 2026-10-06). Neither does a capture that got no
         browser page before its request was due (``busy``).
+
+        A resolution without a stream whose challenge still stands
+        (``challenge_mark``: an interstitial, a Turnstile widget, a captcha
+        provider's frame, the hoster's own captcha, not got past since) ends
+        as ``challenge``: the hoster wants a warm browser context, it is not
+        broken. Neither cached nor counted; the resolver's links wait out
+        the challenge cooldown. A page past its challenge gave a verdict on
+        the link: no stream there is a dead link (code review 2026-10-12,
+        finding 2). A timeout after any challenge ends as ``challenge`` too
+        (the cold path cost the bound), its cooldown only while the
+        challenge stands. A capture the bound cuts after its challenge runs
+        on in the background when its outcome is cached under *cache_key*
+        (``_hand_over``); a cut request (the answer went out) cancels it, as
+        it cancels a capture without a challenge.
         """
+        mark = ChallengeMark()
+        started = time.monotonic()
+        cancels = _cancels()
         with self._telemetry.stage("hoster_resolve", resolver=resolver.name) as stage:
             try:
-                async with asyncio.timeout(self._resolve_timeout) as clock:
-                    token = work_clock.set(clock)
+                async with asyncio.timeout(
+                    self._resolve_timeout if bound is None else bound
+                ) as clock:
+                    work = _started(
+                        resolve or partial(resolver.resolve, url), clock, mark
+                    )
                     try:
-                        result = await (resolve() if resolve else resolver.resolve(url))
-                    finally:
-                        work_clock.reset(token)
+                        result = await asyncio.shield(work)
+                    except asyncio.CancelledError:
+                        # Cut by the bound (its clock expired, its cancel the
+                        # only new one) or the request, also when the request
+                        # cancels in the bound's loop iteration (code review
+                        # 2026-10-12, finding 15). The work ends inside the
+                        # bound: the page gate gives a stopped clock its time
+                        # back, an exited one refuses
+                        if not (
+                            clock.expired()
+                            and _cancels() == cancels + 1
+                            and self._hand_over(
+                                work,
+                                resolver,
+                                hoster_name,
+                                url,
+                                cache_key,
+                                mark,
+                                started,
+                            )
+                        ):
+                            await _cancelled(work)
+                        raise
+                if result is None and mark.open:
+                    stage.outcome = self._challenged(resolver, hoster_name, url, mark)
+                    return None, False
                 stage.outcome, stream, cacheable = await self._judge(
-                    resolver, hoster_name, url, result
+                    resolver,
+                    hoster_name,
+                    url,
+                    result,
+                    started=started,
+                    challenge=mark.kind,
                 )
                 return stream, cacheable
             except PageBusy:
@@ -635,6 +917,9 @@ class HosterResolverRegistry:
                 stage.outcome = "busy"
                 return None, False
             except (TimeoutError, httpx.TimeoutException):
+                if mark.kind is not None:
+                    stage.outcome = self._challenged(resolver, hoster_name, url, mark)
+                    return None, False
                 log.warning("hoster_resolve_timeout", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
                 stage.outcome = "timeout"
@@ -660,6 +945,147 @@ class HosterResolverRegistry:
                 log.exception("hoster_resolve_error", hoster=hoster_name, url=url)
                 stage.outcome = "error"
         return None, True
+
+    def _challenged(
+        self,
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        mark: ChallengeMark,
+    ) -> str:
+        """A resolution that met a challenge and found no stream: start the
+        resolver's next cooldown step while the challenge stands (a cut past
+        it starts none: the context is warm); returns the outcome."""
+        cooldown = self._challenges.challenged(resolver.name) if mark.open else 0.0
+        log.info(
+            "hoster_resolve_challenge",
+            hoster=hoster_name,
+            url=url,
+            kind=mark.kind,
+            passed=not mark.open,
+            cooldown_s=round(cooldown),
+        )
+        return "challenge"
+
+    def _hand_over(
+        self,
+        work: asyncio.Task[ResolvedStream | None],
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        cache_key: str | None,
+        mark: ChallengeMark,
+        started: float,
+    ) -> bool:
+        """Let *work*, a capture the bound cut, run on in the background
+        (``_complete``) when it met a challenge: only a resolution whose
+        outcome is cached (*cache_key*; a player's own is not), one per
+        resolver at a time; requests for the link join it (``_joined``).
+        Each holds a browser page, so they leave one of the gate's pages
+        free: a /play resolution waited for one until it gave up (code
+        review 2026-10-12, finding 12), and on a single page nothing runs
+        on. Whether it runs on."""
+        name = resolver.name
+        if mark.kind is None or cache_key is None or name in self._completions:
+            return False
+        if self._pages is not None and len(self._completions) >= self._pages.limit - 1:
+            return False
+        completion = asyncio.ensure_future(
+            self._complete(work, resolver, hoster_name, url, cache_key, mark, started)
+        )
+        self._completions[name] = (completion, work)
+        self._completing[cache_key] = completion
+        # A completion cancelled before its first step never awaited the
+        # capture, which would run on unowned
+        completion.add_done_callback(lambda _: work.cancel())
+        completion.add_done_callback(lambda _: self._completions.pop(name, None))
+        completion.add_done_callback(lambda _: self._completing.pop(cache_key, None))
+        return True
+
+    async def _complete(
+        self,
+        work: asyncio.Task[ResolvedStream | None],
+        resolver: HosterResolverPort,
+        hoster_name: str,
+        url: str,
+        cache_key: str,
+        mark: ChallengeMark,
+        started: float,
+    ) -> ResolvedStream | None:
+        """Await a capture the bound cut after a challenge for up to
+        ``_COMPLETION_S`` more, on the page it holds (it takes no other);
+        returns the stream it cached, for the requests that joined it.
+
+        Its stream is judged and cached under *cache_key* as the attempt's
+        own: it ends the resolver's challenge cooldown, closes a half-open
+        breaker, and the next request finds it in the cache. No stream from
+        a page past its challenge (*mark*) is a dead link, judged and cached
+        as one. Without a stream while the challenge stands (none, an error,
+        the deadline, which cancels the capture) it stands as in
+        ``_try_resolver``: nothing is cached or counted, and the resolver's
+        next cooldown step starts now; past it, an error or the deadline
+        gives no verdict and steps nothing up. Recorded as the stage
+        ``hoster_challenge_completion`` from the cut; shutdown cancels it
+        (``aclose``).
+        """
+        deadline = asyncio.timeout(_COMPLETION_S)
+        with self._telemetry.stage(
+            "hoster_challenge_completion", resolver=resolver.name
+        ) as stage:
+            # Unless it ends otherwise: cut by the deadline or by shutdown
+            stage.outcome = "cancelled"
+            try:
+                async with deadline:
+                    result = await work
+            except Exception:
+                if not deadline.expired():
+                    stage.outcome = "none"
+                    log.exception(
+                        "hoster_challenge_completion_error", hoster=hoster_name, url=url
+                    )
+                if mark.open:
+                    self._unsolved(resolver, hoster_name, url)
+                return None
+            if result is None and mark.open:
+                stage.outcome = "none"
+                self._unsolved(resolver, hoster_name, url)
+                return None
+            try:
+                _, stream, cacheable = await self._judge(
+                    resolver,
+                    hoster_name,
+                    url,
+                    result,
+                    started=started,
+                    challenge=mark.kind,
+                )
+            except Exception:
+                # The capture got its stream, the check broke: no verdict on
+                # the link or its challenge (code review 2026-10-12, V29)
+                stage.outcome = "none"
+                log.exception(
+                    "hoster_challenge_completion_error", hoster=hoster_name, url=url
+                )
+                return None
+            if not cacheable:
+                stage.outcome = "none"
+                return None
+            self._cache_result(cache_key, stream, resolver.name)
+            stage.outcome = "none" if stream is None else "stream"
+            return stream
+
+    def _unsolved(
+        self, resolver: HosterResolverPort, hoster_name: str, url: str
+    ) -> None:
+        """A completion without a stream: the resolver's challenge stands,
+        and its next cooldown step starts now."""
+        cooldown = self._challenges.unsolved(resolver.name)
+        log.info(
+            "hoster_challenge_unsolved",
+            hoster=hoster_name,
+            url=url,
+            cooldown_s=round(cooldown),
+        )
 
     async def _follow_redirects(self, url: str) -> str | None:
         """Follow HTTP redirects and return final URL if domain changed.
@@ -705,7 +1131,7 @@ class HosterResolverRegistry:
         """Probe URL via HEAD request to check if it's directly playable.
 
         Returns a ResolvedStream if the URL answers (below 400) with a video
-        type (video/*, application/vnd.apple.mpegurl): a CDN that types its
+        type (video/*, an HLS type of ``_HLS_CONTENT_TYPES``): a CDN that types its
         error page by the path made a refusal a stream, cached for an hour
         (code review, 2026-10-06).
         """
@@ -733,7 +1159,7 @@ class HosterResolverRegistry:
                     video_url=str(resp.url), quality=StreamQuality.UNKNOWN
                 )
 
-            if "application/vnd.apple.mpegurl" in content_type:
+            if any(hls in content_type for hls in _HLS_CONTENT_TYPES):
                 log.info(
                     "hoster_probe_hls",
                     hoster=hoster_name,

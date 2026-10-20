@@ -104,7 +104,13 @@ class DoodStreamResolver:
             )
             if is_cloudflare_challenge(resp.status_code, resp.text):
                 log.info("doodstream_cloudflare_browser_fallback", url=embed_url)
-                return await capture_stream(self._stealth_pool, embed_url, "doodstream")
+                # The player loads an invisible Turnstile on every capture,
+                # cold or warm, and does not wait for it: its stream came on
+                # the click at 5.3 s, the widget's token at 6.3 s (dev,
+                # 2026-10-12; code review 2026-10-12, finding 3)
+                return await capture_stream(
+                    self._stealth_pool, embed_url, "doodstream", passive_widget=True
+                )
             if resp.status_code != 200:
                 log.warning(
                     "doodstream_http_error",

@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -14,14 +15,26 @@ import respx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream, StreamQuality
-from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
+from scavengarr.infrastructure.browser.page_gate import (
+    PageBusy,
+    PageGate,
+    challenge_mark,
+    mark_resolution_challenge,
+    mark_resolution_passed,
+    work_clock,
+)
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
-from scavengarr.infrastructure.hoster_resolvers import extract_domain
+from scavengarr.infrastructure.hoster_resolvers import (
+    challenge_cooldown,
+    extract_domain,
+)
 from scavengarr.infrastructure.hoster_resolvers import registry as registry_module
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
 from scavengarr.infrastructure.telemetry import Telemetry
+
+from ..waiting import eventually
 
 
 class TestExtractDomain:
@@ -66,14 +79,34 @@ class TestHosterResolverRegistry:
             for e in logs
         )
 
-    def test_supported_domains_include_aliases(self) -> None:
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            # A claimed host first, also behind www.
+            ("https://kinoger.pw/e/abc", "strmup"),
+            ("https://www.kinoger.pw/e/abc", "strmup"),
+            # Then the second-level name, then an alias
+            ("https://voe.sx/e/abc", "voe"),
+            ("https://filelions.to/v/abc", "vidhide"),
+            # Only the second-level name of a claimed host
+            ("https://kinoger.ru/x", None),
+            ("https://unknown.org/x", None),
+            ("not-a-url", None),
+        ],
+    )
+    def test_resolver_name_looks_up_as_the_dispatch(
+        self, url: str, expected: str | None
+    ) -> None:
         vidhide = SimpleNamespace(
             name="vidhide", supported_domains=frozenset({"vidhide", "filelions"})
         )
+        strmup = SimpleNamespace(
+            name="strmup", supported_hosts=frozenset({"kinoger.pw"})
+        )
         voe = SimpleNamespace(name="voe")
-        registry = HosterResolverRegistry(resolvers=[vidhide, voe])
+        registry = HosterResolverRegistry(resolvers=[vidhide, strmup, voe])
 
-        assert registry.supported_domains == frozenset({"vidhide", "filelions", "voe"})
+        assert registry.resolver_name(url) == expected
 
     @pytest.mark.parametrize(
         ("name", "expected"),
@@ -199,10 +232,19 @@ class TestHosterResolverRegistry:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_probe_detects_hls(self) -> None:
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "application/vnd.apple.mpegurl; charset=utf-8",
+            # SRF's and funk's CDNs; RFC 8216's audio/mpegurl and its x- form
+            "application/x-mpegURL",
+            "audio/mpegurl",
+            "audio/x-mpegurl",
+        ],
+    )
+    async def test_probe_detects_hls(self, content_type: str) -> None:
         respx.head("https://cdn.example.com/master.m3u8").respond(
-            200,
-            headers={"content-type": "application/vnd.apple.mpegurl; charset=utf-8"},
+            200, headers={"content-type": content_type}
         )
         async with httpx.AsyncClient() as client:
             registry = HosterResolverRegistry(http_client=client)
@@ -672,6 +714,23 @@ class TestHosterResolverRegistry:
         assert await registry.resolve("https://voe.sx/e/abc") is not None
 
     @pytest.mark.asyncio
+    async def test_a_lookup_can_have_a_bound_of_its_own(self) -> None:
+        """Filemoon's pass keeper: no request waits for its capture."""
+
+        async def _slow(url: str) -> ResolvedStream | None:
+            await asyncio.sleep(0.2)
+            return ResolvedStream(video_url="https://cdn.example.com/v.mp4")
+
+        resolver = MagicMock()
+        resolver.name = "voe"
+        resolver.resolve = AsyncMock(side_effect=_slow)
+        registry = HosterResolverRegistry(resolvers=[resolver], resolve_timeout=0.05)
+
+        assert await registry.resolve("https://voe.sx/e/abc", bound=1) is not None
+        # The next lookup has the registry's
+        assert await registry.resolve("https://voe.sx/e/def") is None
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "error", [httpx.ReadTimeout("slow"), httpx.ConnectError("down")]
     )
@@ -897,7 +956,7 @@ class TestMirrorDomainDispatch:
     async def test_mirror_dispatches_to_resolver(
         self, registry: HosterResolverRegistry, name: str, url: str
     ) -> None:
-        assert extract_domain(url) in registry.supported_domains
+        assert registry.resolver_name(url) == name
 
         result = await registry.resolve(url)
 
@@ -1080,7 +1139,7 @@ class TestCircuitBreaker:
         breaker = await self._half_open(registry)
 
         await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
-        await asyncio.sleep(0.15)
+        await eventually(lambda: registry.cached("https://doodstream.com/e/a")[0])
 
         assert breaker.is_closed("doodstream")
         # The probe's stream is cached for the next request
@@ -1122,7 +1181,8 @@ class TestCircuitBreaker:
         breaker = await self._half_open(registry)
 
         await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
-        await asyncio.sleep(0.15)
+        # The probe's failure reopens the breaker with a cooldown of its own
+        await eventually(lambda: "doodstream" in breaker._cooldowns)
 
         assert breaker.state("doodstream") == "open"
         assert breaker._cooldowns["doodstream"] == pytest.approx(0.04)
@@ -1526,6 +1586,856 @@ class TestBusyBrowser:
         await holder
 
 
+class _ChallengedPlayer(_PlayerBound):
+    """VEEV's capture for one player, cut after the hoster's captcha."""
+
+    def __init__(self, gate: PageGate) -> None:
+        super().__init__()
+        self._gate = gate
+
+    async def resolve_for_client(
+        self, url: str, headers: dict[str, str]
+    ) -> ResolvedStream | None:
+        async with self._gate.page("capture", timeout=10):
+            mark_resolution_challenge("hoster_captcha")
+            await asyncio.sleep(0.1)
+        return ResolvedStream(video_url="https://cdn.example/player.mp4")
+
+
+class TestChallenge:
+    """A capture that met a challenge and found no stream in time says the
+    hoster wants a warm browser, not that it is broken: Filemoon's and
+    Dropload's cold captures took 13 to 18 s on the production host against the 10 s
+    bound, and every half-open trial since a restart reopened the breaker
+    for an hour (2026-10-11; react-to-challenges, R1 and R7). A capture the
+    bound cuts after its challenge runs on in the background and leaves its
+    stream in the cache (R2)."""
+
+    _MP4 = "https://cdn.example.com/v.mp4"
+
+    @staticmethod
+    def _url(link: str) -> str:
+        return f"https://filemoon.sx/e/{link}"
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, float]:
+        """The challenge cooldown's clock; the test moves it."""
+        now = {"t": 1000.0}
+        monkeypatch.setattr(challenge_cooldown, "_now", lambda: now["t"])
+        return now
+
+    @staticmethod
+    def _registry(
+        resolve: Callable[[str], Awaitable[ResolvedStream | None]],
+        *,
+        resolve_timeout: float = 0.05,
+        failure_threshold: int = 1,
+        cooldown_seconds: float = 60.0,
+    ) -> tuple[HosterResolverRegistry, MagicMock, Telemetry]:
+        resolver = MagicMock()
+        resolver.name = "filemoon"
+        resolver.resolve = AsyncMock(side_effect=resolve)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(
+            resolvers=[resolver],
+            resolve_timeout=resolve_timeout,
+            circuit_breaker=PluginCircuitBreaker(
+                failure_threshold=failure_threshold, cooldown_seconds=cooldown_seconds
+            ),
+            telemetry=telemetry,
+        )
+        return registry, resolver, telemetry
+
+    @classmethod
+    def _answers(
+        cls, *answers: str
+    ) -> Callable[[str], Awaitable[ResolvedStream | None]]:
+        """Resolver answering, one per call: "challenge" (the hoster's
+        captcha, then no stream before the bound), "challenged" (the captcha,
+        then no stream), "passed" (the captcha, then a stream), "hang",
+        "dead", "stream", "slow" (a stream after 0.1 s), or 0.1 s after the
+        captcha, past the bound of 0.05 s: "late" (a stream), "lost" (no
+        stream) or "broken" (an error). An interstitial got past
+        (``mark_resolution_passed``): "gone" (then no stream: a dead link),
+        "past_late" (then a stream 0.1 s on) and "past_hang" (then nothing
+        for 10 s); "late_gone" gets past it 0.1 s on, then no stream."""
+        queue = list(answers)
+        late = ("late", "lost", "broken", "late_gone")
+        past = ("gone", "past_late", "past_hang")
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            answer = queue.pop(0)
+            if answer in ("challenge", "challenged", "passed", *late):
+                mark_resolution_challenge("hoster_captcha")
+            if answer in (*past, "late_gone"):
+                mark_resolution_challenge("cloudflare_page")
+            if answer in past:
+                mark_resolution_passed()
+            if answer in ("challenge", "hang", "past_hang"):
+                await asyncio.sleep(10)
+            if answer in ("slow", "past_late", *late):
+                await asyncio.sleep(0.1)
+            if answer == "late_gone":
+                mark_resolution_passed()
+            if answer == "broken":
+                raise RuntimeError("player gone")
+            if answer in ("stream", "slow", "passed", "late", "past_late"):
+                return ResolvedStream(video_url=cls._MP4)
+            return None
+
+        return _resolve
+
+    @classmethod
+    def _capture(
+        cls, gate: PageGate, *, after: float, challenge: bool = True
+    ) -> Callable[[str], Awaitable[ResolvedStream | None]]:
+        """A capture on a page of *gate*: the hoster's captcha (none without
+        *challenge*), then after *after* seconds a stream; the page closes
+        when it ends."""
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            async with gate.page("capture", timeout=10):
+                if challenge:
+                    mark_resolution_challenge("hoster_captcha")
+                await asyncio.sleep(after)
+            return ResolvedStream(video_url=cls._MP4)
+
+        return _resolve
+
+    @staticmethod
+    async def _completed(registry: HosterResolverRegistry) -> None:
+        """Wait for the background completions to end."""
+        completions = [completion for completion, _ in registry._completions.values()]
+        await asyncio.gather(*completions, return_exceptions=True)
+
+    @staticmethod
+    def _completion(telemetry: Telemetry, outcome: str) -> float | None:
+        return telemetry.registry.get_sample_value(
+            "scavengarr_hoster_challenge_completion_total",
+            {"resolver": "filemoon", "outcome": outcome},
+        )
+
+    @staticmethod
+    def _outcome(telemetry: Telemetry, outcome: str) -> float | None:
+        return telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "filemoon", "outcome": outcome},
+        )
+
+    @staticmethod
+    def _breaker(registry: HosterResolverRegistry) -> PluginCircuitBreaker:
+        breaker = registry._circuit_breaker
+        assert breaker is not None
+        return breaker
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_capture_after_a_challenge_ends_as_challenge(self) -> None:
+        registry, _, telemetry = self._registry(self._answers("challenge"))
+
+        with structlog.testing.capture_logs() as logs:
+            assert await registry.resolve(self._url("a")) is None
+
+        assert self._outcome(telemetry, "challenge") == 1
+        assert self._outcome(telemetry, "timeout") is None
+        assert self._breaker(registry).snapshot() == {}
+        assert registry.cached(self._url("a")) == (False, None)
+        event = next(e for e in logs if e["event"] == "hoster_resolve_challenge")
+        assert (event["hoster"], event["kind"], event["cooldown_s"]) == (
+            "filemoon",
+            "hoster_captcha",
+            60,
+        )
+        # The mark belongs to the attempt, not to the request that asked
+        assert challenge_mark.get() is None
+
+    @pytest.mark.usefixtures("clock")
+    async def test_no_stream_after_a_challenge_ends_as_challenge(self) -> None:
+        registry, _, telemetry = self._registry(self._answers("challenged"))
+
+        assert await registry.resolve(self._url("a")) is None
+
+        assert self._outcome(telemetry, "challenge") == 1
+        assert self._outcome(telemetry, "dead") is None
+        assert registry.cached(self._url("a")) == (False, None)
+
+    async def test_a_challenge_neither_counts_nor_resets_the_breaker(
+        self, clock: dict[str, float]
+    ) -> None:
+        registry, _, _ = self._registry(
+            self._answers("hang", "challenge", "hang"), failure_threshold=2
+        )
+
+        await registry.resolve(self._url("a"))
+        await registry.resolve(self._url("b"))
+        assert self._breaker(registry).snapshot() == {
+            "filemoon": {"state": "closed", "failures": 1}
+        }
+        clock["t"] += 60
+        await registry.resolve(self._url("c"))
+
+        assert self._breaker(registry).state("filemoon") == "open"
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_stream_names_the_challenge_it_passed(self) -> None:
+        """Cold and warm captures apart (R7): a stream found after the
+        hoster's captcha is a stream, and its log names the captcha."""
+        registry, _, telemetry = self._registry(self._answers("passed", "stream"))
+
+        with structlog.testing.capture_logs() as logs:
+            assert await registry.resolve(self._url("a")) is not None
+            assert await registry.resolve(self._url("b")) is not None
+
+        assert [
+            e["challenge"] for e in logs if e["event"] == "hoster_resolve_success"
+        ] == ["hoster_captcha", None]
+        assert self._outcome(telemetry, "stream") == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_stream_logs_the_attempts_time(self) -> None:
+        """Task 1.10 reads cold against warm times from the logs."""
+        registry, _, _ = self._registry(self._answers("slow"), resolve_timeout=1)
+
+        with structlog.testing.capture_logs() as logs:
+            await registry.resolve(self._url("a"))
+
+        success = next(e for e in logs if e["event"] == "hoster_resolve_success")
+        assert 100 <= success["duration_ms"] < 1000
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_dead_link_behind_a_passed_challenge_is_dead(self) -> None:
+        """The review's case (code review 2026-10-12, finding 2): two Dropload
+        links, the dead one first, on a cold context. The capture gets past
+        the interstitial and finds the file gone: a dead link, cached as one,
+        and the live second link is resolved, not skipped by a cooldown."""
+        registry, resolver, telemetry = self._registry(self._answers("gone", "stream"))
+
+        assert await registry.resolve(self._url("a")) is None
+        assert await registry.resolve(self._url("b")) is not None
+
+        assert registry.cached(self._url("a")) == (True, None)
+        assert self._outcome(telemetry, "dead") == 1
+        assert self._outcome(telemetry, "challenge") is None
+        assert self._outcome(telemetry, "challenge_cooldown") is None
+        assert resolver.resolve.await_count == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_past_a_challenge_runs_on_without_a_cooldown(self) -> None:
+        """The cold path cost the bound, so the cut stays a ``challenge`` (no
+        breaker failure) and the capture runs on; but the challenge was got
+        past and the context is warm: the hoster's next link is resolved."""
+        registry, resolver, telemetry = self._registry(
+            self._answers("past_late", "stream")
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            assert await registry.resolve(self._url("a")) is None
+
+        assert self._outcome(telemetry, "challenge") == 1
+        assert self._breaker(registry).snapshot() == {}
+        event = next(e for e in logs if e["event"] == "hoster_resolve_challenge")
+        assert (event["kind"], event["passed"], event["cooldown_s"]) == (
+            "cloudflare_page",
+            True,
+            0,
+        )
+        assert await registry.resolve(self._url("b")) is not None
+        await self._completed(registry)
+        found, stream = registry.cached(self._url("a"))
+        assert found and stream is not None
+        assert resolver.resolve.await_count == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completion_past_its_challenge_finds_a_dead_link(self) -> None:
+        """Cut while its challenge stood, the capture gets past it in the
+        background and finds the file gone: dead, cached, and no step up."""
+        registry, _, telemetry = self._registry(self._answers("late_gone"))
+        await registry.resolve(self._url("a"))
+
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert registry.cached(self._url("a")) == (True, None)
+        assert self._completion(telemetry, "none") == 1
+        assert not any(e["event"] == "hoster_challenge_unsolved" for e in logs)
+        # The cut's own step, not the next one
+        assert registry._challenges.left("filemoon") == 60
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completions_deadline_past_its_challenge_steps_nothing_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(registry_module, "_COMPLETION_S", 0.05)
+        registry, _, telemetry = self._registry(self._answers("past_hang"))
+        await registry.resolve(self._url("a"))
+
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert self._completion(telemetry, "cancelled") == 1
+        assert registry.cached(self._url("a")) == (False, None)
+        assert not any(e["event"] == "hoster_challenge_unsolved" for e in logs)
+        assert registry._challenges.left("filemoon") == 0
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_without_a_challenge_stays_a_timeout(self) -> None:
+        registry, _, telemetry = self._registry(self._answers("hang"))
+
+        await registry.resolve(self._url("a"))
+
+        assert self._outcome(telemetry, "timeout") == 1
+        assert self._breaker(registry).state("filemoon") == "open"
+
+    async def test_the_hosters_links_wait_out_the_cooldown(
+        self, clock: dict[str, float]
+    ) -> None:
+        registry, resolver, telemetry = self._registry(
+            self._answers("challenge", "stream")
+        )
+        await registry.resolve(self._url("a"))
+        clock["t"] += 59
+
+        with structlog.testing.capture_logs() as logs:
+            assert await registry.resolve(self._url("b")) is None
+
+        assert resolver.resolve.await_count == 1
+        assert registry.cached(self._url("b")) == (False, None)
+        assert self._outcome(telemetry, "challenge_cooldown") == 1
+        skip = next(
+            e for e in logs if e["event"] == "hoster_resolve_challenge_cooldown"
+        )
+        assert (skip["hoster"], skip["left_s"]) == ("filemoon", 1)
+
+        clock["t"] += 1
+        assert await registry.resolve(self._url("b")) is not None
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_refresh_passes_the_cooldown(self) -> None:
+        """The review's case (code review 2026-10-12, finding 5): a Filemoon
+        link meets a challenge, and a stored Filemoon stream's video URL has
+        expired meanwhile. The CDN refuses it, and the play-time refresh
+        resolves the link again instead of failing at once."""
+        registry, resolver, telemetry = self._registry(
+            self._answers("challenged", "stream")
+        )
+        await registry.resolve(self._url("a"))
+
+        assert await registry.resolve(self._url("b"), refresh=True) is not None
+
+        assert resolver.resolve.await_count == 2
+        assert self._outcome(telemetry, "challenge_cooldown") is None
+        # Its stream ends the cooldown
+        assert registry._challenges.left("filemoon") == 0
+
+    async def test_an_attempt_joins_its_links_running_completion(
+        self, clock: dict[str, float]
+    ) -> None:
+        """The review's case (code review 2026-10-12, finding 9): link a's
+        capture is cut after its challenge and runs on, the cooldown runs out
+        meanwhile, and a is requested again. The request waits for a's
+        completion and answers its stream: no second capture of a runs, so
+        none caches a as dead over the stream."""
+        streamed, gone = asyncio.Event(), asyncio.Event()
+        calls: list[str] = []
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            calls.append(url)
+            if len(calls) == 1:
+                mark_resolution_challenge("hoster_captcha")
+                await streamed.wait()
+                return ResolvedStream(video_url=self._MP4)
+            # A second capture of the link: no stream, no challenge
+            await gone.wait()
+            return None
+
+        registry, _, telemetry = self._registry(_resolve, resolve_timeout=0.2)
+        assert await registry.resolve(self._url("a")) is None
+        clock["t"] += 60
+
+        again = asyncio.ensure_future(registry.resolve(self._url("a")))
+        await eventually(lambda: self._outcome(telemetry, "joined") == 1)
+        streamed.set()
+        # A second capture of the link would wait for gone and never answer
+        await eventually(again.done)
+        gone.set()
+        stream = await again
+
+        assert stream is not None and stream.video_url == self._MP4
+        assert calls == [self._url("a")]
+        assert registry.cached(self._url("a")) == (True, stream)
+        assert self._outcome(telemetry, "joined") == 1
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_joined_request_waits_at_most_the_bound(self) -> None:
+        registry, resolver, _ = self._registry(self._answers("challenge", "stream"))
+        await registry.resolve(self._url("a"))
+        started = time.monotonic()
+
+        assert await registry.resolve(self._url("a")) is None
+
+        assert time.monotonic() - started < 1
+        assert resolver.resolve.await_count == 1
+        assert registry.cached(self._url("a")) == (False, None)
+        # The completion runs on
+        assert "filemoon" in registry._completions
+        await registry.aclose()
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_joined_lookup_waits_its_own_bound(self) -> None:
+        """The pass keeper's lookup of a link whose capture runs on waits for
+        it as long as its own bound."""
+        streamed = asyncio.Event()
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            mark_resolution_challenge("hoster_captcha")
+            await streamed.wait()
+            return ResolvedStream(video_url=self._MP4)
+
+        registry, resolver, telemetry = self._registry(_resolve)
+        assert await registry.resolve(self._url("a")) is None
+
+        assert await registry.resolve(self._url("a")) is None
+        lookup = asyncio.ensure_future(registry.resolve(self._url("a"), bound=1))
+        await eventually(lambda: self._outcome(telemetry, "joined") == 2)
+        streamed.set()
+        stream = await lookup
+
+        assert stream is not None and stream.video_url == self._MP4
+        assert resolver.resolve.await_count == 1
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_joined_refresh_never_answers_the_refused_stream(self) -> None:
+        """A refresh whose capture runs on: a second refresh of the link
+        joins it and answers nothing in time, not the cached stream the CDN
+        refused."""
+        registry, resolver, _ = self._registry(self._answers("stream", "challenge"))
+        assert await registry.resolve(self._url("a")) is not None
+
+        assert await registry.resolve(self._url("a"), refresh=True) is None
+        assert await registry.resolve(self._url("a"), refresh=True) is None
+
+        assert resolver.resolve.await_count == 2
+        await registry.aclose()
+
+    @pytest.mark.usefixtures("clock")
+    async def test_an_open_breaker_still_refuses_a_refresh(self) -> None:
+        registry, resolver, telemetry = self._registry(self._answers("hang", "stream"))
+        await registry.resolve(self._url("a"))
+
+        assert await registry.resolve(self._url("b"), refresh=True) is None
+
+        assert resolver.resolve.await_count == 1
+        assert self._outcome(telemetry, "breaker_open") == 1
+
+    async def test_further_challenges_step_the_cooldown_up(
+        self, clock: dict[str, float]
+    ) -> None:
+        registry, _, _ = self._registry(self._answers(*["challenged"] * 5))
+        lengths: list[int] = []
+
+        for link in "abcde":
+            with structlog.testing.capture_logs() as logs:
+                await registry.resolve(self._url(link))
+            event = next(e for e in logs if e["event"] == "hoster_resolve_challenge")
+            lengths.append(event["cooldown_s"])
+            clock["t"] += event["cooldown_s"]
+
+        assert lengths == [60, 300, 900, 1800, 1800]
+
+    async def test_a_stream_resets_the_steps(self, clock: dict[str, float]) -> None:
+        registry, _, _ = self._registry(
+            self._answers("challenged", "challenged", "stream", "challenged")
+        )
+        lengths: list[int] = []
+
+        for link in "abcd":
+            with structlog.testing.capture_logs() as logs:
+                await registry.resolve(self._url(link))
+            for event in logs:
+                if event["event"] == "hoster_resolve_challenge":
+                    lengths.append(event["cooldown_s"])
+                    clock["t"] += event["cooldown_s"]
+
+        assert lengths == [60, 300, 60]
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_stream_ends_a_running_cooldown(self) -> None:
+        """A capture that started before the challenge and finds its stream
+        after it: the hoster delivers."""
+        registry, resolver, _ = self._registry(
+            self._answers("slow", "challenged", "stream"), resolve_timeout=1
+        )
+
+        slow, challenged = await asyncio.gather(
+            registry.resolve(self._url("a")), registry.resolve(self._url("b"))
+        )
+
+        assert (slow is not None, challenged) == (True, None)
+
+        assert await registry.resolve(self._url("c")) is not None
+        assert resolver.resolve.await_count == 3
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_skipped_link_does_not_ask_the_breaker(self) -> None:
+        """A half-open breaker's ``allow()`` starts its trial: a link the
+        cooldown skips must not take the trial's slot."""
+        registry, _, _ = self._registry(self._answers("challenged"))
+        await registry.resolve(self._url("a"))
+        breaker = self._breaker(registry)
+        allow = MagicMock(wraps=breaker.allow)
+        breaker.allow = allow
+
+        assert await registry.resolve(self._url("b")) is None
+
+        allow.assert_not_called()
+
+    async def test_a_half_open_trial_that_meets_a_challenge_frees_its_slot(
+        self, clock: dict[str, float]
+    ) -> None:
+        registry, resolver, _ = self._registry(
+            self._answers("challenged", "stream"),
+            resolve_timeout=1,
+            cooldown_seconds=0.1,
+        )
+        breaker = self._breaker(registry)
+        breaker.record_failure("filemoon")
+        await asyncio.sleep(0.11)
+
+        assert await registry.resolve(self._url("a")) is None
+        assert breaker.state("filemoon") == "half_open"
+        assert await registry.resolve(self._url("b")) is None
+        clock["t"] += 60
+        assert await registry.resolve(self._url("c")) is not None
+
+        assert breaker.is_closed("filemoon")
+        assert resolver.resolve.await_count == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_capture_finds_its_stream_in_the_background(self) -> None:
+        """Filemoon's cold capture got past its captcha 13 to 18 s after the
+        start on the production host, past the 10 s bound: the answer goes out at the
+        cut, and the capture runs on, on its own page only, to leave its stream
+        in the cache."""
+        gate = PageGate(limit=2)
+        registry, _, telemetry = self._registry(self._capture(gate, after=0.1))
+
+        assert await registry.resolve(self._url("a")) is None
+        assert self._outcome(telemetry, "challenge") == 1
+        assert (gate.in_use, gate.waiting) == (1, 0)
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert (gate.in_use, gate.waiting) == (0, 0)
+        found, stream = registry.cached(self._url("a"))
+        assert found and stream is not None and stream.video_url == self._MP4
+        assert self._completion(telemetry, "stream") == 1
+        seconds = telemetry.registry.get_sample_value(
+            "scavengarr_hoster_challenge_completion_seconds_sum",
+            {"resolver": "filemoon"},
+        )
+        assert seconds is not None and 0 < seconds < 1
+        success = next(e for e in logs if e["event"] == "hoster_resolve_success")
+        assert success["challenge"] == "hoster_captcha"
+
+    @pytest.mark.usefixtures("clock")
+    async def test_the_next_request_finds_the_stream_without_a_cooldown(
+        self,
+    ) -> None:
+        registry, resolver, telemetry = self._registry(self._answers("late", "stream"))
+        await registry.resolve(self._url("a"))
+        await self._completed(registry)
+
+        assert await registry.resolve(self._url("a")) is not None
+        assert self._outcome(telemetry, "cached") == 1
+        # The completion's stream ended the hoster's cooldown
+        assert await registry.resolve(self._url("b")) is not None
+        assert resolver.resolve.await_count == 2
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completions_stream_closes_a_half_open_breaker(self) -> None:
+        registry, _, _ = self._registry(self._answers("late"), cooldown_seconds=0.1)
+        breaker = self._breaker(registry)
+        breaker.record_failure("filemoon")
+        await asyncio.sleep(0.11)
+
+        assert await registry.resolve(self._url("a")) is None
+        assert breaker.state("filemoon") == "half_open"
+        await self._completed(registry)
+
+        assert breaker.is_closed("filemoon")
+
+    @pytest.mark.parametrize("answer", ["lost", "broken"])
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completion_without_a_stream_ends_as_challenge(
+        self, answer: str
+    ) -> None:
+        """Neither a dead link nor a broken hoster: the challenge stands, so
+        nothing is cached or counted, and the hoster's cooldown steps up."""
+        registry, _, telemetry = self._registry(self._answers(answer))
+        await registry.resolve(self._url("a"))
+
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert registry.cached(self._url("a")) == (False, None)
+        assert self._breaker(registry).snapshot() == {}
+        assert self._completion(telemetry, "none") == 1
+        event = next(e for e in logs if e["event"] == "hoster_challenge_unsolved")
+        assert (event["hoster"], event["cooldown_s"]) == ("filemoon", 300)
+        failed = any(e["event"] == "hoster_challenge_completion_error" for e in logs)
+        assert failed == (answer == "broken")
+
+    @pytest.mark.usefixtures("clock")
+    async def test_one_completion_per_hoster(self) -> None:
+        """Completions hold browser pages: a second capture of the hoster
+        that the bound cuts while one runs is cancelled at the cut."""
+        gate = PageGate(limit=2)
+        registry, _, telemetry = self._registry(self._capture(gate, after=0.1))
+
+        await asyncio.gather(
+            registry.resolve(self._url("a")), registry.resolve(self._url("b"))
+        )
+        assert gate.in_use == 1
+        await self._completed(registry)
+
+        assert gate.in_use == 0
+        assert self._outcome(telemetry, "challenge") == 2
+        assert self._completion(telemetry, "stream") == 1
+        assert sum(registry.cached(self._url(link))[0] for link in "ab") == 1
+
+    @staticmethod
+    def _gated(
+        gate: PageGate, **resolve: Callable[[str], Awaitable[ResolvedStream | None]]
+    ) -> tuple[HosterResolverRegistry, Telemetry]:
+        """A registry of the resolvers named in *resolve* on the pages of
+        *gate*."""
+        resolvers = []
+        for name, answer in resolve.items():
+            resolver = MagicMock()
+            resolver.name = name
+            resolver.resolve = AsyncMock(side_effect=answer)
+            resolvers.append(resolver)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(
+            resolvers=resolvers, resolve_timeout=0.05, telemetry=telemetry, pages=gate
+        )
+        return registry, telemetry
+
+    @pytest.mark.usefixtures("clock")
+    async def test_completions_leave_a_page_free(self) -> None:
+        """The review's case (code review 2026-10-12, finding 12): a Filemoon
+        and a Dropload capture are cut after their challenges on the 2 pages
+        of the gate. Their completions held both, and a /play resolution
+        waited for a page until it gave up. Completions leave one page free:
+        the second capture is cancelled at the cut."""
+        gate = PageGate(limit=2)
+        registry, telemetry = self._gated(
+            gate,
+            filemoon=self._capture(gate, after=0.2),
+            dropload=self._capture(gate, after=0.2),
+        )
+
+        await registry.resolve("https://filemoon.sx/e/a")
+        await registry.resolve("https://dropload.io/e/b")
+
+        assert list(registry._completions) == ["filemoon"]
+        assert gate.in_use == 1
+        assert telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "dropload", "outcome": "challenge"},
+        )
+        await self._completed(registry)
+        assert gate.in_use == 0
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_single_page_hands_nothing_over(self) -> None:
+        """On a gate of 1 page a completion would hold the only one: the cut
+        ends as ``challenge`` with its cooldown, and the capture ends."""
+        gate = PageGate(limit=1)
+        registry, telemetry = self._gated(gate, filemoon=self._capture(gate, after=0.2))
+
+        assert await registry.resolve("https://filemoon.sx/e/a") is None
+
+        assert registry._completions == {}
+        assert gate.in_use == 0
+        assert registry._challenges.left("filemoon") == 60
+        assert telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "filemoon", "outcome": "challenge"},
+        )
+
+    @pytest.mark.usefixtures("clock")
+    async def test_the_deadline_cancels_a_completion(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """20 s after the cut, 30 s of work in all with production's bound,
+        the capture gives up: its page closes and the cooldown steps up."""
+        monkeypatch.setattr(registry_module, "_COMPLETION_S", 0.05)
+        gate = PageGate(limit=1)
+        registry, _, telemetry = self._registry(self._capture(gate, after=10))
+        await registry.resolve(self._url("a"))
+
+        with structlog.testing.capture_logs() as logs:
+            await self._completed(registry)
+
+        assert gate.in_use == 0
+        assert self._completion(telemetry, "cancelled") == 1
+        assert registry.cached(self._url("a")) == (False, None)
+        event = next(e for e in logs if e["event"] == "hoster_challenge_unsolved")
+        assert event["cooldown_s"] == 300
+
+    @pytest.mark.usefixtures("clock")
+    async def test_shutdown_cancels_a_completion(self) -> None:
+        gate = PageGate(limit=1)
+        registry, _, telemetry = self._registry(self._capture(gate, after=10))
+        await registry.resolve(self._url("a"))
+        # One turn of the loop runs the completion's first step, which the
+        # cut scheduled before it answered
+        await asyncio.sleep(0)
+
+        await registry.aclose()
+
+        assert gate.in_use == 0
+        assert self._completion(telemetry, "cancelled") == 1
+        # Shutdown says nothing about the hoster: the cut's cooldown stays
+        assert registry._challenges.left("filemoon") == 60
+
+    @pytest.mark.usefixtures("clock")
+    async def test_shutdown_at_the_cut_ends_the_capture(self) -> None:
+        """A completion cancelled before its first step never awaited the
+        capture: it ends all the same, its page closed."""
+        gate = PageGate(limit=1)
+        registry, _, _ = self._registry(self._capture(gate, after=10))
+        await registry.resolve(self._url("a"))
+
+        await registry.aclose()
+
+        assert gate.in_use == 0
+        assert registry._completions == {}
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_request_cut_at_the_bound_cancels_the_capture(self) -> None:
+        """The review's case (code review 2026-10-12, finding 15): the answer
+        goes out in the loop iteration in which the bound fires, so the
+        request's cancel lands with the bound's. The request's own cancel
+        wins: the capture is cancelled, nothing runs on in the background,
+        and the attempt counts as cut."""
+        requests: list[asyncio.Task[ResolvedStream | None]] = []
+        cancelled = asyncio.Event()
+
+        async def _resolve(url: str) -> ResolvedStream | None:
+            mark_resolution_challenge("hoster_captcha")
+            clock = work_clock.get()
+            assert clock is not None
+            when = clock.when()
+            assert when is not None
+            asyncio.get_running_loop().call_at(when, requests[0].cancel)
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return None
+
+        registry, _, telemetry = self._registry(_resolve)
+        requests.append(asyncio.ensure_future(registry.resolve(self._url("a"))))
+
+        with pytest.raises(asyncio.CancelledError):
+            await requests[0]
+
+        assert cancelled.is_set()
+        assert registry._completions == {}
+        assert self._outcome(telemetry, "cut") == 1
+        assert self._outcome(telemetry, "challenge") is None
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_completions_check_error_is_logged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """V29 (code review 2026-10-12): the completion judged its stream
+        outside its try, so an unexpected error of the playback check was
+        never retrieved. It is logged; nothing is cached or stepped up."""
+
+        async def _broken(client: httpx.AsyncClient, stream: ResolvedStream) -> Any:
+            raise RuntimeError("check broke")
+
+        monkeypatch.setattr(registry_module, "check_playable", _broken)
+        resolver = MagicMock()
+        resolver.name = "filemoon"
+        resolver.resolve = AsyncMock(side_effect=self._answers("late"))
+        telemetry = Telemetry()
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[resolver],
+                http_client=client,
+                resolve_timeout=0.05,
+                verify_playback=True,
+                telemetry=telemetry,
+            )
+            await registry.resolve(self._url("a"))
+            completion, _ = registry._completions["filemoon"]
+            with structlog.testing.capture_logs() as logs:
+                await asyncio.gather(completion, return_exceptions=True)
+
+        assert completion.exception() is None
+        assert any(e["event"] == "hoster_challenge_completion_error" for e in logs)
+        assert not any(e["event"] == "hoster_challenge_unsolved" for e in logs)
+        assert self._completion(telemetry, "none") == 1
+        assert registry.cached(self._url("a")) == (False, None)
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_without_a_challenge_cancels_the_capture(self) -> None:
+        gate = PageGate(limit=1)
+        registry, _, telemetry = self._registry(
+            self._capture(gate, after=10, challenge=False)
+        )
+
+        assert await registry.resolve(self._url("a")) is None
+
+        assert gate.in_use == 0
+        assert self._outcome(telemetry, "timeout") == 1
+        assert registry._completions == {}
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_cut_request_cancels_its_capture(self) -> None:
+        """Only the bound hands a capture over: a request cut before it (the
+        answer went out) cancels its capture, as before."""
+        gate = PageGate(limit=1)
+        registry, _, telemetry = self._registry(
+            self._capture(gate, after=10), resolve_timeout=1
+        )
+
+        await _cut(registry.resolve(self._url("a")), after=0.05)
+
+        assert gate.in_use == 0
+        assert self._outcome(telemetry, "cut") == 1
+        assert registry._completions == {}
+
+    @pytest.mark.usefixtures("clock")
+    async def test_a_players_own_resolution_completes_nothing(self) -> None:
+        """It belongs to one player and is not cached: it ends as
+        ``challenge`` at the cut, its capture cancelled."""
+        gate = PageGate(limit=1)
+        telemetry = Telemetry()
+        registry = HosterResolverRegistry(
+            resolvers=[_ChallengedPlayer(gate)],
+            resolve_timeout=0.05,
+            telemetry=telemetry,
+        )
+
+        stream = await registry.resolve_for_client(
+            "https://veev.to/e/abcdefghijkl", "veev", {"user-agent": "Firefox"}
+        )
+
+        assert stream is None
+        assert gate.in_use == 0
+        assert registry._completions == {}
+        challenges = telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "veev", "outcome": "challenge"},
+        )
+        assert challenges == 1
+
+
 class TestUnresolvedHosters:
     """Links no resolver claims are counted by hoster: which resolver to
     build next, and which plugin hands out such links."""
@@ -1684,7 +2594,8 @@ class TestStateExport:
         await registry.resolve("https://voe.sx/e/dead")
         registry._result_cache["https://voe.sx/e/dead"].expires_at = time.monotonic()
 
-        assert registry.export_state() == {"results": [], "redirects": []}
+        state = registry.export_state()
+        assert (state["results"], state["redirects"]) == ([], [])
 
     def test_other_stream_fields_of_another_version(self) -> None:
         """A field the code no longer has is dropped, a new one takes its
@@ -1751,3 +2662,145 @@ class TestStateExport:
         assert registry.changes == 1
         await registry.resolve("https://voe.sx/e/dead")  # a cache hit
         assert registry.changes == 1
+
+
+class TestLastStream:
+    """The link of a resolver's newest cached stream: what Filemoon's pass
+    keeper resolves in the background (row 106)."""
+
+    async def test_the_newest_stream_of_the_resolver(self) -> None:
+        registry = HosterResolverRegistry(
+            resolvers=[
+                _stub_resolver("filemoon", TestStateExport._STREAM),
+                _stub_resolver("voe", TestStateExport._STREAM),
+            ]
+        )
+        for url in (
+            "https://filemoon.to/e/older",
+            "https://filemoon.to/e/newer",
+            "https://voe.sx/e/other",
+        ):
+            await registry.resolve(url)
+        registry._result_cache["https://filemoon.to/e/older"].expires_at -= 60
+
+        assert registry.last_stream("filemoon") == "https://filemoon.to/e/newer"
+
+    async def test_none_without_a_stream_in_time(self) -> None:
+        registry = HosterResolverRegistry(
+            resolvers=[
+                _stub_resolver("filemoon", None),
+                _stub_resolver("voe", TestStateExport._STREAM),
+            ]
+        )
+        await registry.resolve("https://filemoon.to/e/dead")
+        await registry.resolve("https://voe.sx/e/alive")
+        assert registry.last_stream("filemoon") is None
+
+        registry._result_cache["https://voe.sx/e/alive"].expires_at = (
+            time.monotonic() - 1
+        )
+        assert registry.last_stream("voe") is None
+
+    async def test_a_redirected_link_is_the_one_asked_for(self) -> None:
+        response = MagicMock()
+        response.url = "https://filemoon.to/e/abc"
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.head = AsyncMock(return_value=response)
+        registry = HosterResolverRegistry(
+            resolvers=[_stub_resolver("filemoon", TestStateExport._STREAM)],
+            http_client=client,
+        )
+        await registry.resolve("https://out.example.net/go/1")
+
+        # resolve() follows the redirect again
+        assert registry.last_stream("filemoon") == "https://out.example.net/go/1"
+
+
+class TestDemand:
+    """When a request last looked up a resolver's link: Filemoon's pass
+    keeper keeps the pass only while there is demand (row 106)."""
+
+    _URL = "https://filemoon.to/e/a"
+
+    @staticmethod
+    def _registry() -> HosterResolverRegistry:
+        return HosterResolverRegistry(
+            resolvers=[_stub_resolver("filemoon", TestStateExport._STREAM)]
+        )
+
+    @staticmethod
+    def _recent(registry: HosterResolverRegistry) -> bool:
+        age = registry.demand_age("filemoon")
+        return age is not None and age < 1
+
+    async def test_a_resolution_is_demand(self) -> None:
+        registry = self._registry()
+        assert registry.demand_age("filemoon") is None
+
+        await registry.resolve(self._URL)
+
+        assert self._recent(registry)
+        assert registry.demand_age("voe") is None
+
+    async def test_a_cache_hit_is_demand(self) -> None:
+        registry = self._registry()
+        await registry.resolve(self._URL)
+        registry._demand["filemoon"] -= 3600
+
+        await registry.resolve(self._URL)
+
+        assert self._recent(registry)
+
+    async def test_a_cached_answer_is_demand(self) -> None:
+        """A cached search answers with cached resolutions: a stream the
+        keeper's capture cached counts when a request takes it."""
+        registry = self._registry()
+        await registry.resolve(self._URL)
+        registry._demand["filemoon"] -= 3600
+
+        assert registry.cached(self._URL)[0]
+        assert self._recent(registry)
+
+    async def test_a_lookup_without_demand_leaves_it(self) -> None:
+        registry = self._registry()
+
+        await registry.resolve(self._URL, refresh=True, demand=False)
+
+        assert registry.last_stream("filemoon") == self._URL
+        assert registry.demand_age("filemoon") is None
+
+    async def test_it_outlives_a_restart(self) -> None:
+        old = self._registry()
+        await old.resolve(self._URL)
+        old._demand["filemoon"] -= 600
+
+        new = HosterResolverRegistry()
+        new.import_state(old.export_state(), age_s=100.0)
+
+        age = new.demand_age("filemoon")
+        assert age is not None and 700 <= age < 702
+
+    def test_a_snapshot_without_it_restores(self) -> None:
+        registry = HosterResolverRegistry()
+
+        assert registry.import_state({"results": [], "redirects": []}, 0.0) == (0, 0)
+        assert registry.demand_age("filemoon") is None
+
+    def test_a_malformed_entry_changes_nothing(self) -> None:
+        result = {
+            "url": self._URL,
+            "stream": None,
+            "remaining": 60.0,
+            "resolver": "filemoon",
+        }
+        state = {
+            "results": [result],
+            "redirects": [],
+            "demand": {"filemoon": "soon"},
+        }
+        registry = HosterResolverRegistry()
+
+        with pytest.raises(ValueError):
+            registry.import_state(state, age_s=0.0)
+        assert registry._result_cache == {}
+        assert registry.demand_age("filemoon") is None

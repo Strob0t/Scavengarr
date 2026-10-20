@@ -1,4 +1,4 @@
-# Prometheus alert rules for Scavengarr (docs/features/observability.md,
+# Prometheus alert rules for Scavengarr (docs/current/observability.md,
 # "Alerts"). Load them in prometheus.yml:
 #
 #   rule_files:

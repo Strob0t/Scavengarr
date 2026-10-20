@@ -1,8 +1,10 @@
-[← Back to Index](../features/README.md)
-
 # Plan: Stremio Response Time and Playable Streams
 
-**Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the twelfth (2026-10-11) are appended; the seventh measured how the stealth browser's pages are shared since [browser-page-budget.md](browser-page-budget.md) (the sixth round's kinoger timeouts did not recur). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
+> **Purpose:** The Stremio response time and playable streams, with its open investigation.
+> **Status:** plan
+> **As of:** 9d2fc4c7
+
+**Status:** Done (2026-09-29) for the latency budget; the end-to-end rounds up to the twelfth (2026-10-11) are appended; the seventh measured how the stealth browser's pages are shared since the archived plan browser-page-budget (the sixth round's kinoger timeouts did not recur). AIOStreams deferred by decision: Scavengarr is added to Stremio directly; the [AIOStreams](#aiostreams) notes stay for later.
 **Priority:** High (Stremio is the main use case; cold answers take 17–38 s)
 **Related:** `src/scavengarr/application/use_cases/stremio_stream.py`, `application/stremio/plugin_search.py`, `infrastructure/circuit_breaker.py`, `infrastructure/hoster_resolvers/`, `data/config.yaml`
 
@@ -20,7 +22,7 @@ Causes found:
 
 1. **No overall deadline.** The plugin phase waits up to `plugin_timeout_seconds`; the resolve phase (hoster embed → video URL) runs afterwards without any time limit, so one slow hoster (browser capture, slow CDN) delays the whole answer. `stremio.stremio_deadline_ms` exists in the schema but nothing reads it.
 2. **Unreachable plugins cost every request the full plugin timeout.** cineby, megakino_to and movie4k timed out on 8 of 8 movie requests with 0 results (their hosts are unreachable from this network). The circuit breaker opens after 5 failures but only for 60 s; Stremio requests are minutes apart, so it is half-open again for almost every request.
-3. **Deduplication before resolution drops working streams.** `deduplicate_by_hoster` keeps only the best-ranked stream per hoster *before* resolving. When that one fails to resolve, the hoster disappears although other streams of it would work. Search results after title filtering (e.g. Reacher 40, Attack on Titan 28) end as 3–7 streams.
+3. **Deduplication before resolution drops working streams.** `deduplicate_by_hoster` keeps only the best-ranked stream per hoster *before* resolving. When that one fails to resolve, the hoster disappears although other streams of it would work. Search results after title filtering (e.g. Reacher 40, Anime G 28) end as 3–7 streams.
 4. **Resolved but unplayable URLs are returned.** Dropload 0/11 (CDN 502), SuperVideo 0/4 (HTML instead of video): the resolver found a URL, nobody checked it plays.
 
 ## Design
@@ -36,7 +38,7 @@ Unit tests per change (use case with fake resolver/clock, circuit breaker backof
 
 ## Documentation
 
-`docs/features/stremio-addon.md`, `docs/features/configuration.md`, `CHANGELOG.md`, `data/config.yaml` comments, results recorded here.
+`docs/current/stremio-addon.md`, `docs/reference/configuration.md`, `CHANGELOG.md`, `data/config.yaml` comments, results recorded here.
 
 ## Results
 
@@ -54,7 +56,7 @@ Final run (G: code of this plan, `plugin_timeout_seconds: 10`, `stream_deadline_
 | Returned streams / playable | 80 / 61 (76 %) | 46 / 44 (96 %) | 46 / 44 (96 %) |
 | Titles with a playable stream | 17 / 18 | 17 / 18 | 17 / 18 |
 
-- Acceptance: max ≤ 16 s and playable ≥ 90 % met; no title lost its last playable stream (the one title without a stream, *Der Schuh des Manitu*, had none in the baseline either: the set's id tt0248667 is *Ali* (2001); the film is tt0248408, see the follow-up). Median 15.0 s instead of ≤ 12 s: resolution uses the budget up to the deadline for most titles.
+- Acceptance: max ≤ 16 s and playable ≥ 90 % met; no title lost its last playable stream (the one title without a stream, *Movie G*, had none in the baseline either: the set's id <Movie N> is *Movie N* (2001); the film is <Movie G>, see the follow-up). Median 15.0 s instead of ≤ 12 s: resolution uses the budget up to the deadline for most titles.
 - Trade-off: fewer playable streams per title (44 vs 61). The extra baseline streams came mostly from kinoking (needs 6–14 s, often cut at 10 s). A 12 s search / 17 s answer gave exactly the same result at +2 s, so 10 / 15 s is the recommended setting (new defaults, `data/config.yaml`).
 - Unreachable plugins from this network (cineby, megakino_to, movie4k) still start every request until their circuit breaker opens; with the backoff they stay closed for up to 1 h.
 
@@ -66,50 +68,50 @@ Same harness and title set (17 titles: German films, popular films, series, anim
 |---|---|---|---|---|
 | 1 | baseline of the day | 14.9 / 16.4 s | 44 | 5 / 17 |
 | 2 | relevant search hits only, s.to link-outs, hoster+language dedup | 15.1 / 21.5 s | 79 | 0 / 17 |
-| 3 | stream links saved only for proxied streams (Dune: 21.5 → 15.0 s) | 15.0 / 15.1 s | 85 | 0 / 17 |
+| 3 | stream links saved only for proxied streams (Movie A: 21.5 → 15.0 s) | 15.0 / 15.1 s | 85 | 0 / 17 |
 | 5 | circuit breaker per category, s.to search parser, aniworld, language labels, moflix HLS | 15.0 / 15.1 s | 97 | 0 / 17 |
 | 6 | mixdrop resolver, player User-Agent for checks and proxy | 15.0 / 15.1 s | 100 | 0 / 17 |
 | 7 | `resolve_grace_seconds: 3` | 13.8 / 15.0 s | 81 | 0 / 17 |
 | 8 | `resolve_grace_seconds: 4` | 14.8 / 15.0 s | 78 | 0 / 17 |
-| 9 | title filter extra-words penalty, kinoger episodes, guessit 4, one devideosrc fetch per title; the right id for *Der Schuh des Manitu* | 14.6 / 15.6 s | 82 | 1 / 17 |
+| 9 | title filter extra-words penalty, kinoger episodes, guessit 4, one devideosrc fetch per title; the right id for *Movie G* | 14.6 / 15.6 s | 82 | 1 / 17 |
 | 10 | exact hit only for episode requests, mirror group (hdfilme for streamcloud/streamkiste), movie2k series and relevance, filmpalast relevance | 14.6 / 15.1 s | 83 | 0 / 17 |
 | 11 | kinoger films and single-player pages, resolvers for gxplayer, kinoger.pw (Vidara) and fsst streams | 14.4 / 15.0 s | 105 | 2 / 17 |
 | 12 | HLS proxy for CDN-root URIs (Vidsonic), moflix without its paid player, kinoger behind its new WAF page | 14.6 / 15.0 s | 90 | 1 / 17 |
 
-- The search phase decides the answer time: it ends 10 s after the request whenever one plugin still runs, which happened on most requests (kinoking's 12–17 s movie pages until its breaker opened, dead hosts in half-open probes, kinoger's Cloudflare solve, moflix). With the search done early (kinoking's movie breaker open), Inception and Interstellar were answered after 7–8 s instead of 15 s.
+- The search phase decides the answer time: it ends 10 s after the request whenever one plugin still runs, which happened on most requests (kinoking's 12–17 s movie pages until its breaker opened, dead hosts in half-open probes, kinoger's Cloudflare solve, moflix). With the search done early (kinoking's movie breaker open), Movie K and Movie F were answered after 7–8 s instead of 15 s.
 - The resolve grace cuts the browser-resolved stragglers (DoodStream mirrors, Byse/Filemoon, Dropload's captcha) once a stream is there; it costs streams mostly on anime (aniworld 36 → 22–24 in runs 7/8), where those hosters carry sub variants. 4 s keeps the DoodStream mirrors of the measured requests; set 0 to wait until the deadline.
-- The set's id for *Der Schuh des Manitu* was wrong (tt0248667 is *Ali*, 2001), so runs 1–8 measured *Ali*; tt0248408 gets 4 streams (filmpalast, hdfilme, movie2k). A title-filter audit on the plugins' answers for the 17 titles found 22 results of other titles that passed the filter ("Dark Matter" for "Dark"); fixed with the extra-words penalty (`title_extra_words_penalty`), so later runs serve fewer, right streams.
-- Run 9 serves fewer wrong titles (the extra-words penalty dropped e.g. "Dark Matter" for "Dark"), so its stream count is not comparable one to one. Its title without a stream was Dark S01E01: s.to started 3 s late (every plugin slot busy), scraped "Dark", "Dark Matter" and "Dark Winds", and was cut by the search deadline. Episode requests now scrape an exact hit alone; afterwards Dark S01E01 was answered with s.to's stream in 10.8 s, and kinoger served S01E05 and S04E01 instead of S01E01.
-- Run 10: every title has streams again (Dark S01E01: s.to's stream after 10.7 s). movie2k serves series now (9 streams instead of 5, One Piece S01E01 among them) and s.to 5 instead of 3. hdfilme answers for its mirror group (9 streams); streamcloud and streamkiste are skipped. The median stays at 14.6 s: the search still ends 10 s after the request whenever one plugin keeps running.
-- Run 11: kinoger serves 18 streams instead of 1 (films again, fsst and kinoger.pw streams, single-player pages) and megakino 7 instead of 4 (gxplayer). The two titles without a stream are site state: *Good Bye, Lenin!* has only hdfilme's DoodStream link, whose browser resolve was unfinished at the deadline (0 streams in earlier runs too), and s.to needed more than the 10 s search budget for Dark S01E01 (as in run 9).
-- Run 12 (2026-10-03, after the end-to-end test below): kinoger had returned nothing that day (its new WAF page, read as the search result) and serves 14 streams again; moflix 5 instead of 10, the dropped five were its paid player that no player could play. Dark S01E01 again without a stream: s.to's link-outs were gated and the browser pass ran past the search budget.
+- The set's id for *Movie G* was wrong (<Movie N> is *Movie N*, 2001), so runs 1–8 measured *Movie N*; <Movie G> gets 4 streams (filmpalast, hdfilme, movie2k). A title-filter audit on the plugins' answers for the 17 titles found 22 results of other titles that passed the filter (a result that adds a word to the title); fixed with the extra-words penalty (`title_extra_words_penalty`), so later runs serve fewer, right streams.
+- Run 9 serves fewer wrong titles (the extra-words penalty dropped e.g. "Series A" for "Series C"), so its stream count is not comparable one to one. Its title without a stream was Series C S01E01: s.to started 3 s late (every plugin slot busy), scraped "Series C", "Series A" and "Series B", and was cut by the search deadline. Episode requests now scrape an exact hit alone; afterwards Series C S01E01 was answered with s.to's stream in 10.8 s, and kinoger served S01E05 and S04E01 instead of S01E01.
+- Run 10: every title has streams again (Series C S01E01: s.to's stream after 10.7 s). movie2k serves series now (9 streams instead of 5, Anime A S01E01 among them) and s.to 5 instead of 3. hdfilme answers for its mirror group (9 streams); streamcloud and streamkiste are skipped. The median stays at 14.6 s: the search still ends 10 s after the request whenever one plugin keeps running.
+- Run 11: kinoger serves 18 streams instead of 1 (films again, fsst and kinoger.pw streams, single-player pages) and megakino 7 instead of 4 (gxplayer). The two titles without a stream are site state: *Movie L* has only hdfilme's DoodStream link, whose browser resolve was unfinished at the deadline (0 streams in earlier runs too), and s.to needed more than the 10 s search budget for Series C S01E01 (as in run 9).
+- Run 12 (2026-10-03, after the end-to-end test below): kinoger had returned nothing that day (its new WAF page, read as the search result) and serves 14 streams again; moflix 5 instead of 10, the dropped five were its paid player that no player could play. Series C S01E01 again without a stream: s.to's link-outs were gated and the browser pass ran past the search budget.
 - An earlier search end (a soft deadline once most plugins answered, resolving while plugins still search, or a lower `plugin_timeout_seconds`) is the next lever for the median; each trades streams of slow sites for time. **Decision 2026-10-01: no**, the 10 s search budget stays for completeness.
 
 ## End-to-end test with Stremio Web (2026-10-03)
 
-Production (`https://scavengarr.lan`, v0.2.0) as addon in the maintainer's Stremio Web (`https://stremio.lan`), driven with Playwright; then every stream followed to its media bytes with `scripts/stremio_playcheck.py`, the way a player fetches it.
+Production (`https://scavengarr.example.lan`, v0.2.0) as addon in the maintainer's Stremio Web (`https://stremio.example.lan`), driven with Playwright; then every stream followed to its media bytes with `scripts/stremio_playcheck.py`, the way a player fetches it.
 
 | Step | Result |
 |---|---|
 | Install the addon | OK (manifest v0.2.0) |
 | Search | OK: rows "Scavengarr Movies" and "Scavengarr Series" |
 | Stream list (film, episode) | OK: names, languages, sources, `bingeGroup` |
-| Playback in Stremio Web | **blocked**: stremio.lan's streaming server answers `/settings`, `/proxy/…` and the other server routes with nginx 400 "Request Header Or Cookie Too Large" even for a bare curl request, `/hlsv2/probe` with 502. Stremio Web plays `notWebReady` streams only through that server, so every stream ends in "Video is not supported" (code 83). A 400 for tiny requests points at a proxy loop: in tsaridas/stremio-docker nginx proxies these routes to `127.0.0.1:11470` (`server.js`); with its listen port also 11470 (e.g. `WEBUI_INTERNAL_PORT=11470`) nginx forwards to itself |
+| Playback in Stremio Web | **blocked**: stremio.example.lan's streaming server answers `/settings`, `/proxy/…` and the other server routes with nginx 400 "Request Header Or Cookie Too Large" even for a bare curl request, `/hlsv2/probe` with 502. Stremio Web plays `notWebReady` streams only through that server, so every stream ends in "Video is not supported" (code 83). A 400 for tiny requests points at a proxy loop: in tsaridas/stremio-docker nginx proxies these routes to `127.0.0.1:11470` (`server.js`); with its listen port also 11470 (e.g. `WEBUI_INTERNAL_PORT=11470`) nginx forwards to itself |
 
 Play check (master, variant, first segments; file start and a seek):
 
 | Instance, checked from | Playable | Failures |
 |---|---|---|
 | dev with the fixes, same machine | 79 of 81 | firestream segments 502, vidmoly variant 504 (CDN errors at that moment) |
-| production, from the home network | 41 of 72 | DoodStream 15 (`200 error_wrong_ip`), Vinovo 8 (403), Vidsonic 4 (proxy bug), moflix paid player 2 (variant 403), vidmoly 2 |
+| production, from a residential network | 41 of 72 | DoodStream 15 (`200 error_wrong_ip`), Vinovo 8 (403), Vidsonic 4 (proxy bug), moflix paid player 2 (variant 403), vidmoly 2 |
 
 - Fixed on `staging`: Vidsonic's variant comes from the CDN root and the HLS proxy left that URI to the player (404); moflix's "Premium (No Ads)" video is its paid player (variants 403 without a paid session); kinoger's new WAF page ("Verification...") was read as the search result (0 hits on every search); kinox ran its search and detail pages for episode requests it cannot answer.
-- **IP-bound streams:** production reaches the sites through a VPN (the stream tokens name its exit address, AS43350 NForce), not through the home network's address. DoodStream and Vinovo bind their stream URLs to the resolving IP, so a player on another IP gets `error_wrong_ip` or 403. Streams through Scavengarr's HLS proxy are fetched from Scavengarr's IP and are not affected; VEEV, Playmate and FireStream played from the other IP.
+- **IP-bound streams:** production reaches the sites through a VPN (the stream tokens name its exit address, in a datacenter network), not through a residential address. DoodStream and Vinovo bind their stream URLs to the resolving IP, so a player on another IP gets `error_wrong_ip` or 403. Streams through Scavengarr's HLS proxy are fetched from Scavengarr's IP and are not affected; VEEV, Playmate and FireStream played from the other IP.
 - Production only: kinoger returned nothing (the WAF page; the fix is on `staging`), and s.to gave no episode streams while dev did.
 
-### Second round (2026-10-03 evening, production v0.2.2)
+### Second round (2026-10-03, production v0.2.2)
 
-stremio.lan's server loop was the maintainer's setup. The Stremio container shares the VPN container's network, where 8080 (qBittorrent) and 8090 (TorrServer) are taken, so nginx had been moved to the server's own port 11470; `WEBUI_INTERNAL_PORT=8095` with Caddy on 8095 fixed it. Playback in Stremio Web, *The Matrix* (9 streams):
+The Stremio server loop was a setup matter: in the VPN container's network the web UI's default ports were taken by other services, so nginx had been moved to the server's own port 11470; a free `WEBUI_INTERNAL_PORT` with the reverse proxy on the same port fixed it. Playback in Stremio Web, *Movie J* (9 streams):
 
 | Stream | Result | Cause |
 |---|---|---|
@@ -128,21 +130,21 @@ After the config reseed production answers in 10.5–15.4 s. Measured with a scr
 
 | Request (warm) | Streams | Time | s.to |
 |---|---|---|---|
-| Inception | 5 (kinoger, filmpalast, movie2k, moflix ×2) | 15.3 s | — |
-| Interstellar | 8 (kinoger ×2, filmpalast ×2, megakino ×2, movie2k, moflix) | 15.2 s | — |
+| Movie K | 5 (kinoger, filmpalast, movie2k, moflix ×2) | 15.3 s | — |
+| Movie F | 8 (kinoger ×2, filmpalast ×2, megakino ×2, movie2k, moflix) | 15.2 s | — |
 | The Godfather | 4 (kinoger, movie2k ×2, einschalten) | 15.2 s | — |
-| Dark S02E01 | 1 (VOE · kinoking) | 10.5 s | link-out resolved (302), VOE ranked below kinoking's |
-| Breaking Bad S02E01 | 3 (kinoking, kinoger ×2) | 15.1 s | link-out resolved (302) |
+| Series C S02E01 | 1 (VOE · kinoking) | 10.5 s | link-out resolved (302), VOE ranked below kinoking's |
+| Series D S02E01 | 3 (kinoking, kinoger ×2) | 15.1 s | link-out resolved (302) |
 
-- **kinoger, moflix**: both challenge the VPN IP. httpx takes over the browser's session after one solve (Phase 4 of `antibot-patchright.md`); the first request after a restart misses them (the solve takes 10–20 s on the Pi and finishes in the background), later ones get them in 4–10 s. moflix returned nothing until its API, loaded directly by the browser with a stored clearance, answered 401 without the site's Referer; it is now asked by in-page `fetch()`.
-- **s.to**: three causes, one after the other. The ad layers took the clicks on the link box and the gate's checkbox; the gate's Turnstile widget took 16–70 s on the Pi; and for the VPN IP the gate is the tier `turnstile_altcha`, whose ALTCHA widget (required checkbox) blocked the form. With all three fixed the gate passes in about 20 s in the background. A pass unlocks exactly 3 link-outs for this IP (2 passes observed: 3 redirects each, then the gate again), so Stremio gets s.to for about three episode requests per pass. One stream per hoster is resolved, so an s.to VOE link loses to a better-ranked VOE stream of another site.
-- **Torznab on s.to** with the VPN IP: a search for "Dark" took 83 s and sent about 950 link-out requests (all matching series, every episode and hoster); 97 of 100 results kept the s.to link-out because the gate allowed 3. Since 2026-10-04 whole seasons do not pass the gate, and after a gated episode the next episodes return their link-outs unresolved for 5 min (`_GATE_RETRY_S`) without requesting them.
-- **Play check** (`scripts/stremio_playcheck.py` from the home network): 6 of 9 streams playable, the HLS-proxy streams (VOE, Vidsonic, StreamUp) included; `HEAD` on the proxy answers 200 with CORS. The 3 failures are IP-bound (DoodStream `error_wrong_ip`, Vinovo 403, FSST 410) and play through Stremio's server in the same VPN.
+- **kinoger, moflix**: both challenge the VPN IP. httpx takes over the browser's session after one solve (Phase 4 of `antibot-patchright.md`); the first request after a restart misses them (the solve takes 10–20 s on the production host and finishes in the background), later ones get them in 4–10 s. moflix returned nothing until its API, loaded directly by the browser with a stored clearance, answered 401 without the site's Referer; it is now asked by in-page `fetch()`.
+- **s.to**: three causes, one after the other. The ad layers took the clicks on the link box and the gate's checkbox; the gate's Turnstile widget took 16–70 s on the production host; and for the VPN IP the gate is the tier `turnstile_altcha`, whose ALTCHA widget (required checkbox) blocked the form. With all three fixed the gate passes in about 20 s in the background. A pass unlocks exactly 3 link-outs for this IP (2 passes observed: 3 redirects each, then the gate again), so Stremio gets s.to for about three episode requests per pass. One stream per hoster is resolved, so an s.to VOE link loses to a better-ranked VOE stream of another site.
+- **Torznab on s.to** with the VPN IP: a search for "Series C" took 83 s and sent about 950 link-out requests (all matching series, every episode and hoster); 97 of 100 results kept the s.to link-out because the gate allowed 3. Since 2026-10-04 whole seasons do not pass the gate, and after a gated episode the next episodes return their link-outs unresolved for 5 min (`_GATE_RETRY_S`) without requesting them.
+- **Play check** (`scripts/stremio_playcheck.py` from a residential network): 6 of 9 streams playable, the HLS-proxy streams (VOE, Vidsonic, StreamUp) included; `HEAD` on the proxy answers 200 with CORS. The 3 failures are IP-bound (DoodStream `error_wrong_ip`, Vinovo 403, FSST 410) and play through Stremio's server in the same VPN.
 - megakino_to and movie4k: every domain answers Cloudflare 522 (origin down). kinoking is often cut at 10 s.
 
-### Fourth round (2026-10-04 evening, production on `staging` 53f2f88)
+### Fourth round (2026-10-04, production on `staging` 53f2f88)
 
-The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.lan` after the performance plan (`docs/plans/pi-performance.md`), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
+The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles) against `https://scavengarr.example.lan` after the performance plan (the archived plan pi-performance), HTTP/2 on, no other traffic. Pass 1 searched (the titles' search-cache entries were older than the cache); pass 2 ran 8–13 minutes later and answered from the search cache, late plugins' results included. Logs and probes through Portainer (exec into the container: the same VPN address, DNS and code).
 
 | Pass | Median / max | Streams | Titles without stream |
 |---|---|---|---|
@@ -150,7 +152,7 @@ The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles)
 | 2 (from the search cache) | 4.6 / 10.4 s | 64 | 3 / 17 |
 
 - Streams per plugin, pass 1 → 2: aniworld 18 → 20, filmpalast 5 → 11, megakino 9 → 9, movie2k 5 → 7, moflix 6 → 6, s.to 0 → 6, fireani 3 → 3, hdfilme 2 → 2.
-- Series: pass 1 had streams for 1 of 5 (The Last of Us), pass 2 for 3 of 5 (Dark: s.to; Stranger Things S04E01: filmpalast, s.to; The Last of Us: filmpalast, movie2k, s.to). s.to's gate pass (about 20 s on the Pi) does not fit a first request; its results reach the next one through the late plugins.
+- Series: pass 1 had streams for 1 of 5 (Series G), pass 2 for 3 of 5 (Series C: s.to; Series F S04E01: filmpalast, s.to; Series G: filmpalast, movie2k, s.to). s.to's gate pass (about 20 s on the production host) does not fit a first request; its results reach the next one through the late plugins.
 
 **Fixed on `staging`** (TDD, deployed with the next build):
 
@@ -159,24 +161,24 @@ The measurement harness (`scripts/stremio_measure.py --pause 30`, the 17 titles)
 | The circuit breaker counted the early answer's cut (7 s) against plugins that run on | kinox (movies) opened after cuts it answered late without hits | A late plugin fails only when it is still running at the end of its extra time (fb3ad00) |
 | Browser captures that never deliver from the VPN address | 50 DoodStream and Dropload captures in an hour, no stream. Alone in the container: DoodStream's Turnstile unsolved after 31–34 s, Dropload's captcha player without a stream after 19 s. The final measurement's pass from the search cache still cost 10.1 s of Chromium CPU per request, all of it hoster resolution | Circuit breaker per hoster resolver: timeouts, cuts after half the resolve timeout and unplayable streams count (fa2e58f) |
 | moflix's own players failed 15 of 15 | moflix-stream.click (VidHide) answers `/e/<id>` with 404, its player is under `/embed/<id>`; moflix-stream.link is a Byse (Filemoon) player | XFS asks the link's own URL after a 404 on `/e/`; Filemoon claims moflix-stream.link: 4.7 s (warm browser) and 15 s (cold) in production (7600a06) |
-| moflix asked the title API for people | 19 of 20 hits for "Oppenheimer" are people: 46 answers 404; a person's id fetched an unrelated title | Titles only, relevant hits only (e9b1ba1) |
+| moflix asked the title API for people | 19 of 20 hits for "Movie B" are people: 46 answers 404; a person's id fetched an unrelated title | Titles only, relevant hits only (e9b1ba1) |
 
 **Site and environment state** (no code change):
-- **mixdrop:** its CDN `*.mxcontent.net` does not resolve in production. gluetun's DNS answers REFUSED, while 1.1.1.1 and 9.9.9.9 answer 168.80.32.64 through the same tunnel. The name is on no block list, but gluetun's malicious IP list (`BLOCK_MALICIOUS`, on by default) holds 168.80.0.0/15, and `DNS_UNBLOCK_HOSTNAMES` does not lift address blocks (gluetun applies it to its hostname list only). In 90 minutes 10 mixdrop resolutions gave an unplayable stream (its CDN unreachable) and 12 a player without a stream URL (`mixdrop_file_offline`). Chosen for production (2026-10-05): every lookup of the VPN stack stays in the tunnel (gluetun's own DNS server, DNS over TLS), with `BLOCK_MALICIOUS=off`. Handing gluetun's DNS to the LAN's Pi-hole, tried first, sends the lookups outside the tunnel; the VPN container was unhealthy with it (cause not confirmed), and the stack that shares its network went down.
+- **mixdrop:** its CDN `*.mxcontent.net` does not resolve in production. the VPN container's DNS answers REFUSED, while 1.1.1.1 and 9.9.9.9 answer 168.80.32.64 through the same tunnel. The name is on no block list, but the VPN container's malicious IP list (`BLOCK_MALICIOUS`, on by default) holds 168.80.0.0/15, and `DNS_UNBLOCK_HOSTNAMES` does not lift address blocks (the VPN container applies it to its hostname list only). In 90 minutes 10 mixdrop resolutions gave an unplayable stream (its CDN unreachable) and 12 a player without a stream URL (`mixdrop_file_offline`). Chosen for production (2026-10-05): every lookup of the VPN stack stays in the tunnel (the VPN container's own DNS server, DNS over TLS), with `BLOCK_MALICIOUS=off`. Handing the VPN container's DNS to a filtering LAN resolver, tried first, sends the lookups outside the tunnel; the VPN container was unhealthy with it (cause not confirmed), and the stack that shares its network went down.
 - **VOE:** 4 of 18 VOE links failed: the files answer "File access denied" (restricted by the uploader), on `/e/` as well.
 - **kinoger:** Cloudflare's Turnstile is not solved from the VPN address (`cloudflare_unsolved` after 33 s), so kinoger gives nothing in production; its breaker opens, and each half-open probe costs a browser solve.
 - **kinoking:** answers a series search in 1.2 s when run alone in the container, but stalled for more than 17 s in pass 1 without an answer. Its server serializes requests behind a slow movie page: after a cancelled movie page (12–17 s to build) the next search took 10.3 s instead of 0.3 s, over HTTP/1.1 and HTTP/2 alike.
 - **megakino_to, movie4k:** Cloudflare 522 (origin down); their breakers keep them out. **kinox.to** answered 503 (13 retries in 70 min).
-- The titles still without a stream after pass 2 are site state: *Good Bye, Lenin!* and Breaking Bad S01E01 have only DoodStream, Dropload and access-denied VOE links; Haus des Geldes S01E01 only a DoodStream link.
+- The titles still without a stream after pass 2 are site state: *Movie L* and Series D S01E01 have only DoodStream, Dropload and access-denied VOE links; Series E S01E01 only a DoodStream link.
 - `SCAVENGARR_HTTP_HTTP2` was still on (the A/B in `pi-performance.md`: +22% CPU, not faster).
 
 **Play check** (`scripts/stremio_playcheck.py` inside the container, so from the VPN address like Stremio's server; the 17 titles once more, served from the search cache while it refreshed): 61 of 64 streams playable. The failures were CDN errors at that moment: moflix's FireStream and StreamUp segments 502 (the CDN did not answer the HLS proxy within 15 s), one fireani VOE segment without media bytes. MP4 streams answered in 0.45 s (median, seek included). HLS streams took 4.3 s to master, variant and two segment heads (median), but 15 of 56 took 15 s or more (aniworld's Vidmoly and VOE up to 46 s, a fireani VOE 84 s). Those times are mostly the CDNs answering through the VPN: Scavengarr's HLS proxy answered playlists in 0.6 s and segment heads in 0.23 s (median, its access log).
 
-The production logs of that evening showed four more resolver defects (FireStream ids with `-`, Playmate `/embed/` links, veev's redirect to another file code, moflix-stream.click's packed `hls2` URL), all fixed on `staging`; kinox's link-outs now sit behind an image captcha, and VOE denies some files to the VPN address. Details and the next options: `optimization-options.md`; the fifth round below measured the fixes.
+The production logs of that day showed four more resolver defects (FireStream ids with `-`, Playmate `/embed/` links, veev's redirect to another file code, moflix-stream.click's packed `hls2` URL), all fixed on `staging`; kinox's link-outs now sit behind an image captcha, and VOE denies some files to the VPN address. Details and the next options: `optimization-options.md`; the fifth round below measured the fixes.
 
 ### Fifth round (2026-10-05, production on `staging` c4a6b6c)
 
-The harness and the 17 titles of the fourth round, after its fixes were deployed (each checked in the container). Changed environment: HTTP/2 off (`SCAVENGARR_HTTP_HTTP2=false`), every lookup of the VPN stack through gluetun's own DNS server over TLS with `BLOCK_MALICIOUS=off` (`stremio-addon.md`), and another exit address of the VPN (the same provider network, AS43350). A first attempt right after the stack's restart was dropped (load average 4.4, warm-up without streams); the round ran at a load below 1.2. Pass 1 searched (the titles' search-cache entries were deleted first), pass 2 followed at once from the search cache.
+The harness and the 17 titles of the fourth round, after its fixes were deployed (each checked in the container). Changed environment: HTTP/2 off (`SCAVENGARR_HTTP_HTTP2=false`), every lookup of the VPN stack through the VPN container's own DNS server over TLS with `BLOCK_MALICIOUS=off` (`stremio-addon.md`), and another exit address of the VPN (the same provider network). A first attempt right after the stack's restart was dropped (load average 4.4, warm-up without streams); the round ran at a load below 1.2. Pass 1 searched (the titles' search-cache entries were deleted first), pass 2 followed at once from the search cache.
 
 | Pass | Median / max | Streams | Titles without stream |
 |---|---|---|---|
@@ -189,7 +191,7 @@ The harness and the 17 titles of the fourth round, after its fixes were deployed
 - **Pass 2** answered in 0.0–1.8 s, except 5 requests at 4.1–4.4 s: a link resolved for the first time or again (a VOE link, a Filemoon half-open probe) held the answer for `resolve_grace_seconds`.
 
 **Hosters** (both passes):
-- **Circuit breaker open:** Dropload (since the warm-up; 28 skipped links) and Filemoon (24). No Filemoon or Byse capture finished inside the grace. Production's `http.timeout_resolve_seconds` is 10 s (`data/config.yaml`), so a cut counts as a failure from 5 s on: two Byse captures cut at 6.0 s in one request completed the five failures (the others came from requests before the round). moflix-stream.link's Byse player (7600a06) therefore delivers nothing on the Pi. A half-open probe is cut by the grace before 5 s, reports nothing and runs again after each cooldown, which never doubles; in the CPU measurement below one probe cost 6.3 s of Chromium.
+- **Circuit breaker open:** Dropload (since the warm-up; 28 skipped links) and Filemoon (24). No Filemoon or Byse capture finished inside the grace. Production's `http.timeout_resolve_seconds` is 10 s (`data/config.yaml`), so a cut counts as a failure from 5 s on: two Byse captures cut at 6.0 s in one request completed the five failures (the others came from requests before the round). moflix-stream.link's Byse player (7600a06) therefore delivers nothing on the production host. A half-open probe is cut by the grace before 5 s, reports nothing and runs again after each cooldown, which never doubles; in the CPU measurement below one probe cost 6.3 s of Chromium.
 - **DoodStream** resolves from the new exit: 9 streams (dood 2, playmogo 7), 4 offline files, 2 unplayable. **mixdrop** resolves again (its CDN's address is no longer blocked): 1 stream, 5 offline files.
 - **VOE:** 18 resolved, 12 failed (7 with no working method, among them the files denied in the fourth round; 5 dead files).
 - **SuperVideo:** 13 of 13 failed. Its CDN (serversicuro.cc) answers the playlist URL with a "Loading..." page whose script redirects to the same URL with a `js` token (and sets a `sid` cookie), and a HEAD with a 302 to an ad domain whose connection fails; the resolver's HEAD check logs `supervideo_video_verify_error`. Following the redirect without a browser led to another CDN host (302); further steps are untested, because the CDN then answered the probes with 429.
@@ -219,7 +221,7 @@ The harness and the 17 titles of the fourth round, after its fixes were deployed
 
 ### Dev-server A/B round (2026-10-05, after the round-5 measures)
 
-The measures of `round5-measures.md` against the fifth round's code, side by side in the dev container (x86, 16 cores, the home connection without the VPN, so absolute times are not the Pi's): each server on 127.0.0.1 under Xvfb with a fresh cache and its commit's `data/config.yaml`. The old code is b003bd2 (plugin timeout 10 s, soft deadline 7 s, grace 4 s, every link resolved), the new one `staging` at 661104b (the fixes below came out of this round). The fifth round's harness and titles (`stremio_measure.py`, 90 s between groups; play check with `stremio_playcheck.py`'s fetches on the stored stream objects), plus the server's CPU from `/proc` (its process, and its child processes for Chromium) and the event-loop lag from `/api/v1/stats/metrics`. Run 2 is a second fresh instance an hour after run 1; kinoking, down during run 1, was back.
+The measures of `round5-measures.md` against the fifth round's code, side by side in the dev container (x86, 16 cores, a residential connection without the VPN, so absolute times are not the production host's): each server on 127.0.0.1 under Xvfb with a fresh cache and its commit's `data/config.yaml`. The old code is b003bd2 (plugin timeout 10 s, soft deadline 7 s, grace 4 s, every link resolved), the new one `staging` at 661104b (the fixes below came out of this round). The fifth round's harness and titles (`stremio_measure.py`, 90 s between groups; play check with `stremio_playcheck.py`'s fetches on the stored stream objects), plus the server's CPU from `/proc` (its process, and its child processes for Chromium) and the event-loop lag from `/api/v1/stats/metrics`. Run 2 is a second fresh instance an hour after run 1; kinoking, down during run 1, was back.
 
 | | Old code | `staging` run 1 | `staging` run 2 |
 |---|---|---|---|
@@ -230,7 +232,7 @@ The measures of `round5-measures.md` against the fifth round's code, side by sid
 | Pass 2 (search cache): median / max | 4.0 / 10.0 s | 0.03 / 0.96 s | 0.03 / 0.55 s |
 | Play check of pass 1's streams | 99 of 103 | 64 of 70 | 72 of 73 |
 
-- **Answer** (measures 2 and 9): in run 2, 13 first answers went out at the target of 5 streams (2.3–19.5 s, median 4.3 s), 4 when the search was done (3.4–24.8 s). The titles with few streams (Good Bye Lenin, Breaking Bad, Dark, Haus des Geldes) got as many streams as with the old code, one more for Good Bye Lenin, but waited for the slowest plugin. 22 more titles traced on demand (17:10–17:35) show it: kinoking ran into the 30 s plugin timeout in the 8 films it searched (then its breaker skipped it; series: hits after 1–8 s in 5 of 12), kinoger answered after 17–29 s or was cut, and its streams completed the target of 4 series at 23–30 s. Cuts after half the plugin timeout open a plugin's breaker; kinoking's opened for films and series. Fewer streams per answer (70–73 against 103) are the target rule's intent.
+- **Answer** (measures 2 and 9): in run 2, 13 first answers went out at the target of 5 streams (2.3–19.5 s, median 4.3 s), 4 when the search was done (3.4–24.8 s). The titles with few streams (Movie L, Series D, Series C, Series E) got as many streams as with the old code, one more for Movie L, but waited for the slowest plugin. 22 more titles traced on demand (25 min) show it: kinoking ran into the 30 s plugin timeout in the 8 films it searched (then its breaker skipped it; series: hits after 1–8 s in 5 of 12), kinoger answered after 17–29 s or was cut, and its streams completed the target of 4 series at 23–30 s. Cuts after half the plugin timeout open a plugin's breaker; kinoking's opened for films and series. Fewer streams per answer (70–73 against 103) are the target rule's intent.
 - **Cached answers** (measure 4): 0.03 s instead of 4.0 s. They lost a hoster in 3 of 17 titles (fixed, below); after the fix they had the 73 streams of the first answers. After the search cache's TTL, stale entries answered at once too and revalidated (median 0.03 s).
 - **Health check** (measure 1): 60 s after the start, megakino_to, movie4k and kinoking were unreachable (kinoking's site then took TLS connections but sent no HTTP answer in 15 s); all 17 searches skipped them. kinoking was found back 26 minutes later.
 - **Half-open probe, SuperVideo** (measures 3 and 5): SuperVideo's breaker opened after 5 unplayable links. After the cooldown, one request's probe ran to its end (7 s, unplayable) and reopened it, while the request's three other SuperVideo links were skipped.
@@ -244,15 +246,15 @@ Fixes from the round, each with tests: cached answers keep a hoster's cached str
 
 ### Sixth round (2026-10-06, production on `staging` f0b9d18)
 
-The fifth round's harness and 17 titles (none in the search cache) against production with the round-5 measures, the dev-server round's fixes and that commit's `data/config.yaml` (plugin timeout 30 s, deadline 60 s, target 5 streams, links kept 7 days). The mounted config had kept the old values (10 s, 15 s, resolve everything, 2 h) through the first rebuild: the entrypoint seeds `config.yaml` only when the file is missing, so it was deleted and reseeded. Changed environment: other containers on the Pi kept about 1.4 cores busy (load 2.7–5.2 before the round, 0.7–10 during pass 1; Scavengarr idle at 0.7% of a core); the fifth round ran below 1.2. By the maintainer's decision the round was measured under that load. CPU from the app's own `/metrics` (process and container cgroup).
+The fifth round's harness and 17 titles (none in the search cache) against production with the round-5 measures, the dev-server round's fixes and that commit's `data/config.yaml` (plugin timeout 30 s, deadline 60 s, target 5 streams, links kept 7 days). The mounted config had kept the old values (10 s, 15 s, resolve everything, 2 h) through the first rebuild: the entrypoint seeds `config.yaml` only when the file is missing, so it was deleted and reseeded. Changed environment: other containers on the production host kept about 1.4 cores busy (load 2.7–5.2 before the round, 0.7–10 during pass 1; Scavengarr idle at 0.7% of a core); the fifth round ran below 1.2. By the maintainer's decision the round was measured under that load. CPU from the app's own `/metrics` (process and container cgroup).
 
 | Pass | Median / max | Streams | Titles without stream / below 5 |
 |---|---|---|---|
 | 1 (plugins search) | 12.1 / 32.5 s (fifth round 11.1 / 14.0 s) | 67 (102) | 0 / 5 of 17 |
 | 2 (from the search cache) | 0.08 / 0.96 s (1.0 / 4.4 s) | 67 (110) | 0 / 5 of 17 |
 
-- **Answers:** 12 at the target of 5 streams (3.9–22.9 s, median 8.9 s), 5 when the search was done, all at 30.1–32.5 s (Good Bye Lenin, Lola rennt, Breaking Bad, Dark, Haus des Geldes with 1–2 streams): they waited for kinoger's plugin timeout.
-- **kinoger** delivered nothing: 13 of 13 searches hit the 30 s plugin timeout, then its breakers for films and series opened (6 searches skipped). Alone in the production container, with a browser of its own, three kinoger searches took 7.9–17.3 s and found results. Every kinoger page goes through the stealth browser (the site binds its Cloudflare clearance to the browser, `kinoger_browser_session_rejected`), and that browser loads 2 pages at a time; since links resolve while plugins search, hoster captures (Dropload, DoodStream's fallback, Filemoon, SuperVideo) take those pages during the search. In the fifth round the resolution started after the search's soft deadline, and kinoger delivered 11 streams in pass 1. Open: how the stealth browser's pages are shared ([browser-page-budget.md](browser-page-budget.md)).
+- **Answers:** 12 at the target of 5 streams (3.9–22.9 s, median 8.9 s), 5 when the search was done, all at 30.1–32.5 s (Movie L, Movie H, Series D, Series C, Series E with 1–2 streams): they waited for kinoger's plugin timeout.
+- **kinoger** delivered nothing: 13 of 13 searches hit the 30 s plugin timeout, then its breakers for films and series opened (6 searches skipped). Alone in the production container, with a browser of its own, three kinoger searches took 7.9–17.3 s and found results. Every kinoger page goes through the stealth browser (the site binds its Cloudflare clearance to the browser, `kinoger_browser_session_rejected`), and that browser loads 2 pages at a time; since links resolve while plugins search, hoster captures (Dropload, DoodStream's fallback, Filemoon, SuperVideo) take those pages during the search. In the fifth round the resolution started after the search's soft deadline, and kinoger delivered 11 streams in pass 1. Open: how the stealth browser's pages are shared (the archived plan browser-page-budget).
 - **CPU and lag:** 3.8 s of Python and 27 s of container CPU (Chromium, Xvfb) per title in pass 1; the search now runs to its end and links resolve while it runs, so a title costs more than before (the fifth round's profile of 3 titles: 2.5 s Python, 6.7 s Chromium per request, measured differently). Event-loop lag p99 / max 194 / 1124 ms under the host load (fifth round's profile: 73 / 224 ms).
 - **Health check:** megakino_to and movie4k (still down) were skipped in 17 of 17 searches.
 - **Hosters:** breakers open for Filemoon (37 links skipped), Dropload (32) and SuperVideo (20; its half-open probes report as designed). DoodStream 13 streams (fifth round 9), VOE 25 resolved and 17 failed, Vidmoly 10.
@@ -260,78 +262,78 @@ The fifth round's harness and 17 titles (none in the search cache) against produ
 - **Cached answers** resolved their other links in the background one title at a time (34 runs over 8 minutes) and kept every stream of the first answers.
 - **Play check** inside the container (the VPN address): 89 of 93 streams playable (fifth round 107 of 110); failures FireStream (2) and VidHide (2).
 - **HLS proxy:** ffmpeg (`Lavf/`) was refused the playlist of 48 of 48 proxied HLS streams, a player got it with HEAD and GET for 48 of 48 (the 1080p fix). The maintainer then played 1080p streams of StreamUp and Vidsonic in Stremio Web without stutter: its streaming server's ffmpeg was refused 13 times, the browser player fetched the playlists and 49 segments in two minutes, the Stremio container used 0–2% of a core after 32% at the probe (the transcoding took 1–2 cores before), Scavengarr 2–3% of a core while relaying (Docker stats). CPU per relayed MB of one VOE stream: 150–162 ms (app process, idle-corrected; fifth round during playback 259–320 ms, before the asyncio backend and 64 KiB pieces).
-- **Metrics:** `/metrics` answered 44 KB and 574 series for 29 ms of CPU per scrape on the Pi, 0.05% of a core at a 60 s interval.
+- **Metrics:** `/metrics` answered 44 KB and 574 series for 29 ms of CPU per scrape on the production host, 0.05% of a core at a 60 s interval.
 
 **Evaluation:** cached answers (0.08 instead of 1.0 s), the HLS proxy (about half the CPU per MB), the 1080p fix, the health check, the breakers and the metrics reached their goals in production. First answers did not get faster under three to four times the host load: titles with many streams answer at the target (median 8.9 s), but titles with few streams wait 30 s for kinoger, which no longer finishes because hoster captures hold the stealth browser's two pages during the search.
 
 ### Seventh round (2026-10-07, dev server on `staging` 11ca685)
 
-The first round written with `scripts/stremio_round.py` (one command; the title set `docs/plans/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, the home connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the Pi's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
+The first round written with `scripts/stremio_round.py` (one command; the title set `.cache/live/round-titles.txt`: the 17 titles of the earlier rounds and the two other baseline ids of `pi-performance.md`). It ran against a dev server in the dev container (x86, a residential connection without the VPN, a fresh cache, production's `data/config.yaml`), so its times are not the production host's; it is the script's acceptance run. The Stremio stream route sends no `X-Cache` header, hence the dashes; the header is a scheduled follow-up.
 
 | Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 4.5 s | 5 | – | 0.01 s | 5 | 5 of 5 |
-| Lola rennt (`movie/tt0130827`) | 6.7 s | 5 | – | 0.01 s | 5 | 4 of 5 |
-| Good Bye, Lenin! (`movie/tt0301357`) | 19.6 s | 1 | – | 0.01 s | 1 | 1 of 1 |
-| Im Westen nichts Neues (`movie/tt1016150`) | 5.3 s | 5 | – | 0.66 s | 5 | 5 of 5 |
-| Oppenheimer (`movie/tt15398776`) | 15.8 s | 5 | – | 0.02 s | 5 | 5 of 5 |
-| Dune: Part Two (`movie/tt15239678`) | 12.6 s | 5 | – | 0.02 s | 5 | 4 of 5 |
-| Inception (`movie/tt1375666`) | 3.9 s | 5 | – | 0.02 s | 5 | 5 of 5 |
-| Interstellar (`movie/tt0816692`) | 2.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 17.4 s | 3 | – | 0.01 s | 3 | 3 of 3 |
-| Dark S01E01 (`series/tt5753856:1:1`) | 4.4 s | 1 | – | 0.00 s | 1 | 1 of 1 |
-| Stranger Things S04E01 (`series/tt4574334:4:1`) | 5.1 s | 5 | – | 0.01 s | 5 | 5 of 5 |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 7.4 s | 1 | – | 0.01 s | 1 | 1 of 1 |
-| The Last of Us S01E01 (`series/tt3581920:1:1`) | 2.5 s | 5 | – | 0.01 s | 5 | 5 of 5 |
-| One Piece S01E01 (`series/tt0388629:1:1`) | 3.9 s | 5 | – | 0.03 s | 5 | 5 of 5 |
-| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 3.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
-| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 3.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
-| Frieren S01E01 (`series/tt22248376:1:1`) | 8.6 s | 5 | – | 0.93 s | 5 | 5 of 5 |
-| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 10.8 s | 2 | – | 0.01 s | 2 | 2 of 2 |
-| The Matrix (`movie/tt0133093`) | 18.6 s | 2 | – | 0.01 s | 2 | 2 of 2 |
+| Movie G (`movie/<Movie G>`) | 4.5 s | 5 | – | 0.01 s | 5 | 5 of 5 |
+| Movie H (`movie/<Movie H>`) | 6.7 s | 5 | – | 0.01 s | 5 | 4 of 5 |
+| Movie L (`movie/<Movie L>`) | 19.6 s | 1 | – | 0.01 s | 1 | 1 of 1 |
+| Movie M (`movie/<Movie M>`) | 5.3 s | 5 | – | 0.66 s | 5 | 5 of 5 |
+| Movie B (`movie/<Movie B>`) | 15.8 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Movie A: Part Two (`movie/<Movie A: Part Two>`) | 12.6 s | 5 | – | 0.02 s | 5 | 4 of 5 |
+| Movie K (`movie/<Movie K>`) | 3.9 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Movie F (`movie/<Movie F>`) | 2.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Series D S01E01 (`series/<Series D>:1:1`) | 17.4 s | 3 | – | 0.01 s | 3 | 3 of 3 |
+| Series C S01E01 (`series/<Series C>:1:1`) | 4.4 s | 1 | – | 0.00 s | 1 | 1 of 1 |
+| Series F S04E01 (`series/<Series F>:4:1`) | 5.1 s | 5 | – | 0.01 s | 5 | 5 of 5 |
+| Series E S01E01 (`series/<Series E>:1:1`) | 7.4 s | 1 | – | 0.01 s | 1 | 1 of 1 |
+| Series G S01E01 (`series/<Series G>:1:1`) | 2.5 s | 5 | – | 0.01 s | 5 | 5 of 5 |
+| Anime A S01E01 (`series/<Anime A>:1:1`) | 3.9 s | 5 | – | 0.03 s | 5 | 5 of 5 |
+| Anime G S01E01 (`series/<Anime G>:1:1`) | 3.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Anime H S01E01 (`series/<Anime H>:1:1`) | 3.4 s | 5 | – | 0.02 s | 5 | 5 of 5 |
+| Anime I S01E01 (`series/<Anime I>:1:1`) | 8.6 s | 5 | – | 0.93 s | 5 | 5 of 5 |
+| Series D S01E02 (`series/<Series D>:1:2`) | 10.8 s | 2 | – | 0.01 s | 2 | 2 of 2 |
+| Movie J (`movie/<Movie J>`) | 18.6 s | 2 | – | 0.01 s | 2 | 2 of 2 |
 | **Median / total** (19 titles) | 5.3 s | 75 | – | 0.01 s | 75 | 73 of 75 |
 
 Titles without stream: 0 of 19 (first answer), 0 of 19 (cached answer); max first answer 19.6 s.
 
-- **Answers:** 13 of 19 titles answered at the target of 5 streams; the six with one to three streams (Good Bye Lenin, Breaking Bad twice, Dark, Haus des Geldes, The Matrix) took 4.4–19.6 s, none waited for a 30 s plugin timeout as in the sixth round.
+- **Answers:** 13 of 19 titles answered at the target of 5 streams; the six with one to three streams (Movie L, Series D twice, Series C, Series E, Movie J) took 4.4–19.6 s, none waited for a 30 s plugin timeout as in the sixth round.
 - **kinoger** delivered on the dev server: the log binds 10 hoster resolutions to it (5 resolved, 4 cut at the resolve timeout). Its confirmation in production followed the same day (below).
-- **Play check** from the dev container: 73 of 75 streams playable (Lola rennt and Dune: Part Two one stream each).
+- **Play check** from the dev container: 73 of 75 streams playable (Movie H and Movie A: Part Two one stream each).
 
 ### Seventh round, production (2026-10-07, production on `staging` before step 21)
 
-The same command against production (`--base https://scavengarr.lan --insecure --portainer`; the Pi with its VPN, the search cache warm for none of the titles): the baseline before the deploy of the continued searches (OpenSpec `continue-cut-searches`).
+The same command against production (`--base https://scavengarr.example.lan --insecure --portainer`; the production host with its VPN, the search cache warm for none of the titles): the baseline before the deploy of the continued searches (OpenSpec `continue-cut-searches`).
 
 | Title | First answer | Streams | X-Cache | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 10.2 s | 5 | – | 0.09 s | 5 | 3 of 5 |
-| Lola rennt (`movie/tt0130827`) | 5.3 s | 5 | – | 0.05 s | 5 | 1 of 5 |
-| Good Bye, Lenin! (`movie/tt0301357`) | 15.0 s | 1 | – | 0.04 s | 1 | 0 of 1 |
-| Im Westen nichts Neues (`movie/tt1016150`) | 4.9 s | 5 | – | 0.07 s | 5 | 3 of 5 |
-| Oppenheimer (`movie/tt15398776`) | 9.2 s | 5 | – | 0.06 s | 5 | 1 of 5 |
-| Dune: Part Two (`movie/tt15239678`) | 6.8 s | 5 | – | 1.13 s | 5 | 3 of 5 |
-| Inception (`movie/tt1375666`) | 8.0 s | 5 | – | 0.05 s | 5 | 3 of 5 |
-| Interstellar (`movie/tt0816692`) | 5.5 s | 5 | – | 0.10 s | 5 | 2 of 5 |
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 1 | – | 0.03 s | 1 | 0 of 1 |
-| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 0 | – | 30.03 s | 0 | 0 of 0 |
-| Stranger Things S04E01 (`series/tt4574334:4:1`) | 30.0 s | 3 | – | 0.04 s | 3 | 2 of 3 |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 30.0 s | 0 | – | 0.02 s | 0 | 0 of 0 |
-| The Last of Us S01E01 (`series/tt3581920:1:1`) | 9.0 s | 5 | – | 0.02 s | 5 | 3 of 5 |
-| One Piece S01E01 (`series/tt0388629:1:1`) | 3.4 s | 5 | – | 0.10 s | 5 | 3 of 5 |
-| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 4.8 s | 5 | – | 0.14 s | 5 | 5 of 5 |
-| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 5.0 s | 5 | – | 0.09 s | 5 | 5 of 5 |
-| Frieren S01E01 (`series/tt22248376:1:1`) | 4.7 s | 5 | – | 0.58 s | 5 | 5 of 5 |
-| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 11.5 s | 1 | – | 0.03 s | 1 | 0 of 1 |
-| The Matrix (`movie/tt0133093`) | 6.7 s | 5 | – | 0.05 s | 5 | 4 of 5 |
+| Movie G (`movie/<Movie G>`) | 10.2 s | 5 | – | 0.09 s | 5 | 3 of 5 |
+| Movie H (`movie/<Movie H>`) | 5.3 s | 5 | – | 0.05 s | 5 | 1 of 5 |
+| Movie L (`movie/<Movie L>`) | 15.0 s | 1 | – | 0.04 s | 1 | 0 of 1 |
+| Movie M (`movie/<Movie M>`) | 4.9 s | 5 | – | 0.07 s | 5 | 3 of 5 |
+| Movie B (`movie/<Movie B>`) | 9.2 s | 5 | – | 0.06 s | 5 | 1 of 5 |
+| Movie A: Part Two (`movie/<Movie A: Part Two>`) | 6.8 s | 5 | – | 1.13 s | 5 | 3 of 5 |
+| Movie K (`movie/<Movie K>`) | 8.0 s | 5 | – | 0.05 s | 5 | 3 of 5 |
+| Movie F (`movie/<Movie F>`) | 5.5 s | 5 | – | 0.10 s | 5 | 2 of 5 |
+| Series D S01E01 (`series/<Series D>:1:1`) | 30.0 s | 1 | – | 0.03 s | 1 | 0 of 1 |
+| Series C S01E01 (`series/<Series C>:1:1`) | 30.0 s | 0 | – | 30.03 s | 0 | 0 of 0 |
+| Series F S04E01 (`series/<Series F>:4:1`) | 30.0 s | 3 | – | 0.04 s | 3 | 2 of 3 |
+| Series E S01E01 (`series/<Series E>:1:1`) | 30.0 s | 0 | – | 0.02 s | 0 | 0 of 0 |
+| Series G S01E01 (`series/<Series G>:1:1`) | 9.0 s | 5 | – | 0.02 s | 5 | 3 of 5 |
+| Anime A S01E01 (`series/<Anime A>:1:1`) | 3.4 s | 5 | – | 0.10 s | 5 | 3 of 5 |
+| Anime G S01E01 (`series/<Anime G>:1:1`) | 4.8 s | 5 | – | 0.14 s | 5 | 5 of 5 |
+| Anime H S01E01 (`series/<Anime H>:1:1`) | 5.0 s | 5 | – | 0.09 s | 5 | 5 of 5 |
+| Anime I S01E01 (`series/<Anime I>:1:1`) | 4.7 s | 5 | – | 0.58 s | 5 | 5 of 5 |
+| Series D S01E02 (`series/<Series D>:1:2`) | 11.5 s | 1 | – | 0.03 s | 1 | 0 of 1 |
+| Movie J (`movie/<Movie J>`) | 6.7 s | 5 | – | 0.05 s | 5 | 4 of 5 |
 | **Median / total** (19 titles) | 8.0 s | 71 | – | 0.06 s | 71 | 43 of 71 |
 
 Titles without stream: 2 of 19 (first answer), 2 of 19 (cached answer); max first answer 30.0 s.
 CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 
-- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Breaking Bad S01E01, Dark, Stranger Things, Haus des Geldes): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Dark found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Haus des Geldes kept 1 result (sto's), whose 2 links failed to resolve (`serienstream_invalid_url`). Both readings in [title-matching.md](title-matching.md): the queries and the matcher are not the cause.
+- **Answers:** median first answer 8.0 s (dev server 5.3 s), cached 0.06 s. Films answer at the target in 4.9–15.0 s. Four series waited for the 30 s cut (Series D S01E01, Series C, Series F, Series E): the plugins that had not finished by then (kinoking: 11 plugin timeouts in the hour, sto 2, kinox 1) are lost to the cached entry too, which is what step 21 changes. Series C found 4 results, and the title filter dropped all of them (`stremio_all_filtered`); Series E kept 1 result (sto's), whose 2 links failed to resolve (`serienstream_invalid_url`). Both readings in the archived plan title-matching: the queries and the matcher are not the cause.
 - **kinoger** works in production again: in the round's hour 48 search pages (27 with results), 12 saved Cloudflare clearances, 7 hoster resolutions of its links succeeded and 4 were cut at the resolve timeout; one detail page timed out. The sixth round's 13 of 13 timeouts did not recur.
 - **Play check** from the dev container: 43 of 71 streams playable (dev server 73 of 75). Examined afterwards (finding 15, below).
 
-**Why streams did not play (finding 15).** The play check alone, re-run the same morning against production's cached answers for the round's ids (the stale refreshes had grown them to 97 streams; one pass that records each stream's hoster, its path and its verdict): 53 of 97 playable. The failures split by how the stream is served:
+**Why streams did not play (finding 15).** The play check alone, re-run the same day against production's cached answers for the round's ids (the stale refreshes had grown them to 97 streams; one pass that records each stream's hoster, its path and its verdict): 53 of 97 playable. The failures split by how the stream is served:
 
 | Served through | Hoster | Streams | Verdict |
 |---|---|---:|---|
@@ -343,9 +345,9 @@ CPU of the container during the round: Python 100.0 s, Chromium 167.7 s.
 | HLS proxy (`/proxy/`) | VOE 23, StrmUp 14, FireStream 6, VidMoly 5, VidSonic 4, Playmate 2 | 54 | 52 play; StrmUp 1 non-media segment, FireStream 1 segment 502 |
 | | VidHide | 6 | fail: segments HTTP 403 |
 
-36 of the 37 streams served through `/play/` fail; the proxied ones play, except VidHide. DoodStream says why in its answer: the video URL is bound to the IP that resolved it, the Pi's VPN address, and the check comes from the home connection. A Stremio client on the LAN fetches a `/play/` redirect from that same home address, so these streams most likely fail in the players as well, not only in the check; FSST's 410 and the 403s of Vinovo and MixDrop look like the same binding (HTML, unconfirmed). VidHide fails behind the proxy, so its segments are refused to the Pi itself or are not fetched through the proxy. Both classes point at the proxy and resolver decision (which hosters are proxied, VidHide's segments); analysis stops there, no code change.
+36 of the 37 streams served through `/play/` fail; the proxied ones play, except VidHide. DoodStream says why in its answer: the video URL is bound to the IP that resolved it, the production host's VPN address, and the check comes from a residential connection. A Stremio client on the LAN fetches a `/play/` redirect from that same residential address, so these streams most likely fail in the players as well, not only in the check; FSST's 410 and the 403s of Vinovo and MixDrop look like the same binding (HTML, unconfirmed). VidHide fails behind the proxy, so its segments are refused to the production host itself or are not fetched through the proxy. Both classes point at the proxy and resolver decision (which hosters are proxied, VidHide's segments); analysis stops there, no code change.
 
-**File throughput from the Pi** (step 26, task 5.2, 2026-10-07): `prodctl.py probe hls_throughput -- --file --hoster <hoster>`, the hoster's newest stored direct link (43 and 44 min old), its first 32 MiB in one connection, then as three parallel 1 MiB ranges.
+**File throughput from the production host** (step 26, task 5.2, 2026-10-07): `prodctl.py probe hls_throughput -- --file --hoster <hoster>`, the hoster's newest stored direct link (43 and 44 min old), its first 32 MiB in one connection, then as three parallel 1 MiB ranges.
 
 | Hoster (CDN) | File | One connection | 3 ranges | Ranges honoured |
 |---|---:|---:|---:|---|
@@ -356,14 +358,14 @@ Both CDNs throttle per connection (ranges 4 to 5 times faster; the second MixDro
 
 ### Eighth round (2026-10-09, production on `staging` 0d7d833): invalid
 
-`scripts/stremio_round.py --base https://scavengarr.lan --insecure` from the dev
-container, 17:31 to 19:06 UTC, play checks on. The first two titles answered
-(Der Schuh des Manitu 5.0 s, 5 streams, 2 of 5 playable; Lola rennt 30.1 s, 4
+`scripts/stremio_round.py --base https://scavengarr.example.lan --insecure` from the dev
+container, 1 h 35 min, play checks on. The first two titles answered
+(Movie G 5.0 s, 5 streams, 2 of 5 playable; Movie H 30.1 s, 4
 streams, 0 of 4 playable); from the third title on every request answered in
 0.0 s with 0 streams and no `X-Cache`, which is how the runner records a
 non-2xx answer (`_request`: `resp.is_success` false). Production's container
-was alive then (its hoster snapshot was written at 18:34 UTC; the maintainer
-rebuilt at 19:00 UTC, the new container started 19:06:30), so the front or the
+was alive then (its hoster snapshot was written; the maintainer
+rebuilt, the new container started), so the front or the
 app answered errors for about 80 minutes; the old container's logs went with
 the recreate, and the cause is not known. Row 26's acceptance (group 6, the
 four address-bound hosters play from the dev container) is not answered by
@@ -371,70 +373,68 @@ this round; the full round runs again after step 35's deploy.
 
 ### Ninth round, quick (2026-10-09, production on `staging` 11d1b46, no play checks)
 
-Right after the deploy (container up at 19:06:30 UTC), `--no-playcheck`, 19:08
-to 19:13 UTC, the search cache empty for everything but the two titles the
+Right after the deploy (container up), `--no-playcheck`
+, the search cache empty for everything but the two titles the
 eighth round had reached (`STALE`):
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 1.4 s | 2 | STALE | false | 0.03 s | 2 | – |
-| Lola rennt (`movie/tt0130827`) | 0.3 s | 4 | STALE | false | 0.04 s | 4 | – |
-| Good Bye, Lenin! (`movie/tt0301357`) | 30.1 s | 1 | MISS | false | 0.10 s | 1 | – |
-| Im Westen nichts Neues (`movie/tt1016150`) | 13.4 s | 5 | MISS | false | 0.12 s | 5 | – |
-| Oppenheimer (`movie/tt15398776`) | 26.3 s | 5 | MISS | false | 0.05 s | 5 | – |
-| Dune: Part Two (`movie/tt15239678`) | 16.0 s | 5 | MISS | false | 0.34 s | 5 | – |
-| Inception (`movie/tt1375666`) | 4.6 s | 5 | MISS | true | 0.04 s | 5 | – |
-| Interstellar (`movie/tt0816692`) | 5.3 s | 5 | MISS | true | 0.03 s | 5 | – |
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 0 | MISS | false | 0.08 s | 0 | – |
-| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 0 | MISS | false | 0.07 s | 0 | – |
-| Stranger Things S04E01 (`series/tt4574334:4:1`) | 16.2 s | 1 | MISS | true | 0.08 s | 1 | – |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 8.6 s | 1 | MISS | true | 0.06 s | 1 | – |
-| The Last of Us S01E01 (`series/tt3581920:1:1`) | 21.3 s | 4 | MISS | true | 0.11 s | 4 | – |
-| One Piece S01E01 (`series/tt0388629:1:1`) | 8.2 s | 5 | MISS | true | 0.09 s | 5 | – |
-| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 7.3 s | 5 | MISS | true | 0.06 s | 5 | – |
-| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 6.2 s | 5 | MISS | false | 0.07 s | 5 | – |
-| Frieren S01E01 (`series/tt22248376:1:1`) | 9.5 s | 5 | MISS | true | 1.25 s | 5 | – |
-| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 5.0 s | 0 | MISS | true | 0.02 s | 0 | – |
-| The Matrix (`movie/tt0133093`) | 9.3 s | 5 | MISS | true | 0.07 s | 5 | – |
+| Movie G (`movie/<Movie G>`) | 1.4 s | 2 | STALE | false | 0.03 s | 2 | – |
+| Movie H (`movie/<Movie H>`) | 0.3 s | 4 | STALE | false | 0.04 s | 4 | – |
+| Movie L (`movie/<Movie L>`) | 30.1 s | 1 | MISS | false | 0.10 s | 1 | – |
+| Movie M (`movie/<Movie M>`) | 13.4 s | 5 | MISS | false | 0.12 s | 5 | – |
+| Movie B (`movie/<Movie B>`) | 26.3 s | 5 | MISS | false | 0.05 s | 5 | – |
+| Movie A: Part Two (`movie/<Movie A: Part Two>`) | 16.0 s | 5 | MISS | false | 0.34 s | 5 | – |
+| Movie K (`movie/<Movie K>`) | 4.6 s | 5 | MISS | true | 0.04 s | 5 | – |
+| Movie F (`movie/<Movie F>`) | 5.3 s | 5 | MISS | true | 0.03 s | 5 | – |
+| Series D S01E01 (`series/<Series D>:1:1`) | 30.0 s | 0 | MISS | false | 0.08 s | 0 | – |
+| Series C S01E01 (`series/<Series C>:1:1`) | 30.0 s | 0 | MISS | false | 0.07 s | 0 | – |
+| Series F S04E01 (`series/<Series F>:4:1`) | 16.2 s | 1 | MISS | true | 0.08 s | 1 | – |
+| Series E S01E01 (`series/<Series E>:1:1`) | 8.6 s | 1 | MISS | true | 0.06 s | 1 | – |
+| Series G S01E01 (`series/<Series G>:1:1`) | 21.3 s | 4 | MISS | true | 0.11 s | 4 | – |
+| Anime A S01E01 (`series/<Anime A>:1:1`) | 8.2 s | 5 | MISS | true | 0.09 s | 5 | – |
+| Anime G S01E01 (`series/<Anime G>:1:1`) | 7.3 s | 5 | MISS | true | 0.06 s | 5 | – |
+| Anime H S01E01 (`series/<Anime H>:1:1`) | 6.2 s | 5 | MISS | false | 0.07 s | 5 | – |
+| Anime I S01E01 (`series/<Anime I>:1:1`) | 9.5 s | 5 | MISS | true | 1.25 s | 5 | – |
+| Series D S01E02 (`series/<Series D>:1:2`) | 5.0 s | 0 | MISS | true | 0.02 s | 0 | – |
+| Movie J (`movie/<Movie J>`) | 9.3 s | 5 | MISS | true | 0.07 s | 5 | – |
 | **Median / total** (19 titles) | 9.3 s | 63 | 0 HIT | 10 of 19 complete | 0.07 s | 63 | – |
 
 Reading: 16 of 19 titles answer with streams (the seventh round, production:
 15 of 19); the median first answer 9.3 s; 10 of 19 answers complete within
 the 30 s budget, the rest answer partial and complete in the background (step
-21). Without streams: Breaking Bad S01E01 and S01E02 (the matcher kept the
+21). Without streams: Series D S01E01 and S01E02 (the matcher kept the
 results, the episode filter or the resolution gave nothing; finding 14, row
-30) and Dark S01E01, where the matcher's new identity gates (step 35, group 3,
+30) and Series C S01E01, where the matcher's new identity gates (step 35, group 3,
 live in this build) dropped all four results: one batch by score and year,
 one by category (`stremio_all_filtered`). The dev-container probe
-(`title_match.py series/tt5753856:1:1`, 19:13 UTC, same matcher) shows the
-gates right: aniworld's "Dark Gathering" and "Bastard!!" dropped by category,
-filmpalast's "Dark Matter", "The Terminal List: Dark Wolf" by score and "Dark
-Matter 2024" by year, while kinoger's "Dark" is kept by its IMDb id (1.20) and
-sto's "Dark - S01E01" at 1.00; production lacks exactly those two (sto refuses
-the Pi, finding 16; kinoger timed out), so Dark's zero is the Pi's reach, as
-before the gates. The same probe for One Piece (1999) keeps aniworld and sto's
-anime pages only and drops aniworld's "One Piece (2025)" and movie2k by year,
-filmpalast's 2023 release, kinoger and sto's "One Piece (2023)" by category,
+(`title_match.py series/<Series C>:1:1`, same matcher) shows the
+gates right: aniworld's "Anime B" and "Bastard!!" dropped by category,
+filmpalast's "Series A", "The Terminal List: Dark Wolf" by score and "Series A 2024" by year, while kinoger's "Series C" is kept by its IMDb id (1.20) and
+sto's "Series C - S01E01" at 1.00; production lacks exactly those two (sto refuses
+the production host, finding 16; kinoger timed out), so Series C's zero is the production host's reach, as
+before the gates. The same probe for Anime A (1999) keeps aniworld and sto's
+anime pages only and drops aniworld's "Anime A (2025)" and movie2k by year,
+filmpalast's 2023 release, kinoger and sto's "Anime A (2023)" by category,
 streamcloud and streamkiste by IMDb id. Step 35's year gate otherwise does what
-it was built for: Im Westen
-nichts Neues (2022) dropped the 1930 and 1979 films, Dune: Part Two dropped
-Dune 2021 and 1984, One Piece (1999) dropped one result by year and one by
+it was built for: Movie M (2022) dropped the 1930 and 1979 films, Movie A: Part Two dropped
+Movie A and 1984, Anime A (1999) dropped one result by year and one by
 IMDb id and kept 5 streams.
 
-### Tenth round (2026-10-10, production rebuilt 10:27 UTC from a `staging` ref before 20a48d2)
+### Tenth round (2026-10-10, production rebuilt from a `staging` ref before 20a48d2)
 
 The build's ref is not logged (`commit=unknown`); the anime check right after
 the rebuild answered `STALE` under the v2 search key, so the build is from
 before 20a48d2 (row 45) and 0421fa9 (row 30's item 6), and after 8ada4a2
 (step 19, the read-ahead); rows 43, 44 and 30's items 1 to 5 (pushed by
-10:05 UTC) are most likely in it. A first run with play checks (09:52 UTC)
+) are most likely in it. A first run with play checks
 hit the rebuild and recorded 17 of 19 titles with 0.0 s and 0 streams, the
-eighth round's pattern; discarded. The second run with play checks (10:44
-UTC) hung from 12:28 UTC on a play check of a proxied file: the proxy
+eighth round's pattern; discarded. The second run with play checks (
+UTC) hung on a play check of a proxied file: the proxy
 answered the check's `Range: bytes=0-…` request with 200 and the whole file
 (`GET /api/v1/stremio/proxy/<id>/file status_code=200 duration_ms=2659`),
 the check's `client.get` buffered it, and 79.6 MB had arrived on one
-connection with bytes still flowing when the run was killed at 12:49 UTC
+connection with bytes still flowing when the run was killed
 (backlog row 58, done on staging the same day: the check streams every
 answer, reads only the bytes it judges and closes it, one 30 s deadline
 covers the whole check, and the verdict says `200 instead of 206`; the
@@ -443,42 +443,42 @@ the one evidence for row 26's group 6 this round: an address-bound file
 played through `/proxy/<id>/file` from the dev container, 200 in 2.7 s;
 the log does not name the hoster.
 
-The quick round (`--no-playcheck`, done 12:52 UTC, four minutes for the 19 titles), the first two
+The quick round (`--no-playcheck`, done, four minutes for the 19 titles), the first two
 titles still in the search cache from the hung run (`STALE`), the rest a
 `MISS`:
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 1.9 s | 5 | STALE | false | 0.10 s | 5 | – |
-| Lola rennt (`movie/tt0130827`) | 0.1 s | 6 | STALE | false | 0.10 s | 6 | – |
-| Good Bye, Lenin! (`movie/tt0301357`) | 24.7 s | 1 | MISS | true | 0.04 s | 1 | – |
-| Im Westen nichts Neues (`movie/tt1016150`) | 3.7 s | 5 | MISS | false | 0.04 s | 5 | – |
-| Oppenheimer (`movie/tt15398776`) | 7.3 s | 5 | MISS | false | 0.04 s | 5 | – |
-| Dune: Part Two (`movie/tt15239678`) | 23.9 s | 5 | MISS | false | 0.05 s | 5 | – |
-| Inception (`movie/tt1375666`) | 6.0 s | 5 | MISS | false | 0.05 s | 5 | – |
-| Interstellar (`movie/tt0816692`) | 9.4 s | 5 | MISS | false | 0.07 s | 5 | – |
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 2 | MISS | false | 0.04 s | 2 | – |
-| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 1 | MISS | false | 0.02 s | 1 | – |
-| Stranger Things S04E01 (`series/tt4574334:4:1`) | 21.1 s | 5 | MISS | true | 0.05 s | 5 | – |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 30.0 s | 2 | MISS | false | 0.02 s | 2 | – |
-| The Last of Us S01E01 (`series/tt3581920:1:1`) | 3.7 s | 5 | MISS | false | 0.02 s | 5 | – |
-| One Piece S01E01 (`series/tt0388629:1:1`) | 4.2 s | 5 | MISS | false | 0.08 s | 5 | – |
-| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 3.7 s | 5 | MISS | false | 0.04 s | 5 | – |
-| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 3.6 s | 5 | MISS | false | 0.06 s | 5 | – |
-| Frieren S01E01 (`series/tt22248376:1:1`) | 8.3 s | 5 | MISS | false | 0.52 s | 5 | – |
-| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 10.3 s | 1 | MISS | true | 0.07 s | 1 | – |
-| The Matrix (`movie/tt0133093`) | 5.8 s | 5 | MISS | false | 0.20 s | 5 | – |
+| Movie G (`movie/<Movie G>`) | 1.9 s | 5 | STALE | false | 0.10 s | 5 | – |
+| Movie H (`movie/<Movie H>`) | 0.1 s | 6 | STALE | false | 0.10 s | 6 | – |
+| Movie L (`movie/<Movie L>`) | 24.7 s | 1 | MISS | true | 0.04 s | 1 | – |
+| Movie M (`movie/<Movie M>`) | 3.7 s | 5 | MISS | false | 0.04 s | 5 | – |
+| Movie B (`movie/<Movie B>`) | 7.3 s | 5 | MISS | false | 0.04 s | 5 | – |
+| Movie A: Part Two (`movie/<Movie A: Part Two>`) | 23.9 s | 5 | MISS | false | 0.05 s | 5 | – |
+| Movie K (`movie/<Movie K>`) | 6.0 s | 5 | MISS | false | 0.05 s | 5 | – |
+| Movie F (`movie/<Movie F>`) | 9.4 s | 5 | MISS | false | 0.07 s | 5 | – |
+| Series D S01E01 (`series/<Series D>:1:1`) | 30.0 s | 2 | MISS | false | 0.04 s | 2 | – |
+| Series C S01E01 (`series/<Series C>:1:1`) | 30.0 s | 1 | MISS | false | 0.02 s | 1 | – |
+| Series F S04E01 (`series/<Series F>:4:1`) | 21.1 s | 5 | MISS | true | 0.05 s | 5 | – |
+| Series E S01E01 (`series/<Series E>:1:1`) | 30.0 s | 2 | MISS | false | 0.02 s | 2 | – |
+| Series G S01E01 (`series/<Series G>:1:1`) | 3.7 s | 5 | MISS | false | 0.02 s | 5 | – |
+| Anime A S01E01 (`series/<Anime A>:1:1`) | 4.2 s | 5 | MISS | false | 0.08 s | 5 | – |
+| Anime G S01E01 (`series/<Anime G>:1:1`) | 3.7 s | 5 | MISS | false | 0.04 s | 5 | – |
+| Anime H S01E01 (`series/<Anime H>:1:1`) | 3.6 s | 5 | MISS | false | 0.06 s | 5 | – |
+| Anime I S01E01 (`series/<Anime I>:1:1`) | 8.3 s | 5 | MISS | false | 0.52 s | 5 | – |
+| Series D S01E02 (`series/<Series D>:1:2`) | 10.3 s | 1 | MISS | true | 0.07 s | 1 | – |
+| Movie J (`movie/<Movie J>`) | 5.8 s | 5 | MISS | false | 0.20 s | 5 | – |
 | **Median / total** (19 titles) | 7.3 s | 78 | 0 HIT | 3 of 19 complete | 0.05 s | 78 | – |
 
 Reading: 19 of 19 titles answer with streams (the ninth round: 16 of 19),
 the median first answer 7.3 s (9.3 s), 78 streams (63). The ninth round's
-three empty titles answer now: Breaking Bad S01E01 (2 streams) and S01E02
+three empty titles answer now: Series D S01E01 (2 streams) and S01E02
 (1), most likely row 30's item 2 (the metadata season with the title's
-episode, 540b9d6), and Dark S01E01 (1), where the identity gates had
+episode, 540b9d6), and Series C S01E01 (1), where the identity gates had
 dropped every result on 2026-10-09, so a site's result passed them this
 time. 3 of 19 answers complete within the 30 s budget (10 of 19 in the
-ninth round) and three titles hit the budget with streams (Breaking Bad
-S01E01, Dark, Haus des Geldes): more searches run to the budget, which fits
+ninth round) and three titles hit the budget with streams (Series D
+S01E01, Series C, Series E): more searches run to the budget, which fits
 the domain check passing more sites with the browser User-Agent (row 44)
 and the challenge answers no longer retried (row 43), both most likely in
 this build; the partial answers complete in the background (step 21) and
@@ -486,7 +486,7 @@ the cached answer carries them all (0.05 s median). Playable is not
 measured this round (row 58 first); the eleventh round after the next
 deploy runs with play checks again.
 
-**Row 58's proof** (2026-10-10, 13:20 to 13:21 UTC, production idle, the
+**Row 58's proof** (2026-10-10, 1 min, production idle, the
 same build as the tenth round): `stremio_round.py` with play checks from the
 dev container on three movie ids, the check code of 8fb64f6 (streamed
 answers, one 30 s deadline per check). The run ended after 95 s for the
@@ -499,9 +499,9 @@ were not requested separately to keep the production load at this run):
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 0.1 s | 7 | STALE | false | 0.02 s | 7 | 3 of 7 |
-| Lola rennt (`movie/tt0130827`) | 2.1 s | 5 | STALE | false | 0.03 s | 5 | 1 of 5 |
-| The Matrix (`movie/tt0133093`) | 0.1 s | 8 | HIT | false | 0.04 s | 8 | 5 of 8 |
+| Movie G (`movie/<Movie G>`) | 0.1 s | 7 | STALE | false | 0.02 s | 7 | 3 of 7 |
+| Movie H (`movie/<Movie H>`) | 2.1 s | 5 | STALE | false | 0.03 s | 5 | 1 of 5 |
+| Movie J (`movie/<Movie J>`) | 0.1 s | 8 | HIT | false | 0.04 s | 8 | 5 of 8 |
 | **Median / total** (3 titles) | 0.1 s | 20 | 1 HIT | 0 of 3 complete | 0.03 s | 20 | 9 of 20 |
 
 9 of 20 playable from the dev container is the tenth round's pattern
@@ -509,7 +509,7 @@ were not requested separately to keep the production load at this run):
 address), not a regression of the check; the three answers came from the
 search cache (`STALE`, `HIT`), so no plugin search ran for this proof.
 
-**Row 60's measure** (2026-10-10, 13:30 to 13:45 UTC, the dev server in
+**Row 60's measure** (2026-10-10, 15 min, the dev server in
 the dev container, `data/config.yaml`, a fresh cache per run, no play
 checks): the answer budget as its own setting, `stremio.answer_budget_seconds`
 (327e488), on the three series that answered at the 30 s budget in the
@@ -520,15 +520,15 @@ tenth round. Each run: `stremio_round.py --no-playcheck` on the three ids
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|---|
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 13.7 s | 2 | MISS | false | 0.01 s | 2 | – |
-| Dark S01E01 (`series/tt5753856:1:1`) | 10.0 s | 0 | MISS | false | 0.00 s | 0 | – |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 10.0 s | 2 | MISS | false | 0.01 s | 2 | – |
+| Series D S01E01 (`series/<Series D>:1:1`) | 13.7 s | 2 | MISS | false | 0.01 s | 2 | – |
+| Series C S01E01 (`series/<Series C>:1:1`) | 10.0 s | 0 | MISS | false | 0.00 s | 0 | – |
+| Series E S01E01 (`series/<Series E>:1:1`) | 10.0 s | 2 | MISS | false | 0.01 s | 2 | – |
 | **Median / total** (3 titles) | 10.0 s | 4 | 0 HIT | 0 of 3 complete | 0.01 s | 4 | – |
 
 Second pass (40 s later): `HIT` for all three, 2, 1 and 2 streams, none
 complete yet (the plugins' own 30 s timeout and the completion search for
 the missing plugins were still running). Third pass (100 s after the
-first): `HIT`, 2, 1 and 2 streams, 3 of 3 complete. Breaking Bad's 13.7 s
+first): `HIT`, 2, 1 and 2 streams, 3 of 3 complete. Series D's 13.7 s
 is the 10 s search budget plus the resolution of its two results; the
 other two answered at the budget to the tenth of a second.
 
@@ -537,74 +537,74 @@ plugin timeout):
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable |
 |---|---|---|---|---|---|---|---|
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 2 | MISS | false | 0.01 s | 2 | – |
-| Dark S01E01 (`series/tt5753856:1:1`) | 30.0 s | 1 | MISS | false | 0.01 s | 1 | – |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 30.0 s | 2 | MISS | false | 0.01 s | 2 | – |
+| Series D S01E01 (`series/<Series D>:1:1`) | 30.0 s | 2 | MISS | false | 0.01 s | 2 | – |
+| Series C S01E01 (`series/<Series C>:1:1`) | 30.0 s | 1 | MISS | false | 0.01 s | 1 | – |
+| Series E S01E01 (`series/<Series E>:1:1`) | 30.0 s | 2 | MISS | false | 0.01 s | 2 | – |
 | **Median / total** (3 titles) | 30.0 s | 5 | 0 HIT | 0 of 3 complete | 0.01 s | 5 | – |
 
 Second pass: `HIT`, 2, 1 and 2 streams, none complete; third pass: 3 of 3
 complete, the same 5 streams. Reading: the 10 s budget cut the first
 answer from 30 s to 10 s for all three and cost one stream of five in the
-first answer (Dark's single stream arrived between 10 and 30 s); the
+first answer (Series C's single stream arrived between 10 and 30 s); the
 cached answer carried every stream from the second pass on in both runs,
 and both were complete at the third. The production value is the
 maintainer's call: the row changed no default.
 
-### Eleventh round (2026-10-11, production rebuilt 10:58 UTC from `staging` f90ef65)
+### Eleventh round (2026-10-11, production rebuilt from `staging` f90ef65)
 
-**The deploy check** (row 57's live proof: `prodctl.py check --base https://scavengarr.lan/api/v1/stremio --insecure`, 10:59 UTC, one minute after the start):
+**The deploy check** (row 57's live proof: `prodctl.py check --base https://scavengarr.example.lan/api/v1/stremio --insecure`, one minute after the start):
 
 | Check                   | Result | Detail |
 |-------------------------|--------|--------|
 | container               | PASS   | running, Up About a minute (healthy) |
-| startup                 | PASS   | version 0.3.0 at 10:58:32 UTC |
+| startup                 | PASS   | version 0.3.0  |
 | unknown keys            | WARN   | stremio.max_items_per_plugin, stremio.max_items_total, stremio.preferred_language, stremio.stremio_deadline_ms, stremio.title_year_penalty |
 | hoster_state_restored   | PASS   | resolutions 0, redirects 0, breakers 5 |
 | plugin_history_restored | PASS   | plugins 17, days 85 |
-| series/tt0388629:5:2    | PASS   | 5 streams, all S05E02; logged; no placement record (DEBUG), 8.2 s |
-| series/kitsu:12:1089    | PASS   | 6 streams, all S22E04; logged; no placement record (DEBUG), 4.2 s |
-| series/tt9335498:2:1    | PASS   | 4 streams, all S02E01; logged; no placement record (DEBUG), 30.1 s |
-| movie/tt0816692         | PASS   | 5 streams in 9.7 s; logged |
+| series/<Anime A>:5:2    | PASS   | 5 streams, all S05E02; logged; no placement record (DEBUG), 8.2 s |
+| series/kitsu:<Anime A>:1089    | PASS   | 6 streams, all S22E04; logged; no placement record (DEBUG), 4.2 s |
+| series/<Anime H>:2:1    | PASS   | 4 streams, all S02E01; logged; no placement record (DEBUG), 30.1 s |
+| movie/<Movie F>         | PASS   | 5 streams in 9.7 s; logged |
 
 PASS: 9 checks, 0 failed, 1 warnings
 
 The restored hoster state is empty but sound: the snapshot was 21.6 h old
-(`age_s` 77853, written at 13:21 UTC the day before after the last
+(`age_s` 77853, written the day before after the last
 resolution; nothing played overnight), so every resolution and redirect had
 expired, and the five breakers came back. The unknown keys are the four
-Stremio settings row 53 removed and `stremio.title_year_penalty`: the Pi's
+Stremio settings row 53 removed and `stremio.title_year_penalty`: the production host's
 YAML still names them, and they do nothing. Row 45 is live:
-`series/tt0388629:22:4`, asked after the check's `series/kitsu:12:1089`,
+`series/<Anime A>:22:4`, asked after the check's `series/kitsu:<Anime A>:1089`,
 answered `MISS` with its own v3 entry (5 streams, all S22E04); on
 2026-10-10 the same pair shared one entry.
 
-**The round** (11:03 to 11:12 UTC, `stremio_round.py` with play checks on
+**The round** (9 min, `stremio_round.py` with play checks on
 the 19 titles, the check code of row 58 and the `Findings` column of row
 61): 9 minutes, where the tenth round's run had not ended after 2 h 16 min.
-Every title but Interstellar (the deploy check's movie) was a cache miss:
+Every title but Movie F (the deploy check's movie) was a cache miss:
 the build's search key is v3 (row 45), and the cache held v2 entries.
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable | Findings |
 |---|---|---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 4.3 s | 5 | MISS | false | 0.07 s | 5 | 2 of 5 | DOODSTREAM, VINOVO, MIXDROP; 2× 200 instead of 206 |
-| Lola rennt (`movie/tt0130827`) | 17.3 s | 4 | MISS | true | 0.04 s | 4 | 1 of 4 | FSST, DOODSTREAM, MIXDROP; 1× 200 instead of 206 |
-| Good Bye, Lenin! (`movie/tt0301357`) | 3.2 s | 1 | MISS | true | 0.04 s | 1 | 0 of 1 | DOODSTREAM |
-| Im Westen nichts Neues (`movie/tt1016150`) | 4.1 s | 5 | MISS | false | 0.11 s | 5 | 2 of 5 | VINOVO, MIXDROP, DOODSTREAM; 2× 200 instead of 206 |
-| Oppenheimer (`movie/tt15398776`) | 13.7 s | 5 | MISS | false | 0.07 s | 5 | 2 of 5 | FSST, VINOVO, MIXDROP; 2× 200 instead of 206 |
-| Dune: Part Two (`movie/tt15239678`) | 30.3 s | 4 | MISS | false | 0.04 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
-| Inception (`movie/tt1375666`) | 28.8 s | 4 | MISS | true | 0.08 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
-| Interstellar (`movie/tt0816692`) | 0.1 s | 6 | HIT | false | 0.03 s | 6 | 4 of 6 | DOODSTREAM, VINOVO; 4× 200 instead of 206 |
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 30.0 s | 2 | MISS | true | 0.04 s | 2 | 2 of 2 | 2× 200 instead of 206 |
-| Dark S01E01 (`series/tt5753856:1:1`) | 25.2 s | 1 | MISS | true | 0.04 s | 1 | 1 of 1 | 1× 200 instead of 206 |
-| Stranger Things S04E01 (`series/tt4574334:4:1`) | 22.2 s | 5 | MISS | false | 0.08 s | 5 | 5 of 5 | 5× 200 instead of 206 |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 27.3 s | 2 | MISS | true | 0.07 s | 2 | 2 of 2 | 2× 200 instead of 206 |
-| The Last of Us S01E01 (`series/tt3581920:1:1`) | 5.3 s | 5 | MISS | false | 0.13 s | 5 | 3 of 5 | FIRESTREAM, VINOVO; 3× 200 instead of 206 |
-| One Piece S01E01 (`series/tt0388629:1:1`) | 10.1 s | 5 | MISS | false | 0.26 s | 5 | 4 of 5 | DOODSTREAM; 4× 200 instead of 206 |
-| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 7.8 s | 5 | MISS | false | 0.07 s | 5 | 5 of 5 | 5× 200 instead of 206 |
-| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 7.1 s | 5 | MISS | false | 0.16 s | 5 | 4 of 5 | DOODSTREAM; 4× 200 instead of 206 |
-| Frieren S01E01 (`series/tt22248376:1:1`) | 8.4 s | 5 | MISS | false | 0.62 s | 5 | 5 of 5 | 5× 200 instead of 206 |
-| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 28.4 s | 0 | MISS | true | 0.06 s | 0 | 0 of 0 | – |
-| The Matrix (`movie/tt0133093`) | 30.5 s | 4 | MISS | false | 0.21 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
+| Movie G (`movie/<Movie G>`) | 4.3 s | 5 | MISS | false | 0.07 s | 5 | 2 of 5 | DOODSTREAM, VINOVO, MIXDROP; 2× 200 instead of 206 |
+| Movie H (`movie/<Movie H>`) | 17.3 s | 4 | MISS | true | 0.04 s | 4 | 1 of 4 | FSST, DOODSTREAM, MIXDROP; 1× 200 instead of 206 |
+| Movie L (`movie/<Movie L>`) | 3.2 s | 1 | MISS | true | 0.04 s | 1 | 0 of 1 | DOODSTREAM |
+| Movie M (`movie/<Movie M>`) | 4.1 s | 5 | MISS | false | 0.11 s | 5 | 2 of 5 | VINOVO, MIXDROP, DOODSTREAM; 2× 200 instead of 206 |
+| Movie B (`movie/<Movie B>`) | 13.7 s | 5 | MISS | false | 0.07 s | 5 | 2 of 5 | FSST, VINOVO, MIXDROP; 2× 200 instead of 206 |
+| Movie A: Part Two (`movie/<Movie A: Part Two>`) | 30.3 s | 4 | MISS | false | 0.04 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
+| Movie K (`movie/<Movie K>`) | 28.8 s | 4 | MISS | true | 0.08 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
+| Movie F (`movie/<Movie F>`) | 0.1 s | 6 | HIT | false | 0.03 s | 6 | 4 of 6 | DOODSTREAM, VINOVO; 4× 200 instead of 206 |
+| Series D S01E01 (`series/<Series D>:1:1`) | 30.0 s | 2 | MISS | true | 0.04 s | 2 | 2 of 2 | 2× 200 instead of 206 |
+| Series C S01E01 (`series/<Series C>:1:1`) | 25.2 s | 1 | MISS | true | 0.04 s | 1 | 1 of 1 | 1× 200 instead of 206 |
+| Series F S04E01 (`series/<Series F>:4:1`) | 22.2 s | 5 | MISS | false | 0.08 s | 5 | 5 of 5 | 5× 200 instead of 206 |
+| Series E S01E01 (`series/<Series E>:1:1`) | 27.3 s | 2 | MISS | true | 0.07 s | 2 | 2 of 2 | 2× 200 instead of 206 |
+| Series G S01E01 (`series/<Series G>:1:1`) | 5.3 s | 5 | MISS | false | 0.13 s | 5 | 3 of 5 | FIRESTREAM, VINOVO; 3× 200 instead of 206 |
+| Anime A S01E01 (`series/<Anime A>:1:1`) | 10.1 s | 5 | MISS | false | 0.26 s | 5 | 4 of 5 | DOODSTREAM; 4× 200 instead of 206 |
+| Anime G S01E01 (`series/<Anime G>:1:1`) | 7.8 s | 5 | MISS | false | 0.07 s | 5 | 5 of 5 | 5× 200 instead of 206 |
+| Anime H S01E01 (`series/<Anime H>:1:1`) | 7.1 s | 5 | MISS | false | 0.16 s | 5 | 4 of 5 | DOODSTREAM; 4× 200 instead of 206 |
+| Anime I S01E01 (`series/<Anime I>:1:1`) | 8.4 s | 5 | MISS | false | 0.62 s | 5 | 5 of 5 | 5× 200 instead of 206 |
+| Series D S01E02 (`series/<Series D>:1:2`) | 28.4 s | 0 | MISS | true | 0.06 s | 0 | 0 of 0 | – |
+| Movie J (`movie/<Movie J>`) | 30.5 s | 4 | MISS | false | 0.21 s | 4 | 3 of 4 | VINOVO; 3× 200 instead of 206 |
 | **Median / total** (19 titles) | 13.7 s | 73 | 1 HIT | 7 of 19 complete | 0.07 s | 73 | 51 of 73 | – |
 
 Titles without stream: 1 of 19 (first answer), 1 of 19 (cached answer); max first answer 30.5 s.
@@ -618,55 +618,54 @@ for a master playlist and fails on a file: 21 of the 22 failing streams say
 playlist request carried no `Range` header and downloaded the whole file
 (row 58 bounded the read; the `Range: bytes=0-…` request named in row 58's
 text was a wrong inference, the request had none). The same script's file
-branch on the proxied files of three titles (11:18 UTC, the answers from the
+branch on the proxied files of three titles (the answers from the
 search cache): 9 of 9 play, and the seek answers 206:
 
 | Title | Hoster · plugin | Verdict (the file branch) |
 |---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | DOODSTREAM · einschalten | OK mp4 0.98 GB, seek 206 |
-| Der Schuh des Manitu | VINOVO · movie2k | OK mp4 0.96 GB, seek 206 |
-| Der Schuh des Manitu | MIXDROP · hdfilme | OK mp4 0.96 GB, seek 206 |
-| Lola rennt (`movie/tt0130827`) | FSST · kinoger | OK mp4 1.60 GB, seek 206 |
-| Lola rennt | DOODSTREAM · hdfilme | OK mp4 0.82 GB, seek 206 |
-| Lola rennt | MIXDROP · hdfilme | OK mp4 0.83 GB, seek 206 |
-| Oppenheimer (`movie/tt15398776`) | FSST · kinoger | OK mp4 2.25 GB, seek 206 |
-| Oppenheimer | VINOVO · movie2k | OK mp4 6.15 GB, seek 206 |
-| Oppenheimer | MIXDROP · hdfilme | OK mp4 1.99 GB, seek 206 |
+| Movie G (`movie/<Movie G>`) | DOODSTREAM · einschalten | OK mp4 0.98 GB, seek 206 |
+| Movie G | VINOVO · movie2k | OK mp4 0.96 GB, seek 206 |
+| Movie G | MIXDROP · hdfilme | OK mp4 0.96 GB, seek 206 |
+| Movie H (`movie/<Movie H>`) | FSST · kinoger | OK mp4 1.60 GB, seek 206 |
+| Movie H | DOODSTREAM · hdfilme | OK mp4 0.82 GB, seek 206 |
+| Movie H | MIXDROP · hdfilme | OK mp4 0.83 GB, seek 206 |
+| Movie B (`movie/<Movie B>`) | FSST · kinoger | OK mp4 2.25 GB, seek 206 |
+| Movie B | VINOVO · movie2k | OK mp4 6.15 GB, seek 206 |
+| Movie B | MIXDROP · hdfilme | OK mp4 1.99 GB, seek 206 |
 
 So the proxy forwards ranges, and the address-bound files play through it
 from the dev container. Judged by the file branch, the round's playable
 count is 72 of 73 (9 of the 21 checked, the other 12 inferred from the same
-hosters on the same path); the one real failure is FIRESTREAM on The Last of
-Us S01E01 (`timeout after 30 s`). The `200 instead of 206` counts of the HLS
+hosters on the same path); the one real failure is FIRESTREAM on Series G S01E01 (`timeout after 30 s`). The `200 instead of 206` counts of the HLS
 titles are segments answered 200 to the check's 2 KiB range, which is normal
 for HLS, where a player asks for whole segments (row 64 keeps the finding to
 files and byte-range playlists).
 
 Row 64 (2026-10-11, Mr. Normal): the play check takes a URL whose path ends in `/file` for a file (`stream_kind()`; `.m3u8`, `master.txt` and the proxy's other paths stay HLS) and counts a segment answered 200 only under `EXT-X-BYTERANGE`, so this round reads 72 of 73 playable and its HLS titles carry no `200 instead of 206` finding; the live check of the three titles above waits for Mr. Fable's signal.
 
-**Row 64's proof** (2026-10-11, 11:48:03 to 11:48:27 UTC, `scripts/stremio_playcheck.py` from the dev container against production, each title once in sequence; the load phase of the maintainer's FireStream read-ahead check in Stremio Web): 16 of 17 streams play. All 10 address-bound files (DoodStream, MixDrop, Vinovo, FSST) are judged as files, `OK mp4 …, seek 206`, and no HLS verdict carries `200 instead of 206`. The one failure is FIRESTREAM · filmpalast on Der Schuh des Manitu: both checked segments answered 502 through the proxy, while the maintainer played a FireStream stream at the same time.
+**Row 64's proof** (2026-10-11, 24 s, `scripts/stremio_playcheck.py` from the dev container against production, each title once in sequence; the load phase of the maintainer's FireStream read-ahead check in Stremio Web): 16 of 17 streams play. All 10 address-bound files (DoodStream, MixDrop, Vinovo, FSST) are judged as files, `OK mp4 …, seek 206`, and no HLS verdict carries `200 instead of 206`. The one failure is FIRESTREAM · filmpalast on Movie G: both checked segments answered 502 through the proxy, while the maintainer played a FireStream stream at the same time.
 
 | Title | Hoster · plugin | Verdict |
 |---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | FIRESTREAM · filmpalast | FAIL hls 1272 segments: 502, 502 |
-| Der Schuh des Manitu | FSST · kinoger | OK mp4 1.74 GB, seek 206 |
-| Der Schuh des Manitu | VOE · megakino | OK hls 462 segments: mpegts, mpegts |
-| Der Schuh des Manitu | DOODSTREAM · einschalten | OK mp4 0.98 GB, seek 206 |
-| Der Schuh des Manitu | STRMUP · filmpalast | OK hls 636 segments: mpegts, mpegts |
-| Der Schuh des Manitu | VINOVO · movie2k | OK mp4 0.96 GB, seek 206 |
-| Der Schuh des Manitu | MIXDROP · hdfilme | OK mp4 0.96 GB, seek 206 |
-| Lola rennt (`movie/tt0130827`) | FSST · kinoger | OK mp4 1.60 GB, seek 206 |
-| Lola rennt | DOODSTREAM · hdfilme | OK mp4 0.82 GB, seek 206 |
-| Lola rennt | STRMUP · kinoger | OK hls 597 segments: mpegts, mpegts |
-| Lola rennt | MIXDROP · hdfilme | OK mp4 0.83 GB, seek 206 |
-| Oppenheimer (`movie/tt15398776`) | VOE · megakino | OK hls 902 segments: mpegts, mpegts |
-| Oppenheimer | FSST · kinoger | OK mp4 2.25 GB, seek 206 |
-| Oppenheimer | STRMUP · kinoger | OK hls 1083 segments: mpegts, mpegts |
-| Oppenheimer | GXPLAYER · megakino | OK hls 1083 segments: mpegts, mpegts |
-| Oppenheimer | VINOVO · movie2k | OK mp4 6.15 GB, seek 206 |
-| Oppenheimer | MIXDROP · hdfilme | OK mp4 1.99 GB, seek 206 |
+| Movie G (`movie/<Movie G>`) | FIRESTREAM · filmpalast | FAIL hls 1272 segments: 502, 502 |
+| Movie G | FSST · kinoger | OK mp4 1.74 GB, seek 206 |
+| Movie G | VOE · megakino | OK hls 462 segments: mpegts, mpegts |
+| Movie G | DOODSTREAM · einschalten | OK mp4 0.98 GB, seek 206 |
+| Movie G | STRMUP · filmpalast | OK hls 636 segments: mpegts, mpegts |
+| Movie G | VINOVO · movie2k | OK mp4 0.96 GB, seek 206 |
+| Movie G | MIXDROP · hdfilme | OK mp4 0.96 GB, seek 206 |
+| Movie H (`movie/<Movie H>`) | FSST · kinoger | OK mp4 1.60 GB, seek 206 |
+| Movie H | DOODSTREAM · hdfilme | OK mp4 0.82 GB, seek 206 |
+| Movie H | STRMUP · kinoger | OK hls 597 segments: mpegts, mpegts |
+| Movie H | MIXDROP · hdfilme | OK mp4 0.83 GB, seek 206 |
+| Movie B (`movie/<Movie B>`) | VOE · megakino | OK hls 902 segments: mpegts, mpegts |
+| Movie B | FSST · kinoger | OK mp4 2.25 GB, seek 206 |
+| Movie B | STRMUP · kinoger | OK hls 1083 segments: mpegts, mpegts |
+| Movie B | GXPLAYER · megakino | OK hls 1083 segments: mpegts, mpegts |
+| Movie B | VINOVO · movie2k | OK mp4 6.15 GB, seek 206 |
+| Movie B | MIXDROP · hdfilme | OK mp4 1.99 GB, seek 206 |
 
-**The digest** (`prodctl.py digest --since 2h`, 11:20 UTC; the metrics count
+**The digest** (`prodctl.py digest --since 2h`; the metrics count
 since the restart, 17 minutes), plugins:
 
 | Plugin | Searches | Results | Timeouts | Dropped | Challenges | Checks | Unreachable checks/searches | Last result | Unreachable 30/90/180 d |
@@ -721,7 +720,7 @@ Opened in the window: kinoking:5000 ×2, supervideo ×1, filemoon ×1, dropload 
 **Reading.**
 
 - **Streams.** 18 of 19 titles answer with streams (the tenth round: 19 of
-  19), 73 streams in all (78). Breaking Bad S01E02 has none this time: the
+  19), 73 streams in all (78). Series D S01E02 has none this time: the
   search completed and nothing matched, where the tenth round had one stream.
   No record at error level in the two hours.
 - **Times.** The median first answer is 13.7 s (the tenth round 7.3 s, with
@@ -740,34 +739,34 @@ Opened in the window: kinoking:5000 ×2, supervideo ×1, filemoon ×1, dropload 
   the challenge counter runs since this build.
 - **Dead sites.** movie4k and megakino_to have 127 checks today and fireani
   95, against 22 for each live site. Nearly all of them come from the old
-  build before 10:58 UTC; row 54's backoff shows in their increase from now
+  build before that; row 54's backoff shows in their increase from now
   on.
 
-### Twelfth round (2026-10-11, production rebuilt 14:10 UTC from `staging` dad3051)
+### Twelfth round (2026-10-11, production rebuilt from `staging` dad3051)
 
-The build of rows 63 to 70: the filmo plugin, Byse through the watch page, three segments ahead, the domain lists and the challenge counter (row 75). The round ran 14:22:09 to 14:33:04 UTC (`stremio_round.py --base https://scavengarr.lan --insecure --portainer`, the 19 titles with play checks, the play check of row 64 and row 66's codecs), after Ultracode's capture probe ended at 14:16:40 UTC. Every title but Interstellar answered from the search cache's stale entries, which the eleventh round stored about 3 h 15 min earlier (`X-Cache: STALE`, each starting one refresh in the background), so the first answers are fast and their streams are whatever the stale entry and the resolver cache gave at that moment.
+The build of rows 63 to 70: the filmo plugin, Byse through the watch page, three segments ahead, the domain lists and the challenge counter (row 75). The round ran 10 min 55 s (`stremio_round.py --base https://scavengarr.example.lan --insecure --portainer`, the 19 titles with play checks, the play check of row 64 and row 66's codecs), after Ultracode's capture probe ended. Every title but Movie F answered from the search cache's stale entries, which the eleventh round stored about 3 h 15 min earlier (`X-Cache: STALE`, each starting one refresh in the background), so the first answers are fast and their streams are whatever the stale entry and the resolver cache gave at that moment.
 
 | Title | First answer | Streams | X-Cache | Complete | Cached answer | Streams | Playable | Findings |
 |---|---|---|---|---|---|---|---|---|
-| Der Schuh des Manitu (`movie/tt0248408`) | 8.2 s | 5 | STALE | false | 1.04 s | 5 | 5 of 5 | – |
-| Lola rennt (`movie/tt0130827`) | 6.0 s | 4 | STALE | false | 0.35 s | 4 | 4 of 4 | – |
-| Good Bye, Lenin! (`movie/tt0301357`) | 4.7 s | 1 | STALE | false | 0.03 s | 1 | 1 of 1 | – |
-| Im Westen nichts Neues (`movie/tt1016150`) | 2.9 s | 5 | STALE | false | 0.11 s | 5 | 5 of 5 | – |
-| Oppenheimer (`movie/tt15398776`) | 7.2 s | 5 | STALE | false | 0.05 s | 5 | 5 of 5 | – |
-| Dune: Part Two (`movie/tt15239678`) | 6.0 s | 5 | STALE | false | 0.03 s | 5 | 4 of 5 | VIDSONIC |
-| Inception (`movie/tt1375666`) | 8.7 s | 5 | STALE | false | 0.12 s | 6 | 5 of 5 | – |
-| Interstellar (`movie/tt0816692`) | 2.1 s | 5 | HIT | true | 0.06 s | 5 | 5 of 5 | – |
-| Breaking Bad S01E01 (`series/tt0903747:1:1`) | 0.1 s | 0 | STALE | false | 0.04 s | 0 | 0 of 0 | – |
-| Dark S01E01 (`series/tt5753856:1:1`) | 2.0 s | 1 | STALE | false | 0.41 s | 1 | 1 of 1 | – |
-| Stranger Things S04E01 (`series/tt4574334:4:1`) | 5.2 s | 3 | STALE | false | 0.05 s | 3 | 3 of 3 | – |
-| Haus des Geldes S01E01 (`series/tt6468322:1:1`) | 0.6 s | 1 | STALE | false | 0.02 s | 1 | 1 of 1 | – |
-| The Last of Us S01E01 (`series/tt3581920:1:1`) | 2.5 s | 5 | STALE | false | 0.11 s | 5 | 4 of 5 | FIRESTREAM |
-| One Piece S01E01 (`series/tt0388629:1:1`) | 4.6 s | 5 | STALE | false | 0.08 s | 5 | 5 of 5 | – |
-| Attack on Titan S01E01 (`series/tt2560140:1:1`) | 3.8 s | 5 | STALE | false | 0.12 s | 5 | 5 of 5 | – |
-| Demon Slayer S01E01 (`series/tt9335498:1:1`) | 4.0 s | 6 | STALE | false | 0.23 s | 6 | 5 of 6 | VIDMOLY |
-| Frieren S01E01 (`series/tt22248376:1:1`) | 4.3 s | 5 | STALE | false | 0.80 s | 5 | 5 of 5 | – |
-| Breaking Bad S01E02 (`series/tt0903747:1:2`) | 0.1 s | 0 | STALE | false | 0.02 s | 0 | 0 of 0 | – |
-| The Matrix (`movie/tt0133093`) | 2.1 s | 5 | STALE | false | 0.07 s | 5 | 5 of 5 | – |
+| Movie G (`movie/<Movie G>`) | 8.2 s | 5 | STALE | false | 1.04 s | 5 | 5 of 5 | – |
+| Movie H (`movie/<Movie H>`) | 6.0 s | 4 | STALE | false | 0.35 s | 4 | 4 of 4 | – |
+| Movie L (`movie/<Movie L>`) | 4.7 s | 1 | STALE | false | 0.03 s | 1 | 1 of 1 | – |
+| Movie M (`movie/<Movie M>`) | 2.9 s | 5 | STALE | false | 0.11 s | 5 | 5 of 5 | – |
+| Movie B (`movie/<Movie B>`) | 7.2 s | 5 | STALE | false | 0.05 s | 5 | 5 of 5 | – |
+| Movie A: Part Two (`movie/<Movie A: Part Two>`) | 6.0 s | 5 | STALE | false | 0.03 s | 5 | 4 of 5 | VIDSONIC |
+| Movie K (`movie/<Movie K>`) | 8.7 s | 5 | STALE | false | 0.12 s | 6 | 5 of 5 | – |
+| Movie F (`movie/<Movie F>`) | 2.1 s | 5 | HIT | true | 0.06 s | 5 | 5 of 5 | – |
+| Series D S01E01 (`series/<Series D>:1:1`) | 0.1 s | 0 | STALE | false | 0.04 s | 0 | 0 of 0 | – |
+| Series C S01E01 (`series/<Series C>:1:1`) | 2.0 s | 1 | STALE | false | 0.41 s | 1 | 1 of 1 | – |
+| Series F S04E01 (`series/<Series F>:4:1`) | 5.2 s | 3 | STALE | false | 0.05 s | 3 | 3 of 3 | – |
+| Series E S01E01 (`series/<Series E>:1:1`) | 0.6 s | 1 | STALE | false | 0.02 s | 1 | 1 of 1 | – |
+| Series G S01E01 (`series/<Series G>:1:1`) | 2.5 s | 5 | STALE | false | 0.11 s | 5 | 4 of 5 | FIRESTREAM |
+| Anime A S01E01 (`series/<Anime A>:1:1`) | 4.6 s | 5 | STALE | false | 0.08 s | 5 | 5 of 5 | – |
+| Anime G S01E01 (`series/<Anime G>:1:1`) | 3.8 s | 5 | STALE | false | 0.12 s | 5 | 5 of 5 | – |
+| Anime H S01E01 (`series/<Anime H>:1:1`) | 4.0 s | 6 | STALE | false | 0.23 s | 6 | 5 of 6 | VIDMOLY |
+| Anime I S01E01 (`series/<Anime I>:1:1`) | 4.3 s | 5 | STALE | false | 0.80 s | 5 | 5 of 5 | – |
+| Series D S01E02 (`series/<Series D>:1:2`) | 0.1 s | 0 | STALE | false | 0.02 s | 0 | 0 of 0 | – |
+| Movie J (`movie/<Movie J>`) | 2.1 s | 5 | STALE | false | 0.07 s | 5 | 5 of 5 | – |
 | **Median / total** (19 titles) | 4.0 s | 71 | 1 HIT | 1 of 19 complete | 0.08 s | 72 | 68 of 71 | – |
 
 Titles without stream: 2 of 19 (first answer), 2 of 19 (cached answer); max first answer 8.7 s.
@@ -795,25 +794,25 @@ CPU of the container during the round: Python 220.8 s, Chromium 497.2 s.
 
 **Reading against the eleventh round** (18 of 19 titles with streams, 73 streams, 72 of 73 playable with the proxied files judged as files, 9 of 9 of them with seeks):
 
-- **Times.** The median first answer is 4.0 s (13.7 s), and the longest is 8.7 s (30.5 s): the stale entries answer at once. Only Interstellar's answer was complete (1 of 19, against 7), because a stale answer reports the refresh as still running.
+- **Times.** The median first answer is 4.0 s (13.7 s), and the longest is 8.7 s (30.5 s): the stale entries answer at once. Only Movie F's answer was complete (1 of 19, against 7), because a stale answer reports the refresh as still running.
 - **Streams.** 17 of 19 titles answered with streams, 71 streams in all (18 of 19, 73). The proxied files (DoodStream, MixDrop, Vinovo, FSST) were judged as files, and none failed. 68 of 71 play (72 of 73 last time).
-- **Finding: Breaking Bad S01E01 answered 0 streams** (2 in the eleventh round). Production's log of the request (`request_id=1a91a548cb24`, 14:28:53 UTC):
+- **Finding: Series D S01E01 answered 0 streams** (2 in the eleventh round). Production's log of the request (a request):
   - The stale entry held one link, filmpalast's VOE, which failed: `voe_all_methods_failed`, then `hoster_resolve_failed hoster=voe plugin=filmpalast`.
   - `stremio_stream_response streams_returned=0 source=stale`; the round's cached second request one second later saw the same.
-  - The background refresh stored 3 results (`stremio_search_cache_stored result_count=3 missing=['kinoking']`; kinoking timed out at 30 s and opened its breaker again) and resolved 2 video streams by 14:29:24 (`stremio_resolve_complete background=True ... video_streams=2`), as many as the eleventh round.
+  - The background refresh stored 3 results (`stremio_search_cache_stored result_count=3 missing=['kinoking']`; kinoking timed out at 30 s and opened its breaker again) and resolved 2 video streams (`stremio_resolve_complete background=True... video_streams=2`), as many as the eleventh round.
   - So the empty answer is one request's: a stale entry whose only link died since. The refresh restores it, and Stremio's next request gets the 2 streams.
-- **Finding: Stranger Things S04E01, 3 streams (5), and Haus des Geldes S01E01, 1 stream (2).** Same mechanism, a stale entry answered:
-  - Stranger Things (`request_id=320b793671fc`): 9 of 10 links tried, 3 video streams. The background refresh then had 6 links and 2 video streams (14:30:16 and 14:30:25), so this title has fewer live links today, not only a stale answer.
-  - Haus des Geldes (`request_id=5bf0ddae1a25`): 1 of 1 link, 1 stream. The refresh resolved 2 by 14:30:25, as many as before.
+- **Finding: Series F S04E01, 3 streams (5), and Series E S01E01, 1 stream (2).** Same mechanism, a stale entry answered:
+  - Series F (a request): 9 of 10 links tried, 3 video streams. The background refresh then had 6 links and 2 video streams (9 s apart), so this title has fewer live links today, not only a stale answer.
+  - Series E (a request): 1 of 1 link, 1 stream. The refresh resolved 2, as many as before.
 - **Finding: three plays failed with 502 from the HLS proxy**, each after its 15 s timeout to the CDN (`hls_proxy_network_error`):
-  - VIDSONIC on Dune: Part Two (`FAIL variant 502`, 14:26:24 UTC, `cdn=vidsonic`). Vidsonic played in the eleventh round.
-  - VIDMOLY on Demon Slayer S01E01 (`FAIL variant 502`, 14:31:54 UTC, `cdn=vmnow`). The other 8 Vidmoly streams played.
-  - FIRESTREAM on The Last of Us S01E01 (`FAIL hls ... 502` on a segment, 14:29:42 UTC, `cdn=firestream`), the same stream that failed in the eleventh round (a timeout then), the CDN's own answer of row 64.
+  - VIDSONIC on Movie A: Part Two (`FAIL variant 502`, `cdn=vidsonic`). Vidsonic played in the eleventh round.
+  - VIDMOLY on Anime H S01E01 (`FAIL variant 502`, `cdn=vmnow`). The other 8 Vidmoly streams played.
+  - FIRESTREAM on Series G S01E01 (`FAIL hls... 502` on a segment, `cdn=firestream`), the same stream that failed in the eleventh round (a timeout then), the CDN's own answer of row 64.
   - Each is one stream of a hoster whose other streams played, and all three are network errors toward the CDN, not answers of Scavengarr's own.
-- **Filemoon and Byse.** No Filemoon stream: its breaker is open (`breaker_open` 115 since the start), and the Pi gets no Filemoon or Byse capture (Ultracode measured 0 of 4 after about 20 s, row 65's reading). That is known and needs no finding of its own here. filmo answered 31 results in 65 searches since the start.
+- **Filemoon and Byse.** No Filemoon stream: its breaker is open (`breaker_open` 115 since the start), and the production host gets no Filemoon or Byse capture (Ultracode measured 0 of 4 after about 20 s, row 65's reading). That is known and needs no finding of its own here. filmo answered 31 results in 65 searches since the start.
 - **Breakers not closed after the round:** dropload, filemoon, supervideo and vixeo (hosters, as in the eleventh round); kinoking:5000 (open) and kinox:2000 (half open).
 
-**Read-ahead (row 68's after check).** `scavengarr_hls_readahead_total` was 0 before the round (no HLS since the restart at 14:10 UTC), so these counts are the round's HLS plays alone. The play check reads a few segments per stream; it is not a playback.
+**Read-ahead (row 68's after check).** `scavengarr_hls_readahead_total` was 0 before the round (no HLS since the restart), so these counts are the round's HLS plays alone. The play check reads a few segments per stream; it is not a playback.
 
 | Outcome | Count |
 |---|---|
@@ -825,23 +824,53 @@ CPU of the container during the round: Python 220.8 s, Chromium 497.2 s.
 
 The 165 fetches took 947.8 s in all (5.7 s each on average, three in flight per playback). The 4 failures: one `ConnectTimeout`, one `ReadTimeout` and two `ReadError` against the CDNs `cloudwindow-route` (twice), `s1q2105` and `97bf1`. The high `dropped` count is the play check's pattern: it reads the first segments and stops, so the segments fetched ahead of the last one it asked for are dropped. Whether three segments in flight keep a 1080p picture without stalls is the maintainer's playback check (row 68), not this round's.
 
-**The challenge counter (row 70), live.** The digest at 14:35 UTC: kinoger 10 challenges, 1 of them unsolved; moflix 5, none unsolved. N20's line reads `kinoger 1 of 188 searches (0.5 %)`, far below the 5 % rule; the 7-day reading is due on 2026-10-18.
+**The challenge counter (row 70), live.** The digest: kinoger 10 challenges, 1 of them unsolved; moflix 5, none unsolved. N20's line reads `kinoger 1 of 188 searches (0.5 %)`, far below the 5 % rule; the 7-day reading is due on 2026-10-18.
+
+### Thirteenth round, quick (2026-10-12, production rebuilt from `staging` 1d79ec7)
+
+The build of rows 94 and 95 (the read-ahead keeps a paused playback's segment order; an unchecked episode position keeps the title check), the maintainer's end-to-end request after it. Four titles from the dev container, 5 min: two of the post-deploy check's anime (Anime A S22E04 by its IMDb id, Anime H) and its movie, all searched by the check minutes before (so no `stremio_round.py`), plus Series D; one stream request each and `stremio_playcheck.py --base https://scavengarr.example.lan --insecure` on its streams. Movie F's and Anime H's answer columns are from a stream request after their play checks.
+
+| Title | Answer | Streams | X-Cache | Complete | Playable | Findings |
+|---|---|---|---|---|---|---|
+| Anime A S22E04 (`series/<Anime A>:22:4`) | 0.2 s | 8 | HIT | true | 8 of 8 | – |
+| Movie F (`movie/<Movie F>`) | 0.1 s | 10, 11  | HIT | true | 9 of 10, 10 of 10 again | VIDSONIC once |
+| Anime H S02E01 (`series/<Anime H>:2:1`) | 0.0 s | 3, 4  | HIT | true | 3 of 3 | – |
+| Series D S01E01 (`series/<Series D>:1:1`) | 20.2 s | 2 | MISS | true | 2 of 2 | – |
+
+- **Episode placement (row 95):** the check's `series/kitsu:<Anime A>:1089`: `aniworld_episode_located site_season=22 site_episode=1 located_by=number absolute=1089 absolute_source=kitsu`, the same on s.to (`sto_episode_located`), and aniworld's `anime-a-2025` not located. The IMDb request `<Anime A>:22:4`: `anime_kitsu_number kitsu_id=12 kitsu_episode=1089`, answered from that entry. Anime H S02E01 (no Kitsu number): `absolute=27 absolute_source=position` placed `located_by=title` on both sites. The check's Anime A S05E02: Kitsu #62, aniworld's season 2 episode 1 by number.
+- **Plays:** 22 of 23 on the first pass, 18 HLS (VOE, VidMoly, FireStream, VidHide, GXPlayer, StrmUp, VidSonic) and 5 address-bound files through `/proxy/<id>/file` (DoodStream 3, FSST, Vinovo; each seek answered 206). VIDSONIC on Movie F failed once (`FAIL variant 502` after 15.3 s; `hls_proxy_network_error cdn=vidsonic`, the proxy's 15 s toward the CDN, as in the twelfth round) and played (3.8 s).
+- **Filemoon:** none in the first answers, its breaker open since the check's cold captures (`docs/plans/challenge-reactions.md` → R4, the restart). Its trial met the captcha, R2's completion found Anime H's stream (FILEMOON · aniworld), and the warm capture after it Movie F's (FILEMOON · filmo; 4 and 11 streams).
+- **Dropload:** `hoster_resolve_challenge hoster=dr0pstream kind=turnstile cooldown_s=60` (hdfilme, Movie F), with dr0pstream.com's state kept: no Dropload stream (its player sits behind a Turnstile play button, `docs/current/hoster-resolvers.md`).
 
 ### N25: stale answers without a stream (2026-10-11 to 2026-10-18)
 
-The twelfth round's Breaking Bad S01E01 got no stream from a stale entry whose only link had died since, while the refresh it started found 2 within 31 s. The maintainer's decision of 2026-10-11 16:40 UTC: measure before a change (backlog N25). Before each deploy (the counter lives as long as its container), Mr. Fable reads production's `scavengarr_stremio_request_total` with `source="stale"` (all outcomes, and `outcome="empty"`), and for each empty answer its log line (`stremio_stream_response streams_returned=0 source=stale`) and whether the refresh filled the entry (the next answer for the same request with streams). After the week, the share decides between N25's candidate (such an answer waits for the refresh up to the answer budget) and nothing.
+The twelfth round's Series D S01E01 got no stream from a stale entry whose only link had died since, while the refresh it started found 2 within 31 s. The maintainer's decision: measure before a change (backlog N25). Before each deploy (the counter lives as long as its container), Mr. Fable reads production's `scavengarr_stremio_request_total` with `source="stale"` (all outcomes, and `outcome="empty"`), and for each empty answer its log line (`stremio_stream_response streams_returned=0 source=stale`) and whether the refresh filled the entry (the next answer for the same request with streams). After the week, the share decides between N25's candidate (such an answer waits for the refresh up to the answer budget) and nothing.
 
 | Container (commit, start UTC) | Read at (UTC) | Stale answers | Empty | Filled by the refresh |
 |---|---|---:|---:|---|
-| dad3051, 10-11 14:10 | 10-11 14:47 | 40 | 4 | the round's Breaking Bad S01E01 requests among them (2 streams 31 s later); the rest not read |
-| 2446f89, 10-11 14:48:57 | not read | | | its counter and logs went with the container at 16:31 |
-| 3a257fe, 10-11 16:31:37 | 10-11 16:43 and 17:34 | 6 | 0 | none to fill (the same at both readings) |
+| dad3051 | +37 min | 40 | 4 | the round's Series D S01E01 requests among them (2 streams 31 s later); the rest not read |
+| 2446f89 | not read | | | its counter and logs went with the container 1 h 42 min later |
+| 3a257fe | +11 min 23 s and +1 h 02 min | 6 | 0 | none to fill (the same at both readings) |
+| 39f4790 | not read | | | its counter and logs went with the container 31 min 4 s later (the maintainer's rebuild came before a reading) |
+| 2d13f91 | +1 h | 4 | 0 | none to fill; the container ran for 1 h 52 min, its last 52 minutes not read |
+| 868d96c | not read | | | Mr. Fable signalled the rebuild 14 min 20 s later without reading it; its counter went with the container 18 min 50 s later |
+| 003f04e | +44 min 12 s | 1 | 0 | none to fill |
+| 10d43f4 | +22 min 1 s | 3 | 0 | none to fill |
+| 7c23863 | +2 h 33 min | 4 | 0 | none to fill; first read 26 min 51 s later (2, 0) on the maintainer's question whether to rebuild, again 2 h 20 min later before row 94's rebuild signal and 2 h 33 min later before the rebuild  |
+| 8a1f1db | +1 h 09 min | 4 | 0 | none to fill; read before row 95's rebuild signal |
+| 1d79ec7 | +26 min 32 s | 4 | 0 | none to fill; read before row 96's rebuild signal |
+| 503a0eb | +23 min 31 s and +46 min 31 s | 5 | 0 | none to fill; read before the rebuild signal for rows 97 and 98; the container ran for 13 h 26 min, its last 12 h 40 min not read (the rebuild came overnight, after Mr. Fable's session had ended) |
+| 4357d6a | +9 min 57 s | 0 | 0 | none to fill; read before the rebuild signal for rows 103 and 104 |
+| 41d6958 | +1 h 26 min | 1 | 0 | none to fill; read before row 105's rebuild signal |
+| 4429aff | +44 min 23 s | 4 | 0 | none to fill; read before row 107's rebuild signal |
+| 85e9e5d | +1 h 29 min | 8 | 0 | none to fill; read before the rebuild signal for rows 106, 108 and 109 (four of the eight stale answers are the repeated post-deploy check's own requests) |
+| d8f375bc | +about 1 h and +about 2 h | 0 | 0 | none to fill: no Stremio request in the first hour, then 34 answers by the second reading (18 searches with streams, 15 from the cache, 1 search empty, none stale); read before the rebuild signal for rows 121, 122 and 134; the stack was recreated twice on this build, and the two earlier containers (9 h 50 min and about 4 h) went unread |
 
 ## AIOStreams
 
-Goal was an AIOStreams test user on `aiostreams.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
+Goal was an AIOStreams test user on `aiostreams.example.lan` with Scavengarr as addon, measured end to end. Not done: AIOStreams validates the addon manifest when a user is created or updated, and it can reach neither the dev instance (Docker NAT on the workstation) nor `scavengarr.example.lan` (502, backend down). Recommended user settings, from the AIOStreams v2.35.3 source (`packages/core/src/presets/custom.ts`, `packages/core/src/db/schemas.ts`):
 
-- Scavengarr as `custom` preset with `manifestUrl: https://scavengarr.lan/api/v1/stremio/manifest.json`, `resources: ["stream"]`, `mediaTypes: ["movie", "series"]`.
+- Scavengarr as `custom` preset with `manifestUrl: https://scavengarr.example.lan/api/v1/stremio/manifest.json`, `resources: ["stream"]`, `mediaTypes: ["movie", "series"]`.
 - `timeout: 62000` (ms, per addon; AIOStreams default 7000 would cut most Scavengarr answers): `stream_deadline_seconds` (60 s since the round-5 measures) + 2 s headroom.
 - `preferredLanguages: ["German", "Multi", "Dual Audio", "English", "Unknown"]`, `sortCriteria.global`: language, resolution, quality (all `desc`).
 - Scavengarr already returns one working stream per hoster, so AIOStreams dedup and result limits need no special handling for it. Whether AIOStreams parses language and resolution from Scavengarr's stream names reliably is unverified; if not, `formatPassthrough: true` keeps Scavengarr's own labels.

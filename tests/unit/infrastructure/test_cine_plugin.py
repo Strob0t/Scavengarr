@@ -6,10 +6,14 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "cine.py"
 
@@ -537,14 +541,13 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self, plugin, mock_client):
+    async def test_a_refused_search_is_unreachable(self, plugin, mock_client):
         mock_client.post = AsyncMock(
             side_effect=httpx.ConnectError("Connection refused")
         )
 
-        results = await plugin.search("batman")
-
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
 
     @pytest.mark.asyncio
     async def test_links_failure_gives_no_result(self, plugin, mock_client):
@@ -654,3 +657,20 @@ class TestCleanup:
         p = cine_mod.CinePlugin()
 
         await p.cleanup()  # Should not raise
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    cine_mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.post("https://cine.to/request/search").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = cine_mod.CinePlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

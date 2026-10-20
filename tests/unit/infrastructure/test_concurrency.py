@@ -8,6 +8,8 @@ import pytest
 
 from scavengarr.infrastructure.concurrency import ConcurrencyPool, RequestBudget
 
+from ..waiting import eventually
+
 # ---------------------------------------------------------------------------
 # ConcurrencyPool basics
 # ---------------------------------------------------------------------------
@@ -225,7 +227,8 @@ class TestConcurrentRequests:
                 async with budget.acquire_httpx():
                     async with budget.acquire_httpx():
                         held_counts.append(budget._held["httpx"])
-                        await asyncio.sleep(0.05)
+                        # Hold both while the second request takes its slot
+                        await eventually(lambda: len(held_counts) == 2)
 
         async def _second_request() -> None:
             await barrier.wait()
@@ -275,7 +278,8 @@ class TestConcurrentRequests:
             async with pool.request() as budget_a:
                 # Two requests: fair share 1 each; A queues three tasks
                 a_tasks = [asyncio.create_task(_a_slot(budget_a)) for _ in range(3)]
-                await asyncio.sleep(0.01)
+                # One reserves its share, the other two wait for it
+                await eventually(lambda: budget_a._held["httpx"] == 1)
                 release_b.set()
                 await asyncio.gather(*b_tasks, *a_tasks)
 
@@ -299,7 +303,8 @@ class TestConcurrentRequests:
             await asyncio.sleep(0)
             async with pool.request() as budget_a:
                 waiter = asyncio.create_task(_take(budget_a))
-                await asyncio.sleep(0.01)
+                # It has reserved A's share and waits for the global slot
+                await eventually(lambda: budget_a._held["httpx"] == 1)
                 waiter.cancel()
                 await asyncio.gather(waiter, return_exceptions=True)
 
@@ -361,7 +366,7 @@ class TestConcurrencyIntegration:
             order.append("a-exited")
 
         async def _request_b() -> None:
-            await asyncio.sleep(0.01)  # let A start first
+            await eventually(lambda: "a-holding-2" in order)
             async with pool.request() as budget:
                 async with budget.acquire_httpx():
                     order.append("b-acquired")

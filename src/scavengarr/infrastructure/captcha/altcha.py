@@ -46,7 +46,7 @@ _DIGESTS: dict[str, str] = {
 _MAX_COUNTER = 1_000_000
 
 # Classic format: one hash per number. The widget's default maxnumber is 1e6;
-# s.to's gate asks for up to 1e5 (0.3 s on a Raspberry Pi 4, 2026-10-04)
+# s.to's gate asks for up to 1e5 (0.3 s on the production host, 2026-10-04)
 _CLASSIC_DIGESTS: dict[str, str] = {
     "SHA-1": "sha1",
     "SHA-256": "sha256",

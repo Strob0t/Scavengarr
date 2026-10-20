@@ -21,6 +21,8 @@ from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.crawljob import Priority
 from scavengarr.domain.ports.browser_fetcher import BrowserFetcherPort
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
+from scavengarr.domain.ports.tmdb import TmdbClientPort
 from scavengarr.infrastructure.anime.id_lists import AnimeIdLists
 from scavengarr.infrastructure.anime.kitsu_addon import KitsuAddonClient
 from scavengarr.infrastructure.anime.resolver import KitsuAnimeIdResolver
@@ -57,7 +59,9 @@ from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
 from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
 from scavengarr.infrastructure.hoster_resolvers.gxplayer import GxplayerResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
+from scavengarr.infrastructure.hoster_resolvers.mediathek import MediathekResolver
 from scavengarr.infrastructure.hoster_resolvers.mixdrop import MixdropResolver
+from scavengarr.infrastructure.hoster_resolvers.pass_keeper import PassKeeper
 from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
 from scavengarr.infrastructure.hoster_resolvers.rapidgator import RapidgatorResolver
 from scavengarr.infrastructure.hoster_resolvers.sendvid import SendVidResolver
@@ -76,6 +80,7 @@ from scavengarr.infrastructure.hoster_resolvers.vinovo import VinovoResolver
 from scavengarr.infrastructure.hoster_resolvers.vixeo import VixeoResolver
 from scavengarr.infrastructure.hoster_resolvers.voe import VoeResolver
 from scavengarr.infrastructure.hoster_resolvers.xfs import create_all_xfs_resolvers
+from scavengarr.infrastructure.network_probe import NetworkProbe
 from scavengarr.infrastructure.persistence.crawljob_cache import (
     CacheCrawlJobRepository,
 )
@@ -125,7 +130,7 @@ _CONNECT_TIMEOUT_S = 5.0
 # At most this many idle connections (httpx's default). httpcore 1.0 scans
 # its whole pool for every request and every finished response, quadratic
 # in the idle connections: with 100 kept, the scan held the GIL 10-20% of
-# the time during stream requests on the Pi, 2% with httpx's defaults
+# the time during stream requests on the production host, 2% with httpx's defaults
 _KEEPALIVE_CONNECTIONS = 20
 
 
@@ -299,7 +304,7 @@ def build_http_client(config: AppConfig) -> httpx.AsyncClient:
     Idle connections stay open for a minute (up to
     ``_KEEPALIVE_CONNECTIONS``): one stream request talks to 18-42 hosts,
     and with httpx's 5 s default every pause between two requests closed
-    them all (TLS handshakes were 21% of the Python CPU on a Raspberry Pi).
+    them all (TLS handshakes were 21% of the Python CPU on the production host).
     A host that does not answer fails after ``_CONNECT_TIMEOUT_S`` instead
     of the full read timeout.
     """
@@ -358,6 +363,78 @@ def build_crawljob_store(
     return repo, factory
 
 
+def build_hoster_resolvers(
+    http_client: httpx.AsyncClient,
+    stealth_pool: StealthPool | None,
+    *,
+    clearance_store: ClearanceStore | None = None,
+) -> list[HosterResolverPort]:
+    """The hoster resolvers in registration order.
+
+    A domain two resolvers claim stays with the first one registered, so the
+    specific resolvers come before the generic XFS and DDL ones.
+    ``scripts/generate_resolver_list.py`` lists them in
+    ``docs/reference/resolvers.md``. *clearance_store* holds the kept
+    capture state, whose captcha pass tells Filemoon a cold capture.
+    """
+    return [
+        # Streaming resolvers (extract direct video URLs)
+        VoeResolver(http_client=http_client),
+        StreamtapeResolver(http_client=http_client),
+        SuperVideoResolver(http_client=http_client, stealth_pool=stealth_pool),
+        DoodStreamResolver(http_client=http_client, stealth_pool=stealth_pool),
+        FilemoonResolver(
+            http_client=http_client,
+            stealth_pool=stealth_pool,
+            clearance_store=clearance_store,
+        ),
+        # DDL resolvers (custom — non-generic)
+        FilerNetResolver(http_client=http_client),
+        RapidgatorResolver(http_client=http_client),
+        DDownloadResolver(http_client=http_client),
+        SerienstreamResolver(http_client=http_client),
+        StmixResolver(http_client=http_client),
+        StrmupResolver(http_client=http_client),
+        VidguardResolver(http_client=http_client),
+        VidkingResolver(http_client=http_client),
+        VidsonicResolver(http_client=http_client),
+        SendVidResolver(http_client=http_client),
+        VeevResolver(http_client=http_client),
+        FirestreamResolver(http_client=http_client),
+        PlaymateResolver(http_client=http_client),
+        MixdropResolver(http_client=http_client),
+        VixeoResolver(http_client=http_client, stealth_pool=stealth_pool),
+        VinovoResolver(http_client=http_client),
+        GxplayerResolver(http_client=http_client),
+        FsstResolver(http_client=http_client),
+        UpnsResolver(http_client=http_client, hoster="upns"),
+        UpnsResolver(http_client=http_client, hoster="rpmplay"),
+        # DDL resolvers (custom — non-XFS)
+        MediafireResolver(http_client=http_client),
+        GoFileResolver(http_client=http_client),
+        # The public broadcasters' own files (the mediathek plugin)
+        MediathekResolver(http_client=http_client),
+        # DDL resolvers (consolidated, one per GenericDDLConfig)
+        *create_all_ddl_resolvers(http_client=http_client),
+        # XFS resolvers (consolidated, one per XFSConfig)
+        *create_all_xfs_resolvers(http_client=http_client, stealth_pool=stealth_pool),
+    ]
+
+
+def build_tmdb_client(
+    config: AppConfig, http_client: httpx.AsyncClient, cache: CachePort
+) -> TmdbClientPort:
+    """The title look-up: TMDB with ``tmdb_api_key``, else the IMDb suggest
+    API."""
+    if config.tmdb_api_key:
+        log.info("tmdb_client_initialized")
+        return HttpxTmdbClient(
+            api_key=config.tmdb_api_key, http_client=http_client, cache=cache
+        )
+    log.info("tmdb_client_fallback", reason="no API key, using IMDB suggest API")
+    return ImdbFallbackClient(http_client=http_client, cache=cache)
+
+
 def _inject_shared_browser_pool(
     plugins: PluginRegistry,
     pool: SharedBrowserPool,
@@ -393,7 +470,8 @@ def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
     search_prober = MiniSearchProber(
         plugins=state.plugins,
         http_client=state.http_client,
-        supported_hosters=state.hoster_resolver_registry.supported_domains,
+        # A link counts as supported where the dispatch finds a resolver
+        resolver_name=state.hoster_resolver_registry.resolver_name,
     )
     query_pool = QueryPoolBuilder(
         http_client=state.http_client,
@@ -469,6 +547,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await cache.__aenter__()
     state.cache = cache
     log.info("cache_initialized", backend=config.cache.backend)
+    # readyz: the cache backend and the DNS, so a lost network shows
+    state.network_probe = NetworkProbe(state.cache, telemetry=state.telemetry)
 
     if config.environment == "dev":
         await cache.clear()
@@ -513,22 +593,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # 7) TMDB client (with IMDB fallback when no API key is configured)
-    if config.tmdb_api_key:
-        state.tmdb_client = HttpxTmdbClient(
-            api_key=config.tmdb_api_key,
-            http_client=state.http_client,
-            cache=state.cache,
-        )
-        log.info("tmdb_client_initialized")
-    else:
-        state.tmdb_client = ImdbFallbackClient(
-            http_client=state.http_client,
-            cache=state.cache,
-        )
-        log.info(
-            "tmdb_client_fallback",
-            reason="no API key, using IMDB suggest API",
-        )
+    state.tmdb_client = build_tmdb_client(config, state.http_client, state.cache)
 
     # 8) One Chromium process for everything: the shared browser pool serves
     #    the Playwright plugins (own contexts) and the stealth pool (CF bypass
@@ -572,62 +637,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #    unplayable (browser captures that cannot pass a challenge from this IP)
     hoster_breaker = PluginCircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
     state.hoster_resolver_registry = HosterResolverRegistry(
-        resolvers=[
-            # Streaming resolvers (extract direct video URLs)
-            VoeResolver(http_client=state.http_client),
-            StreamtapeResolver(http_client=state.http_client),
-            SuperVideoResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            DoodStreamResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            FilemoonResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            # DDL resolvers (custom — non-generic)
-            FilerNetResolver(http_client=state.http_client),
-            RapidgatorResolver(http_client=state.http_client),
-            DDownloadResolver(http_client=state.http_client),
-            SerienstreamResolver(http_client=state.http_client),
-            StmixResolver(http_client=state.http_client),
-            StrmupResolver(http_client=state.http_client),
-            VidguardResolver(http_client=state.http_client),
-            VidkingResolver(http_client=state.http_client),
-            VidsonicResolver(http_client=state.http_client),
-            SendVidResolver(http_client=state.http_client),
-            VeevResolver(http_client=state.http_client),
-            FirestreamResolver(http_client=state.http_client),
-            PlaymateResolver(http_client=state.http_client),
-            MixdropResolver(http_client=state.http_client),
-            VixeoResolver(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-            VinovoResolver(http_client=state.http_client),
-            GxplayerResolver(http_client=state.http_client),
-            FsstResolver(http_client=state.http_client),
-            UpnsResolver(http_client=state.http_client, hoster="upns"),
-            UpnsResolver(http_client=state.http_client, hoster="rpmplay"),
-            # DDL resolvers (custom — non-XFS)
-            MediafireResolver(http_client=state.http_client),
-            GoFileResolver(http_client=state.http_client),
-            # DDL resolvers (consolidated — 10 hosters)
-            *create_all_ddl_resolvers(http_client=state.http_client),
-            # XFS resolvers (consolidated — 25 hosters)
-            *create_all_xfs_resolvers(
-                http_client=state.http_client,
-                stealth_pool=state.stealth_pool,
-            ),
-        ],
+        resolvers=build_hoster_resolvers(
+            state.http_client, state.stealth_pool, clearance_store=clearance_store
+        ),
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
         circuit_breaker=hoster_breaker,
         telemetry=state.telemetry,
+        pages=pages,
     )
     log.info(
         "hoster_resolver_registry_initialized",
@@ -707,9 +725,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 15) Anime: the Kitsu addon's ids become IMDb requests (the addon's
     # meta, the public id list as the fallback), both cached in the backend
+    anime_id_lists = AnimeIdLists(http_client=state.http_client, cache=state.cache)
     state.anime_ids = KitsuAnimeIdResolver(
         addon=KitsuAddonClient(http_client=state.http_client, cache=state.cache),
-        lists=AnimeIdLists(http_client=state.http_client, cache=state.cache),
+        lists=anime_id_lists,
     )
     # 15b) The catalog's record of a title (kind, episodes), cached 7 days
     state.series_meta = CinemetaClient(http_client=state.http_client, cache=state.cache)
@@ -757,6 +776,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Mark the application as ready for traffic
     state.graceful_shutdown.mark_ready()
     log.info("app_startup_complete", **build_identity())
+    # The browser and the stealth context with the kept state, so the first
+    # capture (a breaker trial after a restart) does not pay for the launch
+    state._browser_warmup_task = asyncio.create_task(state.stealth_pool.warmup())
+    # Filemoon's captcha pass: one capture once it has gone, so a request
+    # after a quiet half hour finds one (row 106)
+    state._pass_keeper_task = asyncio.create_task(
+        PassKeeper(
+            state.hoster_resolver_registry,
+            clearance_store,
+            pages,
+            telemetry=state.telemetry,
+        ).run_forever()
+    )
+    # The anime id list, so an IMDb anime request right after the start has
+    # its episode's Kitsu number (the shutdown ends a load still running)
+    anime_id_lists.load_in_background()
 
     try:
         yield
@@ -772,6 +807,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.anime_ids.aclose()
         await state.stremio_links.aclose()
         await state.hls_read_ahead.aclose()
+        # The pass keeper's capture, before the registry ends its completions
+        state._pass_keeper_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._pass_keeper_task
         await state.hoster_resolver_registry.aclose()
         # The last resolutions and breaker changes, before the cache closes
         await state.hoster_state_store.aclose()
@@ -797,6 +836,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state._page_budget_task.cancel()
         with suppress(asyncio.CancelledError):
             await state._page_budget_task
+
+        state._browser_warmup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await state._browser_warmup_task
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:

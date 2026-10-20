@@ -2,20 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import respx
 
+from scavengarr.domain.entities.scoring import ProbeResult
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.domain.plugins.exceptions import PluginNotFoundError
+from scavengarr.infrastructure.hoster_resolvers.registry import (
+    HosterResolverRegistry,
+)
 from scavengarr.infrastructure.plugins.constants import search_max_results
 from scavengarr.infrastructure.scoring.search_prober import (
     MiniSearchProber,
     _extract_hoster,
 )
 
-_SUPPORTED = frozenset({"hoster", "voe", "streamtape"})
+
+def _lookup(*resolvers: SimpleNamespace) -> Callable[[str], str | None]:
+    """The registry's dispatch lookup over *resolvers*."""
+    return HosterResolverRegistry(resolvers=list(resolvers)).resolver_name
+
+
+_SUPPORTED = _lookup(
+    *(SimpleNamespace(name=name) for name in ("hoster", "voe", "streamtape"))
+)
 
 
 def _make_results(count: int = 5, domain: str = "hoster.com") -> list[SearchResult]:
@@ -70,7 +84,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "Iron Man", 2000)
 
@@ -90,7 +104,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "Nonexistent", 2000)
 
@@ -108,7 +122,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("unknown", "query", 2000)
 
@@ -122,7 +136,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000)
 
@@ -140,7 +154,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000, max_items=20)
 
@@ -178,7 +192,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000)
 
@@ -199,7 +213,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000)
 
@@ -213,7 +227,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000)
 
@@ -231,7 +245,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000)
 
@@ -271,7 +285,7 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=_SUPPORTED,
+                resolver_name=_SUPPORTED,
             )
             probe = await prober.probe("sto", "query", 2000)
 
@@ -282,8 +296,9 @@ class TestProbe:
         assert probe.hoster_reachable == 2
 
     @respx.mock
-    async def test_empty_supported_hosters_skips_all_checks(self) -> None:
-        """When no supported hosters configured, no HEAD-checks happen."""
+    async def test_without_a_lookup_no_link_is_checked(self) -> None:
+        """Without the registry's lookup no link counts as supported, and
+        none is HEAD-checked."""
         results = _make_results(5)
         registry = _mock_registry(results=results)
 
@@ -291,10 +306,72 @@ class TestProbe:
             prober = MiniSearchProber(
                 plugins=registry,
                 http_client=client,
-                supported_hosters=frozenset(),
             )
             probe = await prober.probe("sto", "query", 2000)
 
         assert probe.hoster_total == 5
         assert probe.hoster_supported == 0
+        assert probe.hoster_checked == 0
+
+
+async def _probe(links: list[str], lookup: Callable[[str], str | None]) -> ProbeResult:
+    results = [
+        SearchResult(title=f"Result {i}", download_link=link)
+        for i, link in enumerate(links)
+    ]
+    async with httpx.AsyncClient() as client:
+        prober = MiniSearchProber(
+            plugins=_mock_registry(results=results),
+            http_client=client,
+            resolver_name=lookup,
+        )
+        return await prober.probe("sto", "query", 2000)
+
+
+class TestSupportedLinks:
+    """A link is supported where the registry's dispatch finds its resolver."""
+
+    @respx.mock
+    async def test_a_claimed_host_counts_as_supported(self) -> None:
+        # The mediathek resolver claims the broadcasters' Akamai hosts by their
+        # full names; their second-level name "akamaihd" names no resolver
+        mediathek = SimpleNamespace(
+            name="mediathek",
+            supported_domains=frozenset({"ard-mcdn"}),
+            supported_hosts=frozenset({"nrodlzdf-a.akamaihd.net"}),
+        )
+        link = "https://nrodlzdf-a.akamaihd.net/de/zdf/film_3360k_p36v17.mp4"
+        respx.head(link).respond(200)
+
+        probe = await _probe([link], _lookup(mediathek))
+
+        assert (probe.hoster_total, probe.hoster_supported) == (1, 1)
+        assert (probe.hoster_checked, probe.hoster_reachable) == (1, 1)
+
+    @respx.mock
+    async def test_a_second_level_name_or_an_alias_still_counts(self) -> None:
+        voe = SimpleNamespace(name="voe")
+        vidhide = SimpleNamespace(
+            name="vidhide", supported_domains=frozenset({"filelions"})
+        )
+        links = ["https://voe.sx/e/abc", "https://filelions.to/v/xyz"]
+        for link in links:
+            respx.head(link).respond(200)
+
+        probe = await _probe(links, _lookup(voe, vidhide))
+
+        assert (probe.hoster_total, probe.hoster_supported) == (2, 2)
+        assert probe.hoster_checked == 2
+
+    @respx.mock
+    async def test_an_unknown_host_does_not_count(self) -> None:
+        # Another host of the claimed zone, and a host no resolver names
+        mediathek = SimpleNamespace(
+            name="mediathek", supported_hosts=frozenset({"nrodlzdf-a.akamaihd.net"})
+        )
+        links = ["https://other-a.akamaihd.net/video.mp4", "https://unknown.org/file/1"]
+
+        probe = await _probe(links, _lookup(mediathek))
+
+        assert (probe.hoster_total, probe.hoster_supported) == (2, 0)
         assert probe.hoster_checked == 0

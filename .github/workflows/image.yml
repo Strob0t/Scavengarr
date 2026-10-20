@@ -1,4 +1,4 @@
-# Production image for linux/amd64 and linux/arm64 (Raspberry Pi), published
+# Production image for linux/amd64 and linux/arm64 (the production host), published
 # to GHCR as one multi-arch manifest (openspec: add-container-image). Each
 # architecture builds natively on its own runner and pushes its image by
 # digest; the merge job tags the manifest list: `staging` (pushes to

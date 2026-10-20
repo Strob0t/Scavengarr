@@ -5,12 +5,15 @@ from __future__ import annotations
 import pytest
 
 from scavengarr.domain.entities.stremio import (
+    EpisodeRef,
     RankedStream,
     StreamLanguage,
     StreamQuality,
     StremioMetaPreview,
     StremioStream,
     StremioStreamRequest,
+    TitleMatches,
+    is_partial_title,
     quality_from_resolution,
 )
 
@@ -170,3 +173,78 @@ class TestStremioStreamRequest:
         req = StremioStreamRequest(imdb_id="tt1", content_type="movie")
         with pytest.raises(AttributeError):
             req.imdb_id = "tt2"  # type: ignore[misc]
+
+
+class TestPartialTitle:
+    """A series named only by a shorter form of the request's series titles
+    (normalised: lower-case ASCII words) is partial: the request's parent,
+    or the site's short name for it."""
+
+    def test_the_parent_is_partial(self) -> None:
+        assert is_partial_title(["naruto"], ["naruto shippuden"])
+
+    def test_an_episode_result_of_the_parent_is_partial(self) -> None:
+        """sto's result title and its guessit title: neither holds
+        "shippuden", the second is a part of the request's title."""
+        titles = ["naruto s01e06 gefahrliche mission die reise ins land", "naruto"]
+
+        assert is_partial_title(titles, ["naruto shippuden"])
+
+    def test_the_full_title_is_not_partial(self) -> None:
+        assert not is_partial_title(["naruto shippuden"], ["naruto shippuden"])
+        assert not is_partial_title(
+            ["naruto shippuden s01e06 endlich wieder nudelsuppe", "naruto shippuden"],
+            ["naruto shippuden"],
+        )
+
+    def test_a_title_that_holds_a_request_title_whole_is_not_partial(self) -> None:
+        """aniworld's "Yu-Gi-Oh!" is TMDB's title of Duel Monsters, however
+        long another title of the request is."""
+        assert not is_partial_title(
+            ["yu gi oh"], ["yu gi oh duel monsters", "yu gi oh"]
+        )
+
+    def test_any_request_title_counts(self) -> None:
+        """An original title the site's name shares no word with (ナルト 疾風伝
+        transliterated) does not keep the parent from being partial."""
+        assert is_partial_title(["naruto"], ["ji feng chuan", "naruto shippuden"])
+
+    def test_other_words_are_not_partial(self) -> None:
+        assert not is_partial_title(
+            ["boruto naruto next generations"], ["naruto shippuden"]
+        )
+        assert not is_partial_title(["dragonball super"], ["dragon ball super"])
+
+    def test_a_year_is_no_word(self) -> None:
+        assert is_partial_title(["naruto 2002"], ["naruto shippuden"])
+
+    def test_an_article_or_and_is_no_word(self) -> None:
+        """A site name that drops the article or writes "&" for "and" (the
+        normalising drops it) is the request's series, not its parent (code
+        review 2026-10-12, finding 10)."""
+        assert not is_partial_title(["walking dead"], ["the walking dead"])
+        assert not is_partial_title(["rick morty"], ["rick and morty"])
+        assert not is_partial_title(["simpsons"], ["die simpsons"])
+        assert not is_partial_title(["bergdoktor"], ["der bergdoktor"])
+
+    def test_the_parent_without_its_article_stays_partial(self) -> None:
+        assert is_partial_title(["walking dead"], ["the walking dead world beyond"])
+        assert is_partial_title(["rick morty"], ["rick and morty the anime"])
+
+    def test_without_titles_nothing_is_partial(self) -> None:
+        assert not is_partial_title(["naruto"], [])
+        assert not is_partial_title([], ["naruto shippuden"])
+        assert not is_partial_title([""], ["naruto shippuden"])
+
+
+class TestTitleMatches:
+    def test_defaults(self) -> None:
+        matches = TitleMatches()
+
+        assert matches.matching == []
+        assert matches.partial == []
+
+
+class TestEpisodeRef:
+    def test_the_series_titles_default_to_none(self) -> None:
+        assert EpisodeRef(1, 2).titles == ()

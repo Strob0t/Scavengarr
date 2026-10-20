@@ -8,6 +8,7 @@ import ipaddress
 import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from typing import cast
 
 import httpcore
 import httpx
@@ -22,6 +23,8 @@ from scavengarr.infrastructure.common.private_address_guard import (
     GuardedNetworkBackend,
     PrivateAddressGuard,
 )
+
+from ..waiting import eventually
 
 _OK = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
 _TIMEOUT = b"HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n"
@@ -91,6 +94,14 @@ def _client(ssl_context: ssl.SSLContext | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, timeout=2)
 
 
+async def _idle_connection_retired(client: httpx.AsyncClient) -> None:
+    """Wait until the client's idle connection shows what the server did
+    (its close, data it sent unasked): httpcore's own check before reuse,
+    or the pool dropped it already when the answer ended."""
+    pool = cast(httpx.AsyncHTTPTransport, client._transport)._pool
+    await eventually(lambda: all(conn.has_expired() for conn in pool.connections))
+
+
 async def _answer_every_request(
     reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 ) -> None:
@@ -156,7 +167,7 @@ class TestPlainTcp:
         server, port = await serve(_answer_once)
         async with _client() as client:
             assert (await client.get(f"http://127.0.0.1:{port}/")).text == "hello"
-            await asyncio.sleep(0.1)
+            await _idle_connection_retired(client)
             assert (await client.get(f"http://127.0.0.1:{port}/")).text == "hello"
         assert server.connections == 2
 
@@ -165,7 +176,7 @@ class TestPlainTcp:
         server, port = await serve(_answer_then_time_out)
         async with _client() as client:
             assert (await client.get(f"http://127.0.0.1:{port}/")).text == "hello"
-            await asyncio.sleep(0.1)
+            await _idle_connection_retired(client)
             assert (await client.get(f"http://127.0.0.1:{port}/")).status_code == 200
         assert server.connections == 2
 
@@ -173,7 +184,11 @@ class TestPlainTcp:
         _, port = await serve(_never_answer)
         async with _client() as client:
             with pytest.raises(httpx.ReadTimeout):
-                await client.get(f"http://127.0.0.1:{port}/", timeout=0.1)
+                # the read alone is short: a loaded CI runner's connect to
+                # 127.0.0.1 took over 0.1 s (ConnectTimeout, 2026-10-12)
+                await client.get(
+                    f"http://127.0.0.1:{port}/", timeout=httpx.Timeout(2, read=0.1)
+                )
 
     async def test_a_closed_port_is_a_connect_error(self, serve: _Serve) -> None:
         server, port = await serve(_never_answer)
@@ -242,7 +257,7 @@ class TestTls:
         server, port = await serve(_answer_once, server_ctx)
         async with _client(client_ctx) as client:
             assert (await client.get(f"https://127.0.0.1:{port}/")).text == "hello"
-            await asyncio.sleep(0.1)
+            await _idle_connection_retired(client)
             assert (await client.get(f"https://127.0.0.1:{port}/")).text == "hello"
         assert server.connections == 2
 
@@ -259,7 +274,7 @@ class TestTls:
 class TestGuardedBackend:
     def test_the_guard_connects_with_asyncio_streams(self) -> None:
         """httpx's default backend (anyio) runs TLS in Python; asyncio streams
-        saved the HLS proxy about a quarter of its CPU on the Raspberry Pi
+        saved the HLS proxy about a quarter of its CPU on the production host
         (2026-10-05)."""
         backend = GuardedNetworkBackend(PrivateAddressGuard())
         assert isinstance(backend._backend, AsyncioNetworkBackend)

@@ -1,6 +1,6 @@
 """Hoster page URLs for the live resolver tests (tests/live/test_resolver_live.py).
 
-Searches the titles of ``docs/plans/round-titles.txt`` through the plugin
+Searches the titles of ``.cache/live/round-titles.txt`` (local) through the plugin
 registry the way ``title_match.py`` does (the stream plugins, each title's
 queries per language group, the plugin timeout, the app's concurrency), maps
 every result link to its resolver with the hoster resolver registry
@@ -10,9 +10,15 @@ the first link per resolver. Writes ``.cache/live/resolver-urls.json``
 names and counts only: a hoster page URL is a link to a third-party page and
 stays out of the output.
 
-Usage (dev container; ``-P`` because this directory shadows the redis package):
-    PYTHONPATH=src xvfb-run -a poetry run python -P scripts/probes/resolver_urls.py
-    ... --plugins kinoger,sto --titles docs/plans/round-titles.txt --out <file>
+``--avoid <file>`` takes an earlier output: a link it names is not taken, so
+each resolver keeps its next link (a second link for a live case that failed
+on its first; write it to a file of its own with ``--out``, the live test
+reads ``resolver-urls.json`` only).
+
+Usage (dev container):
+    PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/resolver_urls.py
+    ... --plugins kinoger,sto --titles .cache/live/round-titles.txt --out <file>
+    ... --avoid .cache/live/resolver-urls.json --out .cache/live/resolver-urls-2.json
 """
 
 from __future__ import annotations
@@ -44,7 +50,7 @@ from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
 
 # title_match.py is a sibling, not a package: appended, so that nothing in
-# this directory (redis.py) shadows an installed package
+# this directory shadows an installed package
 sys.path.append(str(Path(__file__).resolve().parent))
 from title_match import (  # noqa: E402  # pyright: ignore[reportMissingImports]
     _search,
@@ -52,14 +58,18 @@ from title_match import (  # noqa: E402  # pyright: ignore[reportMissingImports]
 )
 
 REPO = Path(__file__).resolve().parents[2]
-TITLES = REPO / "docs" / "plans" / "round-titles.txt"
+TITLES = REPO / ".cache" / "live" / "round-titles.txt"
 OUT = REPO / ".cache" / "live" / "resolver-urls.json"
 
 
 @dataclass
 class Found:
-    """What the searches yielded: the first link per resolver and the counts."""
+    """What the searches yielded: the first link per resolver and the counts.
 
+    A link in *avoid* is counted but not taken.
+    """
+
+    avoid: set[str] = field(default_factory=set)
     urls: dict[str, str] = field(default_factory=dict)
     plugin: dict[str, str] = field(default_factory=dict)
     links: Counter[str] = field(default_factory=Counter)
@@ -78,6 +88,8 @@ class Found:
                 self.unclaimed[extract_domain(url) or "?"] += 1
                 continue
             self.links[name] += 1
+            if url in self.avoid:
+                continue
             self.urls.setdefault(name, url)
             self.plugin.setdefault(name, plugin)
 
@@ -90,6 +102,13 @@ def resolver_name(registry: HosterResolverRegistry, url: str) -> str | None:
     )
 
 
+def read_avoid(path: Path | None) -> set[str]:
+    """The links an earlier output names (``--avoid``); none without one."""
+    if path is None:
+        return set()
+    return {str(url) for url in json.loads(path.read_text()).values()}
+
+
 def read_titles(path: Path) -> list[str]:
     """One Stremio id per line, a comment after ``#``."""
     ids = []
@@ -100,7 +119,9 @@ def read_titles(path: Path) -> list[str]:
     return ids
 
 
-async def collect(state: AppState, sids: list[str], only: set[str] | None) -> Found:
+async def collect(
+    state: AppState, sids: list[str], only: set[str] | None, avoid: set[str]
+) -> Found:
     config = state.config.stremio
     assert state.tmdb_client is not None
     assert state.hoster_resolver_registry is not None
@@ -120,7 +141,7 @@ async def collect(state: AppState, sids: list[str], only: set[str] | None) -> Fo
         names = [n for n in names if n in only]
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
-    found = Found()
+    found = Found(avoid=avoid)
 
     async def one(name: str, query: str, category: int, req: Any) -> None:
         plugin = state.plugins.get(name)
@@ -156,7 +177,7 @@ async def collect(state: AppState, sids: list[str], only: set[str] | None) -> Fo
     return found
 
 
-async def run(sids: list[str], only: set[str] | None) -> Found:
+async def run(sids: list[str], only: set[str] | None, avoid: set[str]) -> Found:
     with tempfile.TemporaryDirectory() as tmp:
         config = load_config(
             cli_overrides={
@@ -168,7 +189,7 @@ async def run(sids: list[str], only: set[str] | None) -> Found:
         )
         app = create_app(config)
         async with app.router.lifespan_context(app):
-            return await collect(cast(AppState, app.state), sids, only)
+            return await collect(cast(AppState, app.state), sids, only, avoid)
 
 
 def render(found: Found, titles: int, out: Path) -> str:
@@ -200,12 +221,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--titles", type=Path, default=TITLES)
     parser.add_argument("--out", type=Path, default=OUT)
     parser.add_argument("--plugins", help="comma-separated plugin names")
+    parser.add_argument(
+        "--avoid", type=Path, help="an earlier output whose links are not taken"
+    )
     args = parser.parse_args(argv)
     only = set(args.plugins.split(",")) if args.plugins else None
     sids = read_titles(args.titles)
     # the app logs to stdout; the table is the probe's only output
     with contextlib.redirect_stdout(sys.stderr):
-        found = asyncio.run(run(sids, only))
+        found = asyncio.run(run(sids, only, read_avoid(args.avoid)))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(dict(sorted(found.urls.items())), indent=1))
     print(render(found, len(sids), args.out))

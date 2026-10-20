@@ -66,13 +66,21 @@ class HaschconPlugin(HttpxPluginBase):
     _domains = _DOMAINS
 
     async def _api_search(self, query: str) -> list[dict]:
-        """Search via WP REST API across multiple pages."""
+        """Search via WP REST API across multiple pages.
+
+        A failure of the site on the first page raises (a timeout, the site
+        not answering), so the plugin record counts it; a later page that
+        fails ends the pagination. The page count is a response header, so
+        the first page takes ``_safe_fetch()``'s raising mode (one domain:
+        no other to fail over to).
+        """
         all_entries: list[dict] = []
 
         for page in range(1, _MAX_PAGES + 1):
             resp = await self._safe_fetch(
                 f"{self.base_url}/wp-json/wp/v2/aiovg_videos",
                 context="search",
+                raising=page == 1,
                 params={
                     "search": query,
                     "per_page": str(_PER_PAGE),

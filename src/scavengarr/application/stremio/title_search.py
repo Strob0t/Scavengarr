@@ -340,7 +340,8 @@ class TitleSearch:
             )
 
             async def _found(results: list[SearchResult]) -> None:
-                progress.add(results, await self._titles.matching(results, ref))
+                matches = await self._titles.matching(results, ref)
+                progress.add(results, matches.matching, matches.partial)
 
             progress.expect(group_plugins)
             await self._search_runner.search_with_fallback(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import copy
 import logging
@@ -221,7 +222,8 @@ def _logger_level(name: str, level: str) -> str:
     return level
 
 
-def _stop_async_listener() -> None:
+def stop_async_logging() -> None:
+    """Stop the listener thread once it wrote every queued line."""
     global _QUEUE_LISTENER
     if _QUEUE_LISTENER is not None:
         try:
@@ -242,7 +244,7 @@ def _enable_async_logging(config: AppConfig) -> None:
     """
     global _QUEUE_LISTENER
 
-    _stop_async_listener()
+    stop_async_logging()
 
     processor_formatter = _make_processor_formatter(config)
 
@@ -290,7 +292,39 @@ def _enable_async_logging(config: AppConfig) -> None:
         q, stdout_handler, stderr_handler, respect_handler_level=True
     )
     _QUEUE_LISTENER.start()
-    atexit.register(_stop_async_listener)
+    atexit.register(stop_async_logging)
+
+
+# Uvicorn cancels the requests still running when its graceful shutdown
+# timeout ends (``timeout_graceful_shutdown`` in the CLI) with this message
+_SHUTDOWN_CANCEL = "Task cancelled, timeout graceful shutdown exceeded"
+_SHUTDOWN_CANCEL_LINE = "Cancel %s running task(s), timeout graceful shutdown exceeded"
+
+
+class _ShutdownBoundFilter(logging.Filter):
+    """A request the shutdown bound cancels (an open playback) is no error.
+
+    Uvicorn logs the cancel as an error and each cancelled task's
+    ``CancelledError`` as "Exception in ASGI application" with a traceback:
+    the cancel line becomes a warning, the tracebacks of those tasks go.
+    Any other cancel or exception stays as it is.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.msg == _SHUTDOWN_CANCEL_LINE:
+            record.levelno, record.levelname = logging.WARNING, "WARNING"
+            return True
+        error = record.exc_info[1] if record.exc_info else None
+        return not (
+            isinstance(error, asyncio.CancelledError)
+            and error.args == (_SHUTDOWN_CANCEL,)
+        )
+
+
+def _guard_shutdown_bound(logger: logging.Logger) -> None:
+    """Put the shutdown-bound filter on *logger* once."""
+    if not any(isinstance(f, _ShutdownBoundFilter) for f in logger.filters):
+        logger.addFilter(_ShutdownBoundFilter())
 
 
 def configure_logging(config: AppConfig) -> None:
@@ -313,6 +347,7 @@ def configure_logging(config: AppConfig) -> None:
     logging.config.dictConfig(cfg)
 
     _enable_async_logging(config)
+    _guard_shutdown_bound(logging.getLogger("uvicorn.error"))
 
     log.info(
         "logging_configured", log_format=config.log_format, log_level=config.log_level

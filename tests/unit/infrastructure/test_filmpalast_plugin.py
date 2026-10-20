@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "filmpalast_to.py"
 
@@ -516,14 +519,14 @@ class TestSearch:
         plugin._client.get.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_network_error_returns_empty(self) -> None:
+    async def test_a_search_without_an_answer_is_unreachable(self) -> None:
         plugin = _make_plugin()
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
         plugin._client = mock_client
 
-        results = await plugin.search("batman")
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
 
     @pytest.mark.asyncio
     async def test_detail_fetch_failure_skipped(self) -> None:
@@ -547,3 +550,18 @@ class TestSearch:
 
         # One detail page failed, one succeeded
         assert len(results) == 1
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://filmpalast.to/search/title/batman").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

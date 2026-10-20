@@ -413,10 +413,17 @@ class KinogerPlugin(HttpxPluginBase):
         if page > 1:
             params["search_start"] = str(page)
 
-        # Cloudflare Turnstile: _fetch_text falls back to the browser
-        html = await self._fetch_text(
-            f"{self.base_url}/index.php", params=params, context=f"search:{page}"
-        )
+        # Cloudflare Turnstile: _fetch_text falls back to the browser. The
+        # first page raises on a failure of the site, so the plugin record
+        # counts it; a later page that fails ends the pagination.
+        if page > 1:
+            html = await self._fetch_text(
+                f"{self.base_url}/index.php", params=params, context=f"search:{page}"
+            )
+        else:
+            html = await self._fetch_search_page(
+                "/index.php", params=params, context="search:1"
+            )
         if html is None:
             return []
 

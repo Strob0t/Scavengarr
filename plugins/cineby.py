@@ -17,8 +17,7 @@ The API host is the plugin's one dependency and so its domain: the
 reachability check (``_verify_domain``) and the health monitor's probe
 ask it, not the site. The site's own domain (``_SITE_URL``; cineby.gd and
 cineby.app redirect there, the other former mirrors are parked pages)
-only names the result links. Reading of 2026-10-10:
-``docs/plans/plugin-domains.md`` → cineby.
+only names the result links (``docs/current/plugin-domains.md``).
 """
 
 from __future__ import annotations
@@ -165,6 +164,7 @@ class CinebyPlugin(HttpxPluginBase):
             resp = await self._safe_fetch(
                 f"{endpoint}?query={quote_plus(query)}&language=en&page={page_num}",
                 context=f"cineby_search_page_{page_num}",
+                raising=page_num == 1,
             )
             if resp is None:
                 break

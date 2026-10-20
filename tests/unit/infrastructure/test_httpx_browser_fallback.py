@@ -11,7 +11,7 @@ import pytest
 import respx
 import structlog.testing
 
-from scavengarr.domain.ports.browser_fetcher import BrowserSession
+from scavengarr.domain.ports.browser_fetcher import BrowserSession, Redirect
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _CF_CHALLENGE = (
@@ -72,7 +72,7 @@ class TestResolveRedirect:
         respx.get("https://cf.example/external/abc").respond(403, text=_CF_CHALLENGE)
         fetcher = AsyncMock()
         fetcher.resolve_redirect = AsyncMock(
-            return_value="https://filecrypt.cc/Container/y.html"
+            return_value=Redirect("https://filecrypt.cc/Container/y.html", passed=True)
         )
         HttpxPluginBase.set_browser_fetcher(fetcher)
 
@@ -130,7 +130,9 @@ class TestCloudflareHostMemo:
         )
         fetcher = AsyncMock()
         fetcher.fetch_text = AsyncMock(return_value="<html>ok</html>")
-        fetcher.resolve_redirect = AsyncMock(return_value="https://filecrypt.cc/c")
+        fetcher.resolve_redirect = AsyncMock(
+            return_value=Redirect("https://filecrypt.cc/c", passed=True)
+        )
         HttpxPluginBase.set_browser_fetcher(fetcher)
 
         async with httpx.AsyncClient() as client:
@@ -321,7 +323,7 @@ def _solving_fetcher(session: BrowserSession | None = _SESSION) -> AsyncMock:
 class TestBrowserSessionReuse:
     """After the browser passed a challenge, httpx goes on with its session.
 
-    Every page through the browser costs seconds (on a Raspberry Pi too many
+    Every page through the browser costs seconds (on the production host too many
     for a Stremio request); the site's cookies and the browser's User-Agent
     pass the same check through httpx (measured 2026-10-04 from a VPN IP).
     """
@@ -430,7 +432,7 @@ class TestBrowserSessionReuse:
     async def test_solve_outlives_a_cut_request(self) -> None:
         """A request cut by its Stremio deadline does not abort the browser's
         solve: the next request gets the session (a solve takes seconds, on
-        a Raspberry Pi up to 20 s under load)."""
+        the production host up to 20 s under load)."""
         respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
         route_b = respx.get("https://cf.example/b").respond(200, text="<html>b</html>")
         started, release = asyncio.Event(), asyncio.Event()

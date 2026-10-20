@@ -1,4 +1,4 @@
-"""vinovo.to hoster resolver — stream token from the player API.
+"""vinovo.to hoster resolver — the stream from the player API's token.
 
 Resolution strategy (port of JD2 ``VinovoTo``, stream path):
 

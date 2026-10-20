@@ -1,4 +1,5 @@
-"""SuperVideo hoster resolver — XFS-based video extraction.
+"""SuperVideo hoster resolver — the JWPlayer video URL, captured in the browser
+behind Cloudflare.
 
 SuperVideo uses XFileSharingPro framework which embeds video URLs
 via JWPlayer sources or HTML5 video tags.

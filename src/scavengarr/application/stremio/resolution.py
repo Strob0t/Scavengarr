@@ -2,8 +2,7 @@
 
 The plugins deliver results one by one; resolving each hoster's best link
 as soon as it is known puts the first streams near the search's first
-results instead of after the whole search (measure 2 of
-``docs/plans/round5-measures.md``). ``ResolveFlow`` decides when the
+results instead of after the whole search. ``ResolveFlow`` decides when the
 request's answer is due; a search from the cache answers with the
 resolver's cached outcomes and resolves its other links in the background.
 """

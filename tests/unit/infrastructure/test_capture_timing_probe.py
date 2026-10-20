@@ -3,6 +3,7 @@ of scripts/probes/capture_timing.py."""
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import signal
@@ -12,19 +13,20 @@ from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from scavengarr.infrastructure.browser import stealth_pool as stealth
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia, StealthPool
+from scavengarr.infrastructure.hoster_resolvers.filemoon import _CAPTCHA_REQUESTS
 
 _PROBES = Path(__file__).resolve().parents[3] / "scripts" / "probes"
 
 
 def _load() -> ModuleType:
-    # By path: on sys.path the probes' redis.py would shadow the redis package
+    # By path: scripts/probes/ is no package
     spec = importlib.util.spec_from_file_location(
         "capture_timing_probe", _PROBES / "capture_timing.py"
     )
@@ -151,6 +153,33 @@ class TestTimedPool:
         assert point == (1.0, 2.0)
         assert len(pool.run.clicks) == 1
 
+    async def test_a_run_ends_after_its_captures_keep(self) -> None:
+        """The state's read and the page's close follow the stream (row
+        107): the next run starts after them, on a context of its own
+        timings."""
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        release = asyncio.Event()
+        kept: list[str] = []
+
+        async def keep() -> None:
+            await release.wait()
+            kept.append("kept")
+
+        async def resolve(_url: str) -> object:
+            task = asyncio.create_task(keep())
+            pool._keep_tasks.add(task)
+            task.add_done_callback(pool._keep_tasks.discard)
+            asyncio.get_running_loop().call_soon(release.set)
+            return object()
+
+        resolver = MagicMock()
+        resolver.resolve = resolve
+
+        run = await _mod.timed_run(pool, resolver, "https://byse.example/d/abc")
+
+        assert run.resolved
+        assert kept == ["kept"]
+
 
 class TestReport:
     def test_a_captured_run(self) -> None:
@@ -160,7 +189,8 @@ class TestReport:
         run.resolved = True
 
         assert _mod.report_row(1, run) == (
-            "| 1 | /d/: 0.4 s, 2.9 s | 6.4, 11.4 s | 12.2 s (example.com) | 12.6 s |"
+            "| 1 | /d/: 0.4 s, 2.9 s | 6.4, 11.4 s | 12.2 s (example.com) | none"
+            " | 12.6 s |"
         )
 
     def test_a_run_without_a_stream_and_a_cut_run(self) -> None:
@@ -169,9 +199,18 @@ class TestReport:
         cut = _mod.Run(0.0, took=90.0, cut=True)
 
         assert _mod.report_row(1, nothing) == (
-            "| 1 | /e/: 0.1 s, 10.0 s (failed) | – | none | 18.5 s (nothing) |"
+            "| 1 | /e/: 0.1 s, 10.0 s (failed) | – | none | none | 18.5 s (nothing) |"
         )
-        assert _mod.report_row(2, cut) == "| 2 | none | – | none | cut at 90 s |"
+        assert _mod.report_row(2, cut) == "| 2 | none | – | none | none | cut at 90 s |"
+
+    def test_a_relaunched_run_names_its_challenges(self) -> None:
+        run = _mod.Run(0.0, took=20.8)
+        run.challenges.extend([("captcha", 9.04), ("captcha/verify", 12.34)])
+
+        assert _mod.report_row("control", run) == (
+            "| control | none | – | none | captcha 9.0 s, captcha/verify 12.3 s"
+            " | 20.8 s (nothing) |"
+        )
 
 
 def test_the_capture_resolvers_by_name() -> None:
@@ -183,13 +222,90 @@ def test_the_capture_resolvers_by_name() -> None:
 def test_two_runs_by_default() -> None:
     args = _mod._parser().parse_args(["https://byse.example/e/abc"])
 
-    assert (args.hoster, args.runs, args.timeout, args.diagnose, args.block) == (
-        "filemoon",
-        2,
-        None,
-        False,
-        [],
-    )
+    assert (
+        args.hoster,
+        args.runs,
+        args.timeout,
+        args.diagnose,
+        args.block,
+        args.restore,
+        args.autoplay_wait,
+    ) == ("filemoon", 2, None, False, [], False, None)
+
+
+def test_the_watchdog_covers_the_restores_two_runs() -> None:
+    plain = _mod._parser().parse_args(["https://byse.example/e/abc"])
+    restore = _mod._parser().parse_args(["https://byse.example/e/abc", "--restore"])
+
+    assert _mod.probe_limit(plain) == 2 * _mod.RUN_LIMIT_S + 60
+    assert _mod.probe_limit(restore) == 4 * _mod.RUN_LIMIT_S + 60
+
+
+class TestAutoplayWait:
+    def test_the_option_takes_seconds(self) -> None:
+        args = _mod._parser().parse_args(
+            ["https://byse.example/e/abc", "--autoplay-wait", "1.5"]
+        )
+
+        assert args.autoplay_wait == 1.5
+
+    @staticmethod
+    def _waits(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+        """The waits the app's capture is called with."""
+        waits: list[object] = []
+
+        async def capture(*_args: object, **kwargs: object) -> None:
+            waits.append(kwargs.get("autoplay_wait"))
+
+        monkeypatch.setattr(StealthPool, "capture_media", capture)
+        return waits
+
+    async def test_the_probes_wait_overrides_each_resolvers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits = self._waits(monkeypatch)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.autoplay_wait = 1.5
+        pool.run = _mod.Run(time.monotonic())
+
+        await pool.capture_media("https://vixeo.io/e/abc", autoplay_wait=0.5)
+        await pool.capture_media("https://byse.example/e/abc", autoplay_wait=None)
+
+        assert waits == [1.5, 1.5]
+        assert pool.run.autoplay_wait == 1.5
+
+    async def test_without_the_option_each_resolver_keeps_its_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits = self._waits(monkeypatch)
+        # restored after the test
+        monkeypatch.setattr(stealth, "_MEDIA_AUTOPLAY_WAIT_S", 3.0)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        vixeo, byse = _mod.Run(time.monotonic()), _mod.Run(time.monotonic())
+
+        pool.run = vixeo
+        await pool.capture_media("https://vixeo.io/e/abc", autoplay_wait=0.5)
+        pool.run = byse
+        await pool.capture_media("https://byse.example/e/abc", autoplay_wait=None)
+
+        assert waits == [0.5, None]
+        # The wait each capture used: the app's for a resolver without one
+        assert (vixeo.autoplay_wait, byse.autoplay_wait) == (0.5, 3.0)
+
+    def test_the_report_names_the_wait_the_captures_used(self) -> None:
+        runs = [
+            (1, _mod.Run(0.0, autoplay_wait=0.5)),
+            (2, _mod.Run(0.0, autoplay_wait=0.5)),
+        ]
+
+        assert _mod.wait_lines(runs, override=None) == [
+            "autoplay wait: 0.5 s (the resolver's)"
+        ]
+        assert _mod.wait_lines(runs, override=0.5) == [
+            "autoplay wait: 0.5 s (the probe's)"
+        ]
+        # A resolution over HTTP reaches no capture
+        assert _mod.wait_lines([(1, _mod.Run(0.0))], override=None) == []
 
 
 def test_blocks_repeat() -> None:
@@ -327,6 +443,56 @@ class TestRequests:
             ("byse.example", "/api/videos/access/attest", "xhr", "pending"),
         ]
 
+    def test_each_request_notes_when_it_went_out_and_how_long_its_answer_took(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [100.0]
+        monkeypatch.setattr(_mod.time, "monotonic", lambda: now[0])
+        page, run = _Page(), _mod.Run(100.0)
+        _mod.watch_requests(page, run)
+        api = "https://byse.example/api/videos/aa6n0tuxqz1h/embed"
+        captcha, verify = _Request(f"{api}/captcha"), _Request(f"{api}/captcha/verify")
+        playback = _Request(f"{api}/playback")
+        media = _Request(
+            "https://edge.cdn.example.com/a1b2c3d4/master.m3u8",
+            "media",
+            failure="net::ERR_FAILED",
+        )
+        for at, event, payload in (
+            (114.1, "request", captcha),
+            (114.3, "response", _Response(captcha, 200)),
+            (114.6, "request", verify),
+            (117.9, "response", _Response(verify, 200)),
+            (118.0, "request", playback),
+            (122.7, "request", media),
+            (122.8, "requestfailed", media),
+        ):
+            now[0] = at
+            page.emit(event, payload)
+
+        assert _mod.request_lines(run) == [
+            "- byse.example /api/videos/<id>/embed/captcha fetch: 200"
+            " at 14.1 s (0.2 s)",
+            "- byse.example /api/videos/<id>/embed/captcha/verify fetch: 200"
+            " at 14.6 s (3.3 s)",
+            "- byse.example /api/videos/<id>/embed/playback fetch: pending at 18.0 s",
+            "- example.com /<id>/master.m3u8 media: net::ERR_FAILED at 22.7 s (0.1 s)",
+        ]
+
+    def test_alike_requests_show_the_first_ones_times(self) -> None:
+        note = _mod.RequestNote
+        run = _mod.Run(0.0)
+        run.requests.extend(
+            [
+                note("byse.example", "/assets/<id>.js", "script", "200", 1.2, 1.5),
+                note("byse.example", "/assets/<id>.js", "script", "200", 1.3, 1.9),
+            ]
+        )
+
+        assert _mod.request_lines(run) == [
+            "- byse.example /assets/<id>.js script: 200 at 1.2 s (0.3 s) ×2"
+        ]
+
     def test_a_redirect_marks_its_hop(self) -> None:
         page, run = _Page(), _mod.Run(0.0)
         _mod.watch_requests(page, run)
@@ -416,6 +582,21 @@ class TestFrames:
 
         assert pool.run.frames == []
 
+    async def test_the_capture_hands_its_wait_on_through_the_note(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits: list[object] = []
+
+        async def start_player(*_args: object, **kwargs: object) -> None:
+            waits.append(kwargs.get("autoplay_wait"))
+
+        monkeypatch.setattr(stealth, "_start_player", start_player)
+        _mod.note_frames(_mod.TimedStealthPool(browser_pool=MagicMock()))
+
+        await stealth._start_player(MagicMock(), None, None, autoplay_wait=0.5)
+
+        assert waits == [0.5]
+
 
 class TestDiagnosedPool:
     async def test_a_page_is_watched_once(
@@ -435,7 +616,8 @@ class TestDiagnosedPool:
                 page, url, wait_until="domcontentloaded", timeout_ms=1000
             )
 
-        assert len(page.handlers["request"]) == 1
+        # The diagnosis's watch and the challenge's
+        assert len(page.handlers["request"]) == 2
         assert len(page.handlers["popup"]) == 1
 
     def test_the_diagnosis_of_a_run(self) -> None:
@@ -447,7 +629,8 @@ class TestDiagnosedPool:
         run.frames.append(_mod.FrameNote("byse.example", main=True))
 
         assert _mod.diagnosis_lines(1, run) == [
-            "### Run 1: requests (domain, path with ids masked, type: outcome)",
+            "### Run 1: requests (domain, path with ids masked, type: outcome"
+            " at when it went out (how long the outcome took))",
             "- byse.example /d/<id> document: 200",
             "popups opened: 2 (the capture closes them)",
             "frames after the clicks:",
@@ -572,3 +755,229 @@ class TestBlocks:
         )
 
         assert (page.routes, context.routes) == ([], [])
+
+
+class TestChallenges:
+    """The app's rule (``stealth_pool._challenge_of``): a captcha
+    provider's frame, or a request the resolver names as its hoster's own
+    captcha; the probe splits the latter into ``captcha`` and
+    ``captcha/verify``."""
+
+    def test_the_marks_of_the_players_captcha_and_the_turnstile_frame(self) -> None:
+        named = _CAPTCHA_REQUESTS
+        player = "https://byse.example/api/videos/x1y2"
+        turnstile = (
+            "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile"
+        )
+
+        assert _mod.challenge_mark(_Request(f"{player}/captcha"), named) == "captcha"
+        assert _mod.challenge_mark(_Request(f"{player}/captcha/verify?t=1"), named) == (
+            "captcha/verify"
+        )
+        assert _mod.challenge_mark(_Request(turnstile, "document"), named) == (
+            "turnstile"
+        )
+        # The widget's script is no challenge frame
+        assert _mod.challenge_mark(_Request(turnstile, "script"), named) is None
+        assert (
+            _mod.challenge_mark(_Request("https://byse.example/e/captchas"), named)
+            is None
+        )
+        assert (
+            _mod.challenge_mark(
+                _Request("https://challenges.cloudflare.com.llvpn.com/x", "document"),
+                named,
+            )
+            is None
+        )
+
+    def test_without_the_resolvers_pattern_no_captcha_is_named(self) -> None:
+        request = _Request("https://byse.example/api/videos/x1y2/captcha")
+
+        assert _mod.challenge_mark(request, None) is None
+
+    def test_a_passive_widgets_frame_is_no_challenge(self) -> None:
+        """DoodStream's invisible Turnstile (code review 2026-10-12,
+        finding 3): the resolver says its widget does not gate the stream."""
+        frame = _Request("https://challenges.cloudflare.com/turnstile", "document")
+
+        assert _mod.challenge_mark(frame, None, passive_widget=True) is None
+        assert _mod.challenge_mark(frame, None) == "turnstile"
+
+    def test_a_run_notes_each_challenge_once_in_order_with_its_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [0.0]
+        monkeypatch.setattr(_mod.time, "monotonic", lambda: now[0])
+        page, run = _Page(), _mod.Run(100.0)
+        _mod.watch_challenges(page, run, lambda: _CAPTCHA_REQUESTS)
+
+        for at, url in (
+            (101.0, "https://byse.example/e/abc"),
+            (109.0, "https://byse.example/api/videos/x1y2/captcha"),
+            (112.5, "https://byse.example/api/videos/x1y2/captcha/verify"),
+            (113.0, "https://byse.example/api/videos/x1y2/captcha"),
+        ):
+            now[0] = at
+            page.emit("request", _Request(url))
+
+        assert run.challenges == [("captcha", 9.0), ("captcha/verify", 12.5)]
+
+    async def test_a_page_is_watched_for_challenges_without_the_diagnosis(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def navigate(*_args: object, **_kwargs: object) -> bool:
+            return True
+
+        monkeypatch.setattr(StealthPool, "_navigate", navigate)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.run = _mod.Run(time.monotonic())
+        page = _Page()
+
+        await pool._navigate(
+            page, "https://byse.example/e/abc", wait_until="commit", timeout_ms=1
+        )
+        page.emit(
+            "request",
+            _Request("https://challenges.cloudflare.com/turnstile", "document"),
+        )
+
+        assert [kind for kind, _ in pool.run.challenges] == ["turnstile"]
+        assert "popup" not in page.handlers
+
+    async def test_the_pool_takes_the_resolvers_captcha_pattern(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def capture(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(StealthPool, "capture_media", capture)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+
+        await pool.capture_media(
+            "https://byse.example/e/abc", challenge_requests=_CAPTCHA_REQUESTS
+        )
+
+        assert pool.named is _CAPTCHA_REQUESTS
+        assert pool.passive_widget is False
+        await pool.capture_media("https://dood.example/e/abc", passive_widget=True)
+        assert (pool.named, pool.passive_widget) == (None, True)
+
+
+_STATE: dict[str, Any] = {
+    "cookies": [
+        {"name": "cf_clearance", "value": "secret-1", "domain": ".byse.example"},
+        {"name": "__cf_bm", "value": "secret-2", "domain": "byse.example"},
+        {"name": "_ga_1A2B3C4D5E", "value": "secret-3", "domain": ".byse.example"},
+        {"name": "lang", "value": "secret-4", "domain": "203.0.113.7"},
+    ],
+    "origins": [
+        {
+            "origin": "https://player.byse.example",
+            "localStorage": [
+                {"name": "volume", "value": "secret-5"},
+                {"name": "token", "value": "secret-6"},
+            ],
+            "indexedDB": [
+                {
+                    "name": "cache",
+                    "version": 1,
+                    "stores": [
+                        {
+                            "name": "prints",
+                            "records": [
+                                {"key": "a", "value": {"hash": "secret-7"}},
+                                {"key": "b", "valueEncoded": {"d": "secret-8"}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        {"origin": "https://filemoon.example", "localStorage": []},
+    ],
+}
+
+
+class TestState:
+    def test_the_make_up_names_cookies_and_counts_keys_never_values(self) -> None:
+        lines = _mod.state_lines(_STATE)
+
+        assert lines == [
+            "state: 4 cookies, 2 origins",
+            "- cookies <ip>: lang",
+            "- cookies byse.example: __cf_bm, _ga_<id>, cf_clearance",
+            "- origin byse.example: 2 localStorage keys, 1 IndexedDB database"
+            " (2 records, 1 encoded)",
+            "- origin filemoon.example: 0 localStorage keys, 0 IndexedDB databases",
+        ]
+        assert not any("secret" in line or "token" in line for line in lines)
+
+    def test_an_empty_state(self) -> None:
+        assert _mod.state_lines({"cookies": [], "origins": []}) == [
+            "state: 0 cookies, 0 origins"
+        ]
+
+    async def test_the_capture_reads_its_state_timed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def collect(
+            _page: object, hosts: object
+        ) -> tuple[dict[str, Any], dict[str, str]]:
+            return {"cookies": [], "origins": []}, {}
+
+        # restores the module's own function after the test
+        monkeypatch.setattr(stealth, "collect_capture_state", collect)
+        pool = _mod.TimedStealthPool(browser_pool=MagicMock())
+        pool.run = _mod.Run(time.monotonic())
+        _mod.note_keeps(pool)
+
+        read = await stealth.collect_capture_state(
+            MagicMock(), ["a.example", "b.example"]
+        )
+
+        assert read == ({"cookies": [], "origins": []}, {})
+        assert pool.run.keep is not None
+        assert pool.run.keep[0] == 2
+        assert pool.run.keep[2] >= 0  # when the read began
+
+    def test_the_keep_lines_name_the_runs_that_read(self) -> None:
+        """With the read's start against its stream's hand-over, which it
+        follows since row 107."""
+        after = _mod.Run(0.0, stream_at=4.304, keep=(2, 0.0123, 4.312))
+        before = _mod.Run(0.0, stream_at=4.304, keep=(1, 0.004, 4.29))
+
+        assert _mod.keep_lines([(1, after), (2, _mod.Run(0.0)), (3, before)]) == [
+            "state read by run 1: 2 hosts in 12 ms,"
+            " begun 8 ms after the stream went out",
+            "state read by run 3: 1 host in 4 ms,"
+            " begun 14 ms before the stream went out",
+        ]
+        assert _mod.keep_lines([(1, _mod.Run(0.0))]) == ["state read by no run"]
+
+    async def test_a_restored_context_starts_from_the_stores_state(self) -> None:
+        context = MagicMock()
+        context.route = AsyncMock()
+        chromium = MagicMock()
+        chromium.is_connected.return_value = True
+        chromium.new_context = AsyncMock(return_value=context)
+        browser = MagicMock()
+        browser.warmup = AsyncMock(return_value=(chromium, None))
+
+        async with _mod.capture_store() as store:
+            hosts = ["byse.example", "player.byse.example", "203.0.113.7"]
+            await store.keep_capture_state([*hosts, "filemoon.example"], _STATE)
+            pool = _mod.TimedStealthPool(browser_pool=browser, clearance_store=store)
+            assert await pool._ensure_context() is context
+            assert await pool._ensure_context() is context
+
+        chromium.new_context.assert_awaited_once()
+        restored = chromium.new_context.await_args.kwargs["storage_state"]
+        # The kept state, through the app's store
+        assert sorted(c["name"] for c in restored["cookies"]) == sorted(
+            c["name"] for c in _STATE["cookies"]
+        )
+        assert sorted(o["origin"] for o in restored["origins"]) == sorted(
+            o["origin"] for o in _STATE["origins"]
+        )
+        context.route.assert_awaited_once()

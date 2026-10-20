@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
 
 import pytest
 
 from scavengarr.domain.ports.browser_fetcher import PageClaim, PageKind, page_claim
 from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
     PageBusy,
     PageGate,
+    challenge_mark,
+    mark_resolution_challenge,
+    mark_resolution_passed,
     work_clock,
 )
 from scavengarr.infrastructure.telemetry import Telemetry
@@ -109,6 +114,49 @@ class TestCancellation:
 
         assert order == ["next"]
         assert granted.cancelled()
+        assert gate.in_use == 0
+
+
+class TestHandOn:
+    """A page whose work outlives its block (a capture's page that keeps
+    its state after the stream went out, row 107) stays taken until that
+    work ends it."""
+
+    async def test_a_page_handed_on_stays_taken_past_its_block(self) -> None:
+        gate = PageGate(limit=1)
+
+        async with gate.page("capture", timeout=30) as hold:
+            hold.hand_on()
+
+        assert gate.in_use == 1
+        hold.end()
+        assert gate.in_use == 0
+
+    async def test_the_next_waiter_gets_the_page_when_it_ends(self) -> None:
+        gate = PageGate(limit=1)
+        release = asyncio.Event()
+        release.set()
+        order: list[str] = []
+        async with gate.page("capture", timeout=30) as hold:
+            hold.hand_on()
+        waiter = asyncio.create_task(_hold(gate, release, order, "next"))
+        await _settle()
+        assert order == []
+
+        hold.end()
+        await waiter
+
+        assert order == ["next"]
+        assert gate.in_use == 0
+
+    async def test_a_hold_ends_once(self) -> None:
+        gate = PageGate(limit=2)
+
+        async with gate.page("capture", timeout=30) as hold:
+            hold.end()
+            assert gate.in_use == 0
+        hold.end()
+
         assert gate.in_use == 0
 
 
@@ -270,6 +318,58 @@ class TestWorkClock:
             await work
         await holder
         assert gate.in_use == 0
+
+
+class TestChallengeMark:
+    """A page that shows a challenge marks the resolution that runs
+    (react-to-challenges, R7): the registry tells a challenged capture from
+    a timeout by it."""
+
+    async def test_the_first_challenge_is_noted(self) -> None:
+        mark = ChallengeMark()
+        challenge_mark.set(mark)
+
+        mark_resolution_challenge("cloudflare_page")
+        mark_resolution_challenge("turnstile")
+
+        assert mark.kind == "cloudflare_page"
+
+    async def test_the_resolutions_tasks_mark_it_too(self) -> None:
+        """A half-open trial runs in a task of its own."""
+        mark = ChallengeMark()
+        challenge_mark.set(mark)
+
+        async def _capture() -> None:
+            mark_resolution_challenge("hoster_captcha")
+
+        await asyncio.create_task(_capture())
+
+        assert mark.kind == "hoster_captcha"
+
+    def test_outside_a_resolution_marking_is_a_no_op(self) -> None:
+        """Plugin pages run outside a resolution."""
+        outside = contextvars.Context()
+
+        outside.run(mark_resolution_challenge, "turnstile")
+        outside.run(mark_resolution_passed)
+
+        assert outside.run(challenge_mark.get) is None
+
+    async def test_a_challenge_stands_until_it_is_passed(self) -> None:
+        """A page past its challenge gives a verdict on the link (code review
+        2026-10-12, finding 2): a dead link behind it is dead. The first
+        challenge stays the one noted; a later one stands again."""
+        mark = ChallengeMark()
+        challenge_mark.set(mark)
+        assert (mark.kind, mark.open) == (None, False)
+
+        mark_resolution_challenge("cloudflare_page")
+        assert (mark.kind, mark.open) == ("cloudflare_page", True)
+        mark_resolution_passed()
+        assert (mark.kind, mark.open) == ("cloudflare_page", False)
+        mark_resolution_challenge("turnstile")
+
+        assert (mark.kind, mark.open) == ("cloudflare_page", True)
 
 
 async def _claimed_hold(

@@ -1,4 +1,4 @@
-"""Generate the environment table of docs/features/configuration.md from the schema.
+"""Generate the settings tables of docs/reference/configuration.md from the schema.
 
 Usage:
     poetry run python scripts/generate_config_doc.py           # rewrite the table
@@ -6,7 +6,8 @@ Usage:
 
 Every setting reads ``SCAVENGARR_<SECTION>_<KEY>`` (a top-level one
 ``SCAVENGARR_<KEY>``), so the table lists every key of every section with its
-type, default and description, generated between the markers
+type, default and description, and the flat names the loader maps to them,
+generated between the markers
 ``<!-- config-env:start -->`` and ``<!-- config-env:end -->``.
 ``tests/unit/infrastructure/test_config_doc.py`` fails when the doc differs
 from the output of :func:`update`.
@@ -35,7 +36,7 @@ from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.infrastructure.version import APP_VERSION
 
 _ROOT = Path(__file__).resolve().parents[1]
-_DOC = _ROOT / "docs" / "features" / "configuration.md"
+_DOC = _ROOT / "docs" / "reference" / "configuration.md"
 _START = "<!-- config-env:start -->"
 _END = "<!-- config-env:end -->"
 
@@ -117,9 +118,10 @@ def _row(name: str, field: FieldInfo, alias: str | None) -> str:
 
 
 def render() -> str:
-    """The generated block: one table per section, the top-level keys first."""
+    """The generated block: one table per section, the top-level keys first,
+    then the flat names."""
     header = ["| Variable | Type | Default | Description |", "|---|---|---|---|"]
-    lines = ["#### Top level", "", *header]
+    lines = ["### Top level", "", *header]
     for key in sorted(_TOP_LEVEL_KEYS):
         lines.append(
             _row(f"{_ENV_PREFIX}{key.upper()}", AppConfig.model_fields[key], None)
@@ -127,13 +129,25 @@ def render() -> str:
     aliases = _aliases()
     for section in _SECTIONS:
         keys = _ACCEPTED_KEYS[section] or {}
-        lines += ["", f"#### `{section}`", "", *header]
+        lines += ["", f"### `{section}`", "", *header]
         for key in sorted(k for k, nested in keys.items() if nested is None):
             name = f"{_ENV_PREFIX}{section.upper()}_{key.upper()}"
             lines.append(
                 _row(name, _section_field(section, key), aliases.get((section, key)))
             )
+    lines += ["", "### Flat names", "", *_flat_names()]
     return "\n".join(lines) + "\n"
+
+
+def _flat_names() -> list[str]:
+    """The flat keys: a top-level YAML key, or the variable of its upper case."""
+    rows = [
+        "| Flat name | Variable | Sets |",
+        "|---|---|---|",
+    ]
+    for flat, (section, key) in sorted(_FLAT_KEYS.items()):
+        rows.append(f"| `{flat}` | `{_ENV_PREFIX}{flat.upper()}` | `{section}.{key}` |")
+    return rows
 
 
 def update(doc: str) -> str:

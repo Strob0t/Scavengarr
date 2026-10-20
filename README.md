@@ -7,15 +7,15 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Python 3.12 – 3.14](https://img.shields.io/badge/python-3.12%20%E2%80%93%203.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FStrob0t%2FScavengarr%2Fmain%2Fpyproject.toml&query=%24.tool.poetry.version&label=version&color=green)](CHANGELOG.md)
-[![Stremio addon](https://img.shields.io/badge/Stremio-addon-8A5AAB)](docs/features/stremio-addon.md)
-[![Torznab](https://img.shields.io/badge/Torznab-Prowlarr%20%7C%20Sonarr%20%7C%20Radarr-orange)](docs/features/torznab-api.md)
+[![Stremio addon](https://img.shields.io/badge/Stremio-addon-8A5AAB)](docs/current/stremio-addon.md)
+[![Torznab](https://img.shields.io/badge/Torznab-Prowlarr%20%7C%20Sonarr%20%7C%20Radarr-orange)](docs/reference/torznab-api.md)
 
 [Quick Start](#quick-start) ·
 [Connect your apps](#connect-your-apps) ·
 [Configuration](#configuration) ·
 [FAQ](#faq--troubleshooting) ·
-[Plugins](docs/plugins.md) ·
-[Docs](docs/features/README.md)
+[Plugins](docs/reference/plugins.md) ·
+[Docs](docs/README.md)
 
 </div>
 
@@ -74,7 +74,7 @@ flowchart LR
 1. **Title lookup.** A Stremio request carries an IMDb, TMDB or Kitsu id (an anime catalog's Kitsu id is translated to its IMDb id first). Scavengarr looks up the title and year in every language its plugins search in (TMDB, or IMDb/Wikidata without a TMDB key), and for an episode its title, air date and number, so the plugins that read a site's season pages find the episode the way the site numbers it.
 2. **Plugin search.** All matching plugins search in parallel. Each plugin runs its own multi-stage scrape (search page → detail pages → links); the answer goes out at its budget with what is known, a plugin still searching then finishes in the background for the next request, and sites that keep failing are skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
-4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 62 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
+4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 63 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
 5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
 
 ---
@@ -104,8 +104,9 @@ flowchart LR
 
 ### Sources and hosters
 
-- 42 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/plugins.md)
-- 62 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- 43 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/reference/plugins.md)
+- 63 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- The public broadcasters' mediatheken (German, Austrian and Swiss): films, documentaries and series episodes from the broadcasters' own files, without a hoster
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
 - Mirror fallback: plugins try alternative domains when the primary one is down, and follow a site's own published list of its addresses
 - Multi-language search: titles are looked up in each plugin's language
@@ -129,10 +130,10 @@ flowchart LR
 ### Operations
 
 - Single container with Docker Compose from a published `linux/amd64` and `linux/arm64` image; optional Byparr, Redis and Tempo profiles
-- Health, readiness and metrics endpoints (`/api/v1/healthz`, `/api/v1/readyz`, Prometheus `/metrics` with a Grafana dashboard and alert rules in `docker/`, `/api/v1/stats/metrics`)
+- Health, readiness and metrics endpoints (`/api/v1/healthz`; `/api/v1/readyz`, which the image's healthcheck asks and which answers 503 once the network is lost for 5 min; Prometheus `/metrics` with a Grafana dashboard and alert rules in `docker/`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
 - A record per plugin and day, kept 180 days: searches, results, timeouts, challenges and site checks (`/api/v1/stats/plugins`), the evidence for keeping or dropping a plugin whose site died
-- Graceful shutdown that drains in-flight requests
+- Graceful shutdown that drains in-flight requests, bounded at 5 s so a playback still open cannot hold the stop past Docker's grace
 - Configuration via YAML, environment variables or CLI flags
 
 ---
@@ -149,7 +150,7 @@ cd Scavengarr
 docker compose up -d
 ```
 
-Compose pulls the published image `ghcr.io/strob0t/scavengarr:latest` (`linux/amd64` and `linux/arm64`, e.g. a Raspberry Pi 4; the plugins are part of it). Then check that it is running:
+Compose pulls the published image `ghcr.io/strob0t/scavengarr:latest` (`linux/amd64` and `linux/arm64`; the plugins are part of it). Then check that it is running:
 
 ```bash
 curl http://localhost:7979/api/v1/healthz
@@ -157,7 +158,7 @@ curl http://localhost:7979/api/v1/healthz
 
 The answer names the version, the commit and the build time.
 
-Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Configuration → Docker](docs/features/configuration.md#docker-configuration) has the details.
+Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Deploy Scavengarr](docs/how-to/deploy.md) has the details.
 
 Scavengarr reads `data/config.yaml` (mounted into the container; when the file is missing, the container writes the default there on its first start, if the directory is writable for its user, uid 1000). Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 
@@ -167,7 +168,7 @@ Scavengarr reads `data/config.yaml` (mounted into the container; when the file i
 |---|---|---|
 | `solver` | [Byparr](https://github.com/ThePhaseless/Byparr) captcha solver | uncomment `SCAVENGARR_PLAYWRIGHT_SOLVER_URL` |
 | `redis` | Redis as cache backend | uncomment `SCAVENGARR_CACHE_BACKEND`, `SCAVENGARR_CACHE_REDIS_URL` and `SCAVENGARR_CACHE_MAX_CONCURRENT` |
-| `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/features/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
+| `tracing` | [Grafana Tempo](https://grafana.com/oss/tempo/) for traces on demand ([Observability](docs/current/observability.md)) | uncomment `SCAVENGARR_TELEMETRY_TRACING_ENDPOINT` |
 
 ```bash
 docker compose --profile solver --profile redis up -d
@@ -216,19 +217,19 @@ The browser also needs system libraries: install them once with `sudo poetry run
    ```
 3. Click **Install**. Open any movie or episode; Scavengarr's streams appear in the stream list.
 
-Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr behind a reverse proxy with a certificate (Caddy, Traefik, nginx) when you use it from other devices; `docker-compose.yml` trusts the proxy's `X-Forwarded-Proto` from private networks (`FORWARDED_ALLOW_IPS`), so the links Scavengarr builds use `https://`. Details: [Stremio addon](docs/features/stremio-addon.md).
+Stremio only loads addons over **HTTPS** (except on `localhost`). Put Scavengarr behind a reverse proxy with a certificate (Caddy, Traefik, nginx) when you use it from other devices; `docker-compose.yml` trusts the proxy's `X-Forwarded-Proto` from private networks (`FORWARDED_ALLOW_IPS`), so the links Scavengarr builds use `https://`. Details: [Deploying the Stremio addon](docs/how-to/stremio-deployment.md).
 
 ### Prowlarr (and through it Sonarr/Radarr)
 
 Each plugin is added as its own indexer:
 
 1. Prowlarr → **Settings → Indexers → Add Indexer → Generic Torznab**.
-2. **URL:** `http://<your-host>:7979/api/v1/torznab/<plugin>` (plugin names: [plugin list](docs/plugins.md)).
+2. **URL:** `http://<your-host>:7979/api/v1/torznab/<plugin>` (plugin names: [plugin list](docs/reference/plugins.md)).
 3. **API Key:** leave empty.
 4. **Categories:** `2000` (Movies), `5000` (TV).
 5. **Test**, then **Save**. Prowlarr syncs the indexer to Sonarr and Radarr.
 
-Download plugins deliver direct-download links; send them to JDownloader (e.g. via the `.crawljob` bundles). Details: [Prowlarr integration](docs/features/prowlarr-integration.md), [Torznab API](docs/features/torznab-api.md).
+Download plugins deliver direct-download links; send them to JDownloader (e.g. via the `.crawljob` bundles). Details: [Connect Prowlarr](docs/how-to/connect-prowlarr.md), [Torznab API](docs/reference/torznab-api.md).
 
 ---
 
@@ -255,15 +256,15 @@ The settings you are most likely to change:
 | `http.api_rate_limit_rpm` | `SCAVENGARR_API_RATE_LIMIT_RPM` | `120` | Requests per minute per client IP on the API |
 | `logging.level` | `SCAVENGARR_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
-Every setting can also come from the environment: a section's key as `SCAVENGARR_<SECTION>_<KEY>`, a dict-typed one as JSON (the older names in the table win over the sectioned ones). The answer does not wait for the whole search: it goes out once 5 streams resolve, or at its budget with what is known by then. The full reference is in [docs/features/configuration.md](docs/features/configuration.md).
+Every setting can also come from the environment: a section's key as `SCAVENGARR_<SECTION>_<KEY>`, a dict-typed one as JSON (the older names in the table win over the sectioned ones). The answer does not wait for the whole search: it goes out once 5 streams resolve, or at its budget with what is known by then. The full reference is in [docs/reference/configuration.md](docs/reference/configuration.md).
 
 ---
 
 ## Supported sources
 
-Scavengarr ships 42 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
+Scavengarr ships 43 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab), anime sites and the public broadcasters' mediatheken, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
 
-The complete, generated list with domains, content type, engine and languages is in **[docs/plugins.md](docs/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
+The complete, generated list with domains, content type, engine and languages is in **[docs/reference/plugins.md](docs/reference/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
 
 Want a site that is missing? Plugins are single Python files — see [Contributing](#contributing).
 
@@ -298,7 +299,7 @@ Every stream passed a playback check when it was listed, and Scavengarr resolves
 <details>
 <summary><b>A site is behind Cloudflare or a captcha</b></summary>
 
-The built-in headful browser passes most Cloudflare challenges; in Docker it runs on a virtual display automatically. For sites it cannot pass, start the Byparr sidecar (`--profile solver`) and set `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`. See [Captcha solving](docs/plans/captcha-solving.md).
+The built-in headful browser passes most Cloudflare challenges; in Docker it runs on a virtual display automatically. For sites it cannot pass, start the Byparr sidecar (`--profile solver`) and set `SCAVENGARR_PLAYWRIGHT_SOLVER_URL`. See [Browser and challenges](docs/current/browser-and-challenges.md).
 
 </details>
 
@@ -328,7 +329,7 @@ Some home routers treat many new connections to different hosts in a short time 
 <details>
 <summary><b>Where is my data stored?</b></summary>
 
-In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies, plugin scores and their 180-day record, hoster resolutions and circuit breakers) and in `data/config.yaml`. Scavengarr stores no media.
+In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies and the state of the hosters the browser plays, plugin scores and their 180-day record, hoster resolutions and circuit breakers) and in `data/config.yaml`. Scavengarr stores no media.
 
 </details>
 
@@ -336,21 +337,44 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 ## Documentation
 
+The index [docs/README.md](docs/README.md) maps the document groups, states what the docs cover and what is open, and lists every document with its status and the rules the documents follow. By topic:
+
 | Topic | Link |
 |---|---|
-| All features | [docs/features/README.md](docs/features/README.md) |
-| Stremio addon | [docs/features/stremio-addon.md](docs/features/stremio-addon.md) |
-| Torznab API | [docs/features/torznab-api.md](docs/features/torznab-api.md) |
-| Prowlarr integration | [docs/features/prowlarr-integration.md](docs/features/prowlarr-integration.md) |
-| Configuration reference | [docs/features/configuration.md](docs/features/configuration.md) |
-| Observability | [docs/features/observability.md](docs/features/observability.md) |
-| Plugin list | [docs/plugins.md](docs/plugins.md) |
-| Plugin system | [docs/features/plugin-system.md](docs/features/plugin-system.md) |
-| Hoster resolvers | [docs/features/hoster-resolvers.md](docs/features/hoster-resolvers.md) |
-| Link validation | [docs/features/link-validation.md](docs/features/link-validation.md) |
-| Plugin scoring | [docs/features/plugin-scoring-and-probing.md](docs/features/plugin-scoring-and-probing.md) |
-| Architecture | [docs/architecture/clean-architecture.md](docs/architecture/clean-architecture.md) |
+| Stremio addon | [docs/current/stremio-addon.md](docs/current/stremio-addon.md) |
+| Deploying the Stremio addon (HTTPS, reverse proxy) | [docs/how-to/stremio-deployment.md](docs/how-to/stremio-deployment.md) |
+| Deployment | [docs/how-to/deploy.md](docs/how-to/deploy.md) |
+| Torznab API | [docs/reference/torznab-api.md](docs/reference/torznab-api.md) |
+| Torznab and CrawlJobs | [docs/current/torznab-and-crawljobs.md](docs/current/torznab-and-crawljobs.md) |
+| Connecting Prowlarr | [docs/how-to/connect-prowlarr.md](docs/how-to/connect-prowlarr.md) |
+| Configuration reference | [docs/reference/configuration.md](docs/reference/configuration.md) |
+| Observability | [docs/current/observability.md](docs/current/observability.md) |
+| Metrics reference | [docs/reference/metrics.md](docs/reference/metrics.md) |
+| Operating production | [docs/how-to/operations.md](docs/how-to/operations.md) |
+| Measuring a change | [docs/how-to/performance-measurement.md](docs/how-to/performance-measurement.md) |
+| The dev container (setup, worktrees, hooks) | [docs/how-to/dev-container.md](docs/how-to/dev-container.md) |
+| Known issues | [docs/current/known-issues.md](docs/current/known-issues.md) |
+| Plugin list | [docs/reference/plugins.md](docs/reference/plugins.md) |
+| Plugins | [docs/current/plugins.md](docs/current/plugins.md) |
+| Plugin domains | [docs/current/plugin-domains.md](docs/current/plugin-domains.md) |
+| Writing a plugin | [docs/how-to/new-plugin.md](docs/how-to/new-plugin.md) |
+| Resolver list | [docs/reference/resolvers.md](docs/reference/resolvers.md) |
+| Hoster resolvers | [docs/current/hoster-resolvers.md](docs/current/hoster-resolvers.md) |
+| Writing a resolver | [docs/how-to/new-resolver.md](docs/how-to/new-resolver.md) |
+| Link validation | [docs/current/link-validation.md](docs/current/link-validation.md) |
+| Browser and challenges | [docs/current/browser-and-challenges.md](docs/current/browser-and-challenges.md) |
+| Architecture as built | [docs/current/architecture.md](docs/current/architecture.md) |
+| Architecture rules | [docs/target/architecture.md](docs/target/architecture.md) |
+| Coding guidelines | [docs/target/coding-guidelines.md](docs/target/coding-guidelines.md) |
+| Tech stack and the reasons for it | [docs/reference/tech-stack.md](docs/reference/tech-stack.md) |
+| Glossary of the codebase's terms | [docs/reference/glossary.md](docs/reference/glossary.md) |
+| Decision records | [docs/target/decisions/](docs/target/decisions/) |
+| Plans in work | [docs/plans/](docs/plans/) |
+| The work queue | [docs/backlog.md](docs/backlog.md) |
+| How the coding assistants work | [docs/agents/orchestration.md](docs/agents/orchestration.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
+
+`tests/unit/infrastructure/test_readme.py` keeps this table and the counts above current: every document under `docs/current/`, `docs/how-to/` and `docs/reference/` is linked here, and the plugin and resolver counts are those of the generated lists.
 
 ---
 
@@ -358,9 +382,10 @@ In the `scavengarr-cache` Docker volume (search cache, browser clearance cookies
 
 Most of Scavengarr's code was written with AI coding assistants — it is, openly, a largely vibe-coded project. It is not an unreviewed one: every change was directed, reviewed and accepted by an experienced software developer, and the project follows rules that keep the generated code honest:
 
-- **Test-driven development.** Tests come first; the suite has about 6,500 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
+- **Test-driven development.** Tests come first; the suite has about 7,000 unit, integration and end-to-end tests, plus opt-in live tests against the real sites.
 - **Clean Architecture.** Strict layers (domain, application, infrastructure, interfaces) with a dependency rule, ports as protocols and a single composition root.
-- **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code, pre-commit hooks and the full test suite before anything is committed.
+- **Quality gates on every commit.** `ruff` linting and formatting, type-annotated code checked by basedpyright, pre-commit hooks and the full test suite before anything is committed.
+- **Dependencies with their reasons.** Every package in `pyproject.toml` has its line in [docs/reference/tech-stack.md](docs/reference/tech-stack.md) with what it does and why it was chosen, beside the alternatives deliberately not used; a test fails when a dependency comes or goes without it.
 - **Written plans and measurements.** Larger changes start with a plan in [`docs/plans/`](docs/plans), and performance changes are measured against real requests before and after.
 - **Documentation ships with the code.** Behaviour, configuration and architecture changes update the docs and the changelog in the same commit.
 

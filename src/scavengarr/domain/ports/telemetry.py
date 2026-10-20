@@ -17,6 +17,8 @@ StageName = Literal[
     "stremio_phase",
     "plugin_search",
     "hoster_resolve",
+    "hoster_challenge_completion",
+    "hoster_pass_keep",
     "hls_proxy",
     "hls_readahead",
     "browser_page_wait",
@@ -27,6 +29,7 @@ ValueName = Literal[
     "stremio_streams",
     "plugin_results",
     "hls_proxy_bytes",
+    "network_ok",
 ]
 
 AttributeValue = str | int | float | bool
@@ -63,7 +66,7 @@ class TelemetryPort(Protocol):
         ...
 
     def record(self, name: ValueName, value: float, /, **labels: str) -> None:
-        """Record a value that is not a duration (a count, bytes)."""
+        """Record a value that is not a duration (a count, bytes, a state)."""
         ...
 
 

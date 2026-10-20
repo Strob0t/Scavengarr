@@ -38,6 +38,10 @@ class CachePort(Protocol):
         """Delete ALL keys (e.g. for admin endpoint)."""
         ...
 
+    async def ping(self) -> bool:
+        """Whether the backend answers (the readiness probe's cache check)."""
+        ...
+
     async def aclose(self) -> None:
         """Cleanup hook (e.g. close Redis connection)."""
         ...

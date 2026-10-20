@@ -1,0 +1,206 @@
+"""The browser's kept state: capture states and clearance cookies.
+
+``probe capture_state`` prints per kept host its age, each cookie's name,
+domain, path and remaining lifetime, and per origin the localStorage key
+names with their value lengths and, for a value that is a JSON object, the
+epoch times among its top-level fields from now (Byse's captcha pass: its
+``expiresAt``); then the stored clearance cookies alike. Read-only;
+prints names, lengths and times, never a value, and masks the id-like
+segments of names and paths (``mask()``).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+import time
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+import structlog
+
+from scavengarr.infrastructure.browser.clearance_store import _CACHE_KEY, _STATE_KEY
+from scavengarr.infrastructure.cache.cache_factory import create_cache
+from scavengarr.infrastructure.config import load_config
+
+# A file code names the file played, like a URL: a segment of 12 or more
+# characters with letters and digits (setting names such as i18nextLng are
+# shorter)
+_SEGMENT = re.compile(r"[^./:_-]+")
+# An epoch time in seconds, 2017 to 2049: smaller or larger numbers are no
+# time (an id, a count)
+_EPOCH, _EPOCH_END = 1.5e9, 2.5e9
+
+
+def _masked(segment: re.Match[str]) -> str:
+    text = segment.group()
+    coded = (
+        len(text) >= 12
+        and any(c.isdigit() for c in text)
+        and any(c.isalpha() for c in text)
+    )
+    return "…" if coded else text
+
+
+def mask(name: str) -> str:
+    """*name* (a cookie's name or path, a localStorage key) with its
+    id-like segments as ``…``."""
+    return _SEGMENT.sub(_masked, name)
+
+
+def span(seconds: float) -> str:
+    """*seconds* as the largest fitting units: ``45 s``, ``18 min``,
+    ``2 h 18 min``, ``364 d``."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    if seconds < 86400:
+        hours, minutes = divmod(seconds // 60, 60)
+        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+    return f"{seconds // 86400} d"
+
+
+def _cookie_line(cookie: Mapping[str, Any], now: float) -> str:
+    expires = cookie.get("expires")
+    if not isinstance(expires, (int, float)) or expires <= 0:
+        lifetime = "session"
+    elif expires <= now:
+        lifetime = f"expired {span(now - expires)} ago"
+    else:
+        lifetime = f"{span(expires - now)} left"
+    return (
+        f"- cookie {mask(str(cookie.get('name')))} | domain {cookie.get('domain')}"
+        f" | path {mask(str(cookie.get('path')))} | {lifetime}"
+    )
+
+
+def _times(value: str, now: float) -> list[str]:
+    """The epoch times among the top-level fields of *value*, a JSON
+    object (an expiry, in seconds or milliseconds), each from *now*; no
+    other field."""
+    try:
+        record = json.loads(value)
+    except ValueError:
+        return []
+    if not isinstance(record, dict):
+        return []
+    times = []
+    for key, field in record.items():
+        if isinstance(field, bool) or not isinstance(field, (int, float)):
+            continue
+        seconds = next(
+            (s for s in (field, field / 1000) if _EPOCH < s < _EPOCH_END), None
+        )
+        if seconds is not None:
+            when = (
+                f"in {span(seconds - now)}"
+                if seconds > now
+                else f"{span(now - seconds)} ago"
+            )
+            times.append(f"{mask(str(key))} {when}")
+    return times
+
+
+def _item(item: Mapping[str, Any], now: float) -> str:
+    value = str(item.get("value", ""))
+    details = ", ".join([f"{len(value)} chars", *_times(value, now)])
+    return f"{mask(str(item.get('name')))} ({details})"
+
+
+def _origin_line(origin: Mapping[str, Any], now: float) -> str:
+    address = str(origin.get("origin", ""))
+    host = urlsplit(address).hostname or address
+    parts = []
+    items = [i for i in origin.get("localStorage") or [] if isinstance(i, dict)]
+    if items:
+        parts.append(f"localStorage {', '.join(_item(i, now) for i in items)}")
+    bases = [b for b in origin.get("indexedDB") or [] if isinstance(b, dict)]
+    if bases:
+        parts.append("IndexedDB " + ", ".join(str(b.get("name")) for b in bases))
+    return f"- origin {host}: {'; '.join(parts) or 'empty'}"
+
+
+def _decode(raw: str | bytes | None, kind: type) -> Any:
+    """The key's JSON as *kind*; ``None`` if missing, ``...`` if corrupt."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return ...
+    return value if isinstance(value, kind) else ...
+
+
+def _state_lines(raw: str | bytes | None, now: float) -> list[str]:
+    title = f"capture states ({_STATE_KEY})"
+    states = _decode(raw, dict)
+    if states is None:
+        return [f"{title}: none"]
+    if states is ...:
+        return [f"{title}: corrupt"]
+    lines = [f"{title}: {len(states)} hosts"]
+    for host, entry in states.items():
+        if not isinstance(entry, dict):
+            lines.append(f"host {host}: corrupt")
+            continue
+        saved_at = entry.get("saved_at")
+        if isinstance(saved_at, (int, float)):
+            kept = datetime.fromtimestamp(saved_at, UTC).strftime("%H:%M:%S UTC")
+            lines.append(f"host {host}: kept {kept}, {span(now - saved_at)} ago")
+        else:
+            lines.append(f"host {host}: kept at an unknown time")
+        cookies = [c for c in entry.get("cookies") or [] if isinstance(c, dict)]
+        origins = [o for o in entry.get("origins") or [] if isinstance(o, dict)]
+        lines += [_cookie_line(c, now) for c in cookies]
+        lines += [_origin_line(o, now) for o in origins]
+        if not cookies and not origins:
+            lines.append("- nothing kept")
+    return lines
+
+
+def _clearance_lines(raw: str | bytes | None, now: float) -> list[str]:
+    title = f"clearance cookies ({_CACHE_KEY})"
+    cookies = _decode(raw, list)
+    if cookies is None:
+        return [f"{title}: none"]
+    if cookies is ...:
+        return [f"{title}: corrupt"]
+    cookies = [c for c in cookies if isinstance(c, dict)]
+    return [f"{title}: {len(cookies)}"] + [_cookie_line(c, now) for c in cookies]
+
+
+def report_lines(
+    states: str | bytes | None, clearance: str | bytes | None, *, now: float
+) -> list[str]:
+    """The report of the two keys' raw values at *now*."""
+    return _state_lines(states, now) + _clearance_lines(clearance, now)
+
+
+async def main() -> None:
+    structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING)
+    )
+    env = os.getenv("SCAVENGARR_CONFIG")
+    config = load_config(config_path=Path(env) if env else None)
+    cache = create_cache(
+        backend=config.cache.backend,
+        directory=str(config.cache.directory),
+        redis_url=config.cache.redis_url,
+    )
+    async with cache:
+        states = await cache.get(_STATE_KEY)
+        clearance = await cache.get(_CACHE_KEY)
+    for line in report_lines(states, clearance, now=time.time()):
+        print(line)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,4 +1,5 @@
-"""gxplayer (watch.gxplayer.xyz) hoster resolver — HLS master from the page.
+"""gxplayer (watch.gxplayer.xyz) hoster resolver — the HLS master built from the
+watch page.
 
 Resolution strategy (port of JD2 ``GxplayerXyz``):
 

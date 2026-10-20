@@ -15,6 +15,7 @@ from scavengarr.domain.entities import (
     TorznabQuery,
     TorznabUnsupportedAction,
 )
+from scavengarr.domain.entities.torznab import category_kind, category_matches
 
 
 class TestTorznabQuery:
@@ -117,3 +118,18 @@ class TestTorznabExceptions:
     def test_raise_and_catch(self) -> None:
         with pytest.raises(TorznabPluginNotFound):
             raise TorznabPluginNotFound("unknown-plugin")
+
+
+@pytest.mark.parametrize(
+    ("category", "kind"), [(2000, 2000), (2040, 2000), (5070, 5000), (100, 0)]
+)
+def test_the_kind_of_a_category_is_its_thousands(category: int, kind: int) -> None:
+    assert category_kind(category) == kind
+
+
+def test_the_category_rule_lives_in_the_domain() -> None:
+    from scavengarr.infrastructure.plugins import categories
+
+    assert categories.category_matches is category_matches
+    assert category_matches(5000, 5070)
+    assert not category_matches(5070, 5000)

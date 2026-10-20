@@ -4,11 +4,11 @@
 the ids of a dozen sites. The records with a Kitsu id and an IMDb id are
 reduced to the IMDb id, the type, TheTVDB's season and episode offset (a
 split cour's episode 3 is S3E15; long-runners carry no season), held in
-memory and cached 7 days in the cache backend. Loaded on the first lookup;
-a failed download is retried after an hour at the earliest. The reverse
-look-up for IMDb requests (the series entries without a season per IMDb id)
-never waits: it starts the load in the background and answers once the list
-is in memory.
+memory and cached 7 days in the cache backend. Loaded at the app's start
+(``load_in_background``) or on the first lookup; a failed download is retried
+after an hour at the earliest. The reverse look-up for IMDb requests (the
+series entries without a season per IMDb id) never waits: it starts the load
+in the background and answers once the list is in memory.
 """
 
 from __future__ import annotations
@@ -69,12 +69,10 @@ class AnimeIdLists:
         entries = await self._load()
         return entries.get(kitsu_id) if entries else None
 
-    def whole_series(self, imdb_id: str) -> list[int] | None:
-        """The Kitsu ids of *imdb_id*'s series entries without a TheTVDB
-        season (a long-runner's entry counts the series from its start),
-        in id order; ``None`` while the list is not in memory. Never waits:
-        a missing or stale list is loaded in the background, one load at a
-        time, and a stale one answers until the load replaces it."""
+    def load_in_background(self) -> None:
+        """Load a missing or stale list in the background, one load at a
+        time (none within the hour after a failed download); never waits.
+        The app's start calls it, so the first IMDb request finds the list."""
         if (
             not self._fresh()
             and not self._waiting_after_failure()
@@ -82,6 +80,15 @@ class AnimeIdLists:
         ):
             self._background = asyncio.create_task(self._load())
             self._background.add_done_callback(_load_done)
+
+    def whole_series(self, imdb_id: str) -> list[int] | None:
+        """The Kitsu ids of *imdb_id*'s series entries without a TheTVDB
+        season (a long-runner's entry counts the series from its start),
+        in id order; ``None`` while the list is not in memory. Never waits:
+        a missing or stale list is loaded in the background
+        (``load_in_background``), and a stale one answers until the load
+        replaces it."""
+        self.load_in_background()
         if self._whole_series is None:
             return None
         return self._whole_series.get(imdb_id, [])

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 from structlog.testing import capture_logs
 
 from scavengarr.domain.entities.stremio import EpisodeRef
@@ -517,16 +518,17 @@ class TestSearch:
         assert results == []
         assert not [e for e in logs if e["event"] == "aniworld_invalid_json"]
 
-    async def test_search_ajax_error_returns_empty(self) -> None:
+    async def test_a_refused_search_is_unreachable(self) -> None:
         plugin = _make_plugin()
         plugin._domain_verified = True
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
-        results = await plugin.search("naruto")
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("naruto")
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +665,7 @@ def _series_page(seasons: int) -> str:
 
 _LUFFY = "I'm Luffy! The Man Who Will Become the Pirate King!"
 _LABOON = "The First Line of Defense? The Giant Whale Laboon Appears!"
+_PROMISE = "A Promise Between Men! Luffy and the Whale Vow to Meet Again!"
 _STAFFEL_2 = "<html><body>" + _season_table(
     2,
     [
@@ -750,11 +753,78 @@ class TestLocatesEpisodes:
                 "season": 5,
                 "episode": 2,
                 "absolute": 62,
+                "absolute_source": "position",
                 "site_season": 2,
                 "site_episode": 1,
                 "located_by": "number",
             }.items()
         )
+
+    @pytest.mark.parametrize(
+        ("ref", "site_episode", "rule"),
+        [
+            (EpisodeRef(5, 2, absolute=62), 1, "number"),
+            # the site shows no 64, the title confirms its neighbour 63
+            (EpisodeRef(5, 3, _PROMISE, absolute=64), 2, "neighbour"),
+            (EpisodeRef(5, 2, _LABOON), 1, "title"),
+            (EpisodeRef(5, 2, _LABOON.replace("Defense", "Defence")), 1, "fuzzy_title"),
+        ],
+    )
+    async def test_the_located_line_names_the_rule(
+        self, ref: EpisodeRef, site_episode: int, rule: str
+    ) -> None:
+        plugin, _paths = _locating_plugin()
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=ref.season, episode=ref.episode, episode_ref=ref
+            )
+
+        assert results[0].metadata["episode_located_by"] == rule
+        located = next(e for e in logs if e["event"] == "aniworld_episode_located")
+        assert (located["site_episode"], located["located_by"]) == (site_episode, rule)
+
+    async def test_a_partial_series_is_located_by_title_only(self) -> None:
+        """The site's "One Piece" is a shorter form of the request's title, as
+        Bleach is of the Thousand-Year Blood War: the reference's number
+        counts the request's series, the title places the episode."""
+        plugin, paths = _locating_plugin()
+        ref = EpisodeRef(
+            1, 1, _LABOON, absolute=1, titles=("One Piece: Episode of Laboon",)
+        )
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=1, episode=1, episode_ref=ref
+            )
+
+        assert results[0].metadata["episode_located_by"] == "title"
+        assert "/anime/stream/one-piece/staffel-2/episode-1" in paths
+        assert "/anime/stream/one-piece/staffel-1/episode-1" not in paths
+        located = next(e for e in logs if e["event"] == "aniworld_episode_located")
+        assert located["partial"] is True
+
+    async def test_without_a_title_match_a_partial_series_gives_nothing(
+        self,
+    ) -> None:
+        plugin, paths = _locating_plugin()
+        ref = EpisodeRef(
+            1,
+            1,
+            "Nothing Like It",
+            absolute=1,
+            titles=("One Piece: Episode of Laboon",),
+        )
+
+        with capture_logs() as logs:
+            results = await plugin.search(
+                "one piece", season=1, episode=1, episode_ref=ref
+            )
+
+        assert results == []
+        assert not any("/episode-" in path for path in paths)
+        missed = next(e for e in logs if e["event"] == "aniworld_episode_not_located")
+        assert missed["partial"] is True
 
     async def test_the_runners_entry_reaches_the_reference(self) -> None:
         """The runner calls ``isolated_search``: the reference arrives there too
@@ -853,3 +923,18 @@ class TestLocatesEpisodes:
         assert len(results) == 1
         assert results[0].metadata["site_episode"] == 1
         assert "/anime/stream/one-piece/staffel-1" in paths
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.post("https://aniworld.to/ajax/search").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("naruto")

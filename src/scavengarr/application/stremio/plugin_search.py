@@ -100,6 +100,15 @@ async def current_snapshots(
     return found
 
 
+def _stood_in(results: list[SearchResult], member: str) -> None:
+    """Mark a standby's *results* as the answer to *member*'s search
+    (``standby_for``): the run ends under the member's name, so the search's
+    progress holds and drops their partial matches with the member's (code
+    review 2026-10-12, finding 4)."""
+    for result in results:
+        result.metadata["standby_for"] = member
+
+
 def _breaker_key(name: str, category: int | None) -> str:
     """Circuit breaker entry of a plugin: one per requested category.
 
@@ -427,6 +436,7 @@ class PluginSearchRunner:
             if standby is not None and not results:
                 results, _, standby_dropped = await _run(standby)
                 dropped += standby_dropped
+                _stood_in(results, name)
                 log.info(
                     "stremio_mirror_standby",
                     plugin=name,
@@ -556,6 +566,28 @@ class PluginSearchRunner:
         elif found:
             self._circuit_breaker.record_success(key)
 
+    def _count_site_failure(
+        self, name: str, failure: PluginUnreachableError | TimeoutError
+    ) -> str:
+        """Record a search that *name*'s site failed and return the stage's
+        outcome, so that the record does not read it as a search without
+        results.
+
+        No domain answered (``PluginUnreachableError``): the plugin is
+        skipped until the health recheck finds its site answering. A page of
+        the site timed out (``TimeoutError``, which the httpx base raises
+        for the search page): counted as the plugin timeout is.
+        """
+        if isinstance(failure, PluginUnreachableError):
+            log.warning("stremio_plugin_unreachable", plugin=name)
+            if self._plugin_health is not None:
+                self._plugin_health.mark_unreachable(name)
+            self._history.count(name, "unreachable_searches")
+            return "unreachable"
+        log.warning("stremio_plugin_page_timeout", plugin=name)
+        self._history.count(name, "timeouts")
+        return "timeout"
+
     async def _search_single_plugin(
         self,
         name: str,
@@ -611,14 +643,8 @@ class PluginSearchRunner:
                 success = True
                 late = budget_ends is not None and time.monotonic() > budget_ends
                 stage.outcome = "late" if late else "hits" if results else "empty"
-            except PluginUnreachableError:
-                # No domain answered: skipped until the health recheck
-                # finds the site answering (the search's own record of it)
-                log.warning("stremio_plugin_unreachable", plugin=name)
-                if self._plugin_health is not None:
-                    self._plugin_health.mark_unreachable(name)
-                self._history.count(name, "unreachable_searches")
-                stage.outcome = "unreachable"
+            except (PluginUnreachableError, TimeoutError) as exc:
+                stage.outcome = self._count_site_failure(name, exc)
                 results = []
             except Exception:
                 log.warning("stremio_plugin_search_error", plugin=name, exc_info=True)

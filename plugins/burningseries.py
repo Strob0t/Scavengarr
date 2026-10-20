@@ -242,13 +242,15 @@ class BurningSeriesPlugin(HttpxPluginBase):
         self._series_cache: list[dict[str, str]] | None = None
 
     async def _fetch_series_listing(self) -> list[dict[str, str]]:
-        """Fetch and parse the full series listing, cached for plugin lifetime."""
+        """Fetch and parse the full series listing, cached for plugin lifetime.
+
+        The listing is the site's search page: a failure of the site raises
+        (a timeout, no domain answering), so the plugin record counts it.
+        """
         if self._series_cache is not None:
             return self._series_cache
 
-        html = await self._fetch_text(
-            f"{self.base_url}/andere-serien", context="listing"
-        )
+        html = await self._fetch_search_page("/andere-serien", context="listing")
         if html is None:
             return []
 

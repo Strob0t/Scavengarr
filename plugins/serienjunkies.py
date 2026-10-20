@@ -178,17 +178,15 @@ class SerienjunkiesPlugin(HttpxPluginBase):
     async def _search_series(self, query: str) -> list[dict[str, str]]:
         """Search for series matching query.
 
-        Returns list of dicts with 'title' and 'slug' keys.
+        Returns list of dicts with 'title' and 'slug' keys. A failure of the
+        site raises (a timeout, no domain answering), so the plugin record
+        counts it.
         """
-        resp = await self._safe_fetch(
-            f"{self.base_url}/serie/search",
-            context="search",
-            params={"q": query},
-        )
-        if resp is None:
+        html = await self._fetch_search_page("/serie/search", params={"q": query})
+        if html is None:
             return []
 
-        parser = await parse_page(_SearchResultParser(), resp.text)
+        parser = await parse_page(_SearchResultParser(), html)
 
         self._log.info(
             "serienjunkies_search",

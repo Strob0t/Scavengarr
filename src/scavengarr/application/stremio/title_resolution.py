@@ -16,10 +16,13 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Protocol
 
+from scavengarr.application.stremio.queries import build_multi_lang_reference
 from scavengarr.domain.entities.stremio import (
+    AbsoluteSource,
     EpisodeRef,
     SeriesMeta,
     StremioStreamRequest,
+    TitleMatches,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -29,7 +32,7 @@ from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.domain.ports.tmdb import TmdbClientPort
 
 # The title matcher: (results, reference, threshold, **weights) -> matches
-TitleFilterFn = Callable[..., list[SearchResult]]
+TitleFilterFn = Callable[..., TitleMatches]
 
 # A Kitsu number this far from the Cinemeta position still counts as absolute
 # (One Piece: 1089 where the list says 1088); farther off it is a season entry's
@@ -117,7 +120,11 @@ class TitleResolver:
         ``tmdb:`` id has no language variants: the same info for every
         language); the record comes from the catalog, once per request, and
         gives every info its identity: the request's IMDb id and whether the
-        genres name animation (``None`` without a record).
+        genres name animation (``None`` without a record). Every info also
+        carries the request's series titles in all *languages*
+        (``series_titles``), so each language group's reference judges a
+        site's name by the titles ``EpisodeRef.titles`` holds (code review
+        2026-10-12, finding 11).
         """
         meta, infos = await asyncio.gather(
             self.series_meta(request),
@@ -127,11 +134,15 @@ class TitleResolver:
         )
         imdb_id = request.imdb_id if request.imdb_id.startswith("tt") else None
         animation = None if meta is None else "Animation" in meta.genres
+        by_language = dict(zip(languages, infos))
+        titles = self.series_titles(by_language, languages)
         return {
             lang: None
             if info is None
-            else replace(info, imdb_id=imdb_id, animation=animation)
-            for lang, info in zip(languages, infos)
+            else replace(
+                info, imdb_id=imdb_id, animation=animation, series_titles=titles
+            )
+            for lang, info in by_language.items()
         }, meta
 
     async def series_meta(self, request: StremioStreamRequest) -> SeriesMeta | None:
@@ -147,15 +158,29 @@ class TitleResolver:
         return meta
 
     @staticmethod
+    def series_titles(
+        title_infos: dict[str, TitleMatchInfo | None], languages: list[str]
+    ) -> tuple[str, ...]:
+        """The request's series titles in *languages*: each language's title
+        and alternatives, once each (``EpisodeRef.titles``)."""
+        reference = build_multi_lang_reference(title_infos, languages)
+        if reference is None:
+            return ()
+        return (reference.title, *reference.alt_titles)
+
+    @staticmethod
     def episode_ref(
         request: StremioStreamRequest,
         meta: SeriesMeta | None,
         *,
         absolute: int | None = None,
+        position_trusted: bool = False,
+        titles: tuple[str, ...] = (),
     ) -> EpisodeRef | None:
         """The episode *request* means, for plugins that locate episodes on
         the site's own numbering: the request's season and episode, the
-        catalog entry's English title and release date, and the absolute
+        catalog entry's English title and release date, the request's
+        series *titles* (``series_titles``), and the absolute
         number: the entry's position among the regular seasons' numbered
         episodes (season 1 and up, episode 1 and up) ordered by season and
         episode, or *absolute* (a ``kitsu:`` request's episode number)
@@ -165,9 +190,13 @@ class TitleResolver:
         Piece: 1089 where the list says 1088); Kitsu has an entry per
         season for most anime, whose number counts that season alone and
         would place the episode in season 1, so a number far from the
-        position gives way to it. A special (season 0) and an episode 0
-        entry of a regular season have no position: their number is
-        *absolute* alone. ``None`` without a record, for a request
+        position gives way to it. The reference names the number's source:
+        Kitsu's, or the position, which counts as the sites do only where
+        *position_trusted* (no Kitsu entry counts the series whole) and is
+        unchecked otherwise: it may lie one off the sites' count (code
+        review of 2026-10-12, finding 1). A special (season 0) and an
+        episode 0 entry of a regular season have no position: their number
+        is *absolute* alone. ``None`` without a record, for a request
         without an episode, and for an episode the list lacks unless
         *absolute* names it: a reference with neither a title nor a number
         has nothing a plugin can locate by, and such an episode (the newest
@@ -181,6 +210,8 @@ class TitleResolver:
         )
         if entry is None and absolute is None:
             return None
+        # A reference without a number keeps the default source
+        source: AbsoluteSource = "kitsu" if absolute is not None else "position"
         if entry is not None and entry.season >= 1 and entry.episode >= 1:
             # An episode 0 entry of a regular season (Duel Monsters' S2E0)
             # is no numbered episode: the sites and Kitsu count without it
@@ -191,12 +222,15 @@ class TitleResolver:
             position = regular.index(entry) + 1
             if absolute is None or abs(absolute - position) > _KITSU_SLACK:
                 absolute = position
+                source = "position" if position_trusted else "unchecked"
         return EpisodeRef(
             season=request.season,
             episode=request.episode,
             title=entry.name or None if entry is not None else None,
             aired=entry.released if entry is not None else None,
             absolute=absolute,
+            source=source,
+            titles=titles,
         )
 
     async def _title_info(
@@ -221,11 +255,12 @@ class TitleResolver:
 
     async def matching(
         self, results: list[SearchResult], ref: TitleMatchInfo
-    ) -> list[SearchResult]:
-        """The results whose title matches *ref* (in a worker thread: CPU work;
-        ``to_thread`` keeps the log context, unlike ``run_in_executor``)."""
+    ) -> TitleMatches:
+        """The results whose title matches *ref*, the partial matches apart
+        (in a worker thread: CPU work; ``to_thread`` keeps the log context,
+        unlike ``run_in_executor``)."""
         if not results:
-            return []
+            return TitleMatches()
         return await asyncio.to_thread(
             lambda: self._filter_fn(results, ref, self._threshold, **self._weights)
         )

@@ -4,7 +4,7 @@ httpx connects through httpcore, whose default backend on asyncio is anyio:
 it runs TLS in Python (``anyio.streams.tls.TLSStream`` around an
 ``ssl.SSLObject``) and passes every chunk through anyio's stream layers.
 asyncio streams leave TLS to the event loop, which in the app is uvloop's
-compiled implementation. Measured on the Raspberry Pi with 1 MB HLS
+compiled implementation. Measured on the production host with 1 MB HLS
 segments through the proxy (2026-10-05, three runs): 103-112 ms of CPU per
 MB with anyio, 75-88 ms with this backend.
 

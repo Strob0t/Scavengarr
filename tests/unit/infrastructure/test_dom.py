@@ -28,7 +28,7 @@ class _ParagraphCounter:
 
 class TestParsePage:
     """Plugins parse their pages through parse_page(): a 1.3 MB page took
-    23 ms on x86, several times as long on a Raspberry Pi."""
+    23 ms on x86, several times as long on the production host."""
 
     async def test_big_pages_are_parsed_in_a_worker_thread(self) -> None:
         parser = await parse_page(_ParagraphCounter(), "<p>x</p>" * 10_000)

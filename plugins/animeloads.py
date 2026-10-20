@@ -9,7 +9,7 @@ Scrapes anime-loads.org (German anime/manga streaming & download site) via Playw
   Downloads only (no Stremio): a series' preview embed is no episode stream
 
 Download links are resolved when a release is grabbed
-(``resolve_download``, docs/plans/captcha-solving.md):
+(``resolve_download``, docs/current/torznab-and-crawljobs.md):
 ``POST /ajax/captcha`` with ``enc=base64(["media", slug, "downloads",
 release, episode | "cnl"])`` answers ``noadblock`` → the site's "odd one out"
 image captcha (5 × 48 px images; the odd one differs in ~4× as many pixels,

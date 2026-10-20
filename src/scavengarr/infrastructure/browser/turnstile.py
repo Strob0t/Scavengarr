@@ -4,7 +4,7 @@ Managed challenges show a "Verify you are human" checkbox inside a
 ``challenges.cloudflare.com`` iframe (closed shadow root). It does not clear
 on its own; a click is required. Patchright locators reach into the closed
 shadow root, and only a headful browser passes the check
-(docs/plans/antibot-patchright.md, Phase 0).
+(docs/current/browser-and-challenges.md).
 """
 
 from __future__ import annotations
@@ -17,6 +17,10 @@ from typing import TypeVar
 import structlog
 from patchright.async_api import Locator, Page
 
+from scavengarr.infrastructure.browser.page_gate import (
+    mark_resolution_challenge,
+    mark_resolution_passed,
+)
 from scavengarr.infrastructure.captcha.altcha import AltchaError, solve_altcha
 
 T = TypeVar("T")
@@ -169,10 +173,13 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
     ALTCHA widget in the same form is solved before the submit
     (``_solve_altcha_widget``; raises ``AltchaError`` when it cannot be).
     Returns False at once when no widget is shown, and when no token
-    arrived within *timeout_ms*.
+    arrived within *timeout_ms*. A widget shown marks the running hoster
+    resolution (``mark_resolution_challenge``), its token passes the mark
+    (``mark_resolution_passed``): the submit comes only after it.
     """
     if not await page.locator(_WIDGET_TOKEN).count():
         return False
+    mark_resolution_challenge("turnstile")
     token = page.locator(_WIDGET_TOKEN).first
     start = _now()
     deadline = start + timeout_ms / 1000
@@ -186,6 +193,7 @@ async def pass_turnstile_widget(page: Page, *, timeout_ms: int) -> bool:
                 log.warning("altcha_widget_unsolved", url=page.url, error=str(exc))
                 raise
             await form.evaluate(_SUBMIT_JS)
+            mark_resolution_passed()
             log.info(
                 "turnstile_widget_passed",
                 url=page.url,
@@ -205,10 +213,14 @@ async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
     """Wait for a Cloudflare challenge to clear, clicking Turnstile if needed.
 
     Returns True when the page is (or becomes) a normal page, False when the
-    challenge is still shown after *timeout_ms*.
+    challenge is still shown after *timeout_ms*. A challenge shown marks the
+    running hoster resolution (``mark_resolution_challenge``), and once it
+    cleared passes the mark (``mark_resolution_passed``); a page without one
+    passes nothing.
     """
     if not await is_challenge_page(page):
         return True
+    mark_resolution_challenge("cloudflare_page")
 
     start = _now()
     deadline = start + timeout_ms / 1000
@@ -224,5 +236,6 @@ async def solve_cloudflare(page: Page, *, timeout_ms: int) -> bool:
         await page.wait_for_timeout(_POLL_MS)
         if not await is_challenge_page(page):
             await _settle(page)
+            mark_resolution_passed()
             log.info("cloudflare_solved", url=page.url, clicked=last_click is not None)
             return True

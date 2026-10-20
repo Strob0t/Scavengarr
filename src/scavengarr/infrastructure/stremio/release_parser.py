@@ -50,6 +50,10 @@ _BADGE_TO_QUALITY: dict[str, StreamQuality] = {
 _GERMAN_PATTERNS = re.compile(r"(?i)\b(ger(?:man)?|deu(?:tsch(?:en)?)?)\b")
 _ENGLISH_PATTERNS = re.compile(r"(?i)\b(eng(?:lish|lisch(?:en)?)?)\b")
 _SUBTITLE_PATTERNS = re.compile(r"(?i)\b(sub|untertiteln?)\b")
+# The original audio, whichever language it is (the mediatheken's
+# "Originalversion")
+_ORIGINAL_PATTERNS = re.compile(r"(?i)\b(original(?:version|fassung)?|ov)\b")
+_ORIGINAL = StreamLanguage(code="ov", label="Original", is_dubbed=False)
 
 
 def _quality_from_badge(badge: str) -> StreamQuality:
@@ -202,5 +206,8 @@ def _language_from_link_string(link_language: str) -> StreamLanguage | None:
             label=_label_for("en", is_dubbed=not is_sub),
             is_dubbed=not is_sub,
         )
+
+    if _ORIGINAL_PATTERNS.search(text):
+        return _ORIGINAL
 
     return None

@@ -202,12 +202,19 @@ class FireaniPlugin(HttpxPluginBase):
     async def _search_page(
         self, query: str, page: int
     ) -> tuple[list[dict[str, Any]], int]:
-        """Fetch one /search page; returns ``(anime entries, page count)``."""
-        html = await self._fetch_text(
-            f"{self.base_url}/search",
-            params={"q": query, "page": str(page)},
-            context="search",
-        )
+        """Fetch one /search page; returns ``(anime entries, page count)``.
+
+        A failure of the site on the first page raises (a timeout, no domain
+        answering), so the plugin record counts it; a later page that fails
+        ends the pagination.
+        """
+        params = {"q": query, "page": str(page)}
+        if page > 1:
+            html = await self._fetch_text(
+                f"{self.base_url}/search", params=params, context="search"
+            )
+        else:
+            html = await self._fetch_search_page("/search", params=params)
         if html is None:
             return [], 0
         return _parse_search_payload(html)

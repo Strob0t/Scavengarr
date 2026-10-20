@@ -17,9 +17,16 @@ from scavengarr.infrastructure.telemetry import (
 )
 from scavengarr.infrastructure.version import APP_VERSION
 
+from ..waiting import eventually
+
 
 def _sample(t: Telemetry, name: str, **labels: str) -> float | None:
     return t.registry.get_sample_value(name, labels)
+
+
+def _loop_samples(t: Telemetry) -> int:
+    """How often the loop lag monitor has measured; its timer runs from then."""
+    return t.snapshot()["event_loop"]["samples"]
 
 
 class TestStage:
@@ -166,6 +173,16 @@ class TestCountAndRecord:
         with pytest.raises(ValueError):
             t.record("hls_proxy_bytes", 100)
 
+    def test_record_gauge(self) -> None:
+        """A state: the last value counts (the network probe's checks)."""
+        t = Telemetry()
+        t.record("network_ok", 0.0, check="dns")
+        t.record("network_ok", 1.0, check="dns")
+        t.record("network_ok", 0.0, check="cache")
+
+        assert _sample(t, "scavengarr_network_ok", check="dns") == 1.0
+        assert _sample(t, "scavengarr_network_ok", check="cache") == 0.0
+
 
 class TestRender:
     def test_text_format_with_standard_families(self) -> None:
@@ -281,9 +298,9 @@ class TestEventLoopLag:
     async def test_monitor_records_a_blocked_loop(self) -> None:
         t = Telemetry()
         task = asyncio.create_task(monitor_loop_lag(t, interval=0.01, warn_ms=1e9))
-        await asyncio.sleep(0.02)
+        await eventually(lambda: _loop_samples(t) >= 1)
         time.sleep(0.05)  # CPU-bound work holding the loop
-        await asyncio.sleep(0.03)
+        await eventually(lambda: t.snapshot()["event_loop"].get("lag_ms_max", 0) >= 30)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -296,9 +313,9 @@ class TestEventLoopLag:
         t = Telemetry()
         with capture_logs() as logs:
             task = asyncio.create_task(monitor_loop_lag(t, interval=0.01, warn_ms=20))
-            await asyncio.sleep(0.02)
-            time.sleep(0.05)
-            await asyncio.sleep(0.03)
+            await eventually(lambda: _loop_samples(t) >= 1)
+            time.sleep(0.05)  # CPU-bound work holding the loop
+            await eventually(lambda: any(e["event"] == "event_loop_lag" for e in logs))
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

@@ -4,18 +4,21 @@ player asks for, fetched into memory (``SegmentReadAhead``)."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
 from structlog.testing import capture_logs
 
+from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
     SegmentReadAhead,
     listed_segments,
     stream_hls_segment,
 )
 from scavengarr.infrastructure.telemetry import Telemetry
+
+from ..waiting import eventually
 
 _CDN = "https://cdn.test/v/"
 _PLAYLIST = f"{_CDN}720p.m3u8?t=abc"
@@ -33,6 +36,9 @@ class _Cdn:
 
     *statuses* answers the n-th request for a URL with a status other than
     200 (``{"seg-2.ts": [429]}``: the first request for seg-2 gets 429).
+    *broken* cuts the body of the first n requests for a URL after half
+    its bytes with a transport error (``{"seg-2.ts": 1}``), calling
+    *on_break* first.
     """
 
     def __init__(
@@ -40,11 +46,15 @@ class _Cdn:
         *,
         size: int = 4096,
         statuses: dict[str, list[int]] | None = None,
+        broken: dict[str, int] | None = None,
         declare_length: bool = True,
     ) -> None:
         self.requests: list[str] = []
+        self.read_timeouts: list[float | None] = []
         self.size = size
         self.statuses = statuses or {}
+        self.broken = broken or {}
+        self.on_break: Callable[[], None] | None = None
         self.declare_length = declare_length
         self.block: asyncio.Event | None = None
 
@@ -59,6 +69,7 @@ class _Cdn:
     async def _answer(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         self.requests.append(url)
+        self.read_timeouts.append(request.extensions["timeout"]["read"])
         if self.block is not None:
             await self.block.wait()
         name = request.url.path.rsplit("/", 1)[-1]
@@ -66,6 +77,13 @@ class _Cdn:
         if queued:
             return httpx.Response(queued.pop(0))
         body = _segment_body(url, self.size)
+        if self.broken.get(name):
+            self.broken[name] -= 1
+            return httpx.Response(
+                200,
+                stream=_Broken([body[: len(body) // 2]], self.on_break),
+                headers={"content-type": "video/mp2t"},
+            )
         if self.declare_length:
             return httpx.Response(
                 200, content=body, headers={"content-type": "video/mp2t"}
@@ -82,6 +100,24 @@ class _Chunks(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self._chunks:
             yield chunk
+
+
+class _Broken(_Chunks):
+    """The given chunks, then the CDN drops the connection mid-body
+    (production's acek-cdn: ``RemoteProtocolError``)."""
+
+    def __init__(
+        self, chunks: list[bytes], on_break: Callable[[], None] | None
+    ) -> None:
+        super().__init__(chunks)
+        self._on_break = on_break
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+        if self._on_break is not None:
+            self._on_break()
+        raise httpx.RemoteProtocolError("peer closed connection")
 
 
 class _Clock:
@@ -219,6 +255,7 @@ class TestReadAhead:
         assert not read_ahead._playbacks[_PLAYLIST].ahead
 
     async def test_a_segment_of_no_playlist_is_streamed_as_before(self) -> None:
+        """And counted ``miss``, so a playback the read-ahead lost shows."""
         cdn = _Cdn()
         telemetry = Telemetry()
         read_ahead = SegmentReadAhead(telemetry=telemetry)
@@ -227,7 +264,7 @@ class TestReadAhead:
 
         assert body == _segment_body(_SEGMENTS[0])
         assert cdn.requests == [_SEGMENTS[0]]
-        assert _count(telemetry, "miss") == 0
+        assert _count(telemetry, "miss") == 1
 
     async def test_served_from_memory_in_64_kib_pieces_and_counted(self) -> None:
         cdn = _Cdn(size=150_000)
@@ -313,7 +350,9 @@ class TestBounds:
         assert cdn.requested("seg-4.ts") == 1
         assert cdn.requested("seg-5.ts") == 1 and cdn.requested("seg-6.ts") == 1
 
-    async def test_an_idle_playback_is_dropped(self) -> None:
+    async def test_an_idle_playback_loses_only_its_fetches_ahead(self) -> None:
+        """Their memory goes; the segment order stays for a player that
+        resumes without fetching the playlist again."""
         cdn = _Cdn()
         telemetry = Telemetry()
         clock = _Clock()
@@ -326,20 +365,117 @@ class TestBounds:
             clock.now += 61
             read_ahead.remember(f"{_CDN}other.m3u8", other)
 
-        assert _PLAYLIST not in read_ahead._playbacks
         assert _count(telemetry, "dropped") == 3
-        assert read_ahead._playlist_of.get(_SEGMENTS[0]) is None
+        assert read_ahead._playbacks[_PLAYLIST].ahead == {}
+        assert read_ahead._playlist_of.get(_SEGMENTS[0]) == _PLAYLIST
 
-    async def test_at_most_eight_playbacks(self) -> None:
+    async def test_a_player_resuming_after_a_pause_gets_its_read_ahead_back(
+        self,
+    ) -> None:
+        """Production, 2026-10-12: Stremio went on at the next segment after
+        a 20-minute pause without fetching the playlist again, and each
+        segment came from the CDN on demand, 4.1 to 4.6 s against 9 to 19 ms
+        before the pause."""
+        cdn = _Cdn()
+        telemetry = Telemetry()
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(telemetry=telemetry, clock=clock)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        bodies: list[bytes] = []
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+            clock.now += 61
+            # another playback's playlist sweeps the idle one
+            read_ahead.remember(f"{_CDN}other.m3u8", [f"{_CDN}other-1.ts"])
+            cdn.requests.clear()
+            for url in _SEGMENTS[1:5]:
+                body, _ = await _segment(client, read_ahead, url)
+                bodies.append(body)
+                await _settle(read_ahead)
+
+        assert bodies == [_segment_body(url) for url in _SEGMENTS[1:5]]
+        # the pause cost the fetches ahead; seg-2 came from the CDN on
+        # demand, seg-3 to seg-5 from memory
+        assert _count(telemetry, "dropped") == 3
+        assert _count(telemetry, "hit") == 3
+        assert [cdn.requested(f"seg-{i}.ts") for i in range(2, 7)] == [1] * 5
+
+    async def test_a_paused_playback_keeps_its_order_while_others_play(
+        self,
+    ) -> None:
+        """Production, 2026-10-12: a 1080p playback paused for 4.5 minutes
+        while 12 other media playlists passed the proxy; the least recently
+        used playback went with its order, and its 497 segments after the
+        resume all came from the CDN on demand."""
+        cdn = _Cdn()
+        telemetry = Telemetry()
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(telemetry=telemetry, clock=clock)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+            for i in range(12):
+                clock.now += 20
+                others = [f"{_CDN}p{i}-seg-{n}.ts" for n in range(1, 5)]
+                read_ahead.remember(f"{_CDN}p{i}.m3u8", others)
+                await _segment(client, read_ahead, others[0])
+                await _settle(read_ahead)
+            hits = _count(telemetry, "hit")
+            for url in _SEGMENTS[1:5]:
+                await _segment(client, read_ahead, url)
+                await _settle(read_ahead)
+
+        # seg-2 from the CDN on demand, seg-3 to seg-5 fetched ahead
+        assert _count(telemetry, "hit") - hits == 3
+
+    async def test_at_most_eight_playbacks_hold_fetches_ahead(self) -> None:
+        """The bound on memory: a ninth playback that schedules takes the
+        place of the least recently used one, which keeps its order."""
+        cdn = _Cdn()
         clock = _Clock()
         read_ahead = SegmentReadAhead(clock=clock)
-        for i in range(9):
+        async with cdn.client() as client:
+            for i in range(10):
+                clock.now += 1
+                urls = [f"{_CDN}p{i}-seg-{n}.ts" for n in range(1, 5)]
+                read_ahead.remember(f"{_CDN}p{i}.m3u8", urls)
+                await _segment(client, read_ahead, urls[0])
+                await _settle(read_ahead)
+                holding = [p for p in read_ahead._playbacks.values() if p.ahead]
+                assert len(holding) <= 8
+
+        assert len(read_ahead._playbacks) == 10
+        assert read_ahead._playbacks[f"{_CDN}p0.m3u8"].ahead == {}
+        assert read_ahead._playbacks[f"{_CDN}p1.m3u8"].ahead == {}
+        assert read_ahead._playlist_of[f"{_CDN}p0-seg-2.ts"] == f"{_CDN}p0.m3u8"
+
+    async def test_an_order_past_its_idle_bound_is_forgotten(self) -> None:
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(clock=clock)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        clock.now += hls_proxy._ORDER_SECONDS - 1
+        read_ahead.remember(f"{_CDN}other.m3u8", [f"{_CDN}other-1.ts"])
+        assert _PLAYLIST in read_ahead._playbacks
+
+        clock.now += 2
+        read_ahead.remember(f"{_CDN}late.m3u8", [f"{_CDN}late-1.ts"])
+
+        assert _PLAYLIST not in read_ahead._playbacks
+        assert read_ahead._playlist_of.get(_SEGMENTS[0]) is None
+
+    async def test_at_most_a_bounded_number_of_orders(self) -> None:
+        """The least recently used order goes past ``_MAX_ORDERS``."""
+        clock = _Clock()
+        read_ahead = SegmentReadAhead(clock=clock)
+        for i in range(hls_proxy._MAX_ORDERS + 1):
             clock.now += 1
             read_ahead.remember(f"{_CDN}p{i}.m3u8", [f"{_CDN}p{i}-seg-1.ts"])
 
-        assert len(read_ahead._playbacks) == 8
+        assert len(read_ahead._playbacks) == hls_proxy._MAX_ORDERS
         assert f"{_CDN}p0.m3u8" not in read_ahead._playbacks
-        assert f"{_CDN}p8.m3u8" in read_ahead._playbacks
+        assert read_ahead._playlist_of.get(f"{_CDN}p0-seg-1.ts") is None
 
     async def test_a_playlist_fetched_again_keeps_the_segments_still_listed(
         self,
@@ -378,6 +514,91 @@ class TestBounds:
         assert _count(telemetry, "miss") == 2
         failed = next(e for e in logs if e["event"] == "hls_readahead_failed")
         assert failed["cdn"] == "cdn" and failed["error"] == "HTTPStatusError"
+        # a status error is not tried again: seg-2 once ahead, once on demand
+        assert failed["attempts"] == 1
+        assert cdn.requested("seg-2.ts") == 2
+
+    async def test_a_fetch_ahead_broken_once_is_tried_again(self) -> None:
+        """Production 2026-10-12: 10 fetches ahead failed mid-body (97bf1
+        and acek-cdn, ``ReadTimeout`` and ``RemoteProtocolError``), each a
+        miss when the player came."""
+        cdn = _Cdn(broken={"seg-2.ts": 1})
+        telemetry = Telemetry()
+        read_ahead = SegmentReadAhead(telemetry=telemetry)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            with capture_logs() as logs:
+                await _segment(client, read_ahead, _SEGMENTS[0])
+                await _settle(read_ahead)
+            body, _ = await _segment(client, read_ahead, _SEGMENTS[1])
+            await _settle(read_ahead)
+
+        assert body == _segment_body(_SEGMENTS[1])
+        assert cdn.requested("seg-2.ts") == 2
+        assert _count(telemetry, "hit") == 1
+        assert _count(telemetry, "failed") == 0
+        retried = [e for e in logs if e["event"] == "hls_readahead_retried"]
+        assert len(retried) == 1
+        assert retried[0]["cdn"] == "cdn"
+        assert retried[0]["error"] == "RemoteProtocolError"
+
+    async def test_a_fetch_ahead_broken_twice_fails(self) -> None:
+        cdn = _Cdn(broken={"seg-2.ts": 2})
+        telemetry = Telemetry()
+        read_ahead = SegmentReadAhead(telemetry=telemetry)
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            with capture_logs() as logs:
+                await _segment(client, read_ahead, _SEGMENTS[0])
+                await _settle(read_ahead)
+            body, _ = await _segment(client, read_ahead, _SEGMENTS[1])
+            await _settle(read_ahead)
+
+        assert body == _segment_body(_SEGMENTS[1])
+        # twice ahead, then once on demand for the player
+        assert cdn.requested("seg-2.ts") == 3
+        assert _count(telemetry, "failed") == 1
+        assert _count(telemetry, "miss") == 2
+        failed = next(e for e in logs if e["event"] == "hls_readahead_failed")
+        assert failed["error"] == "RemoteProtocolError"
+        assert failed["attempts"] == 2
+
+    @pytest.mark.parametrize("throttled", [True, False], ids=["throttled", "stopped"])
+    async def test_no_second_try_once_the_playback_may_not_fetch_ahead(
+        self, throttled: bool
+    ) -> None:
+        """A 429 of another segment or the byte cap reached meanwhile: the
+        broken fetch is not tried again."""
+        cdn = _Cdn(broken={"seg-2.ts": 1})
+        read_ahead = SegmentReadAhead()
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+
+        def meanwhile() -> None:
+            if throttled:
+                read_ahead._throttled["cdn.test"] = float("inf")
+            else:
+                read_ahead._playbacks[_PLAYLIST].stopped = True
+
+        cdn.on_break = meanwhile
+        async with cdn.client() as client:
+            with capture_logs() as logs:
+                await _segment(client, read_ahead, _SEGMENTS[0])
+                await _settle(read_ahead)
+
+        assert cdn.requested("seg-2.ts") == 1
+        failed = next(e for e in logs if e["event"] == "hls_readahead_failed")
+        assert failed["attempts"] == 1
+
+    async def test_a_fetch_ahead_reads_with_the_segment_stall_bound(self) -> None:
+        cdn = _Cdn()
+        read_ahead = SegmentReadAhead()
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+
+        assert len(cdn.read_timeouts) == 4
+        assert set(cdn.read_timeouts) == {hls_proxy._SEGMENT_READ_TIMEOUT_S}
 
     async def test_aclose_cancels_the_fetches_in_flight(self) -> None:
         cdn = _Cdn()
@@ -390,7 +611,8 @@ class TestBounds:
             await _segment(client, read_ahead, _SEGMENTS[0])
             cdn.block.clear()
             tasks = list(read_ahead._playbacks[_PLAYLIST].ahead.values())
-            await asyncio.sleep(0.01)
+            # Each fetch ahead is at the CDN, waiting for its answer
+            await eventually(lambda: len(cdn.requests) == 1 + len(tasks))
             await read_ahead.aclose()
             await asyncio.gather(*tasks, return_exceptions=True)
 

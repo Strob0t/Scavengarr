@@ -10,19 +10,24 @@
 #   UserPromptSubmit  prints one context line with the current usage, so a session can judge an
 #                     expensive step before it starts.
 #
-# Source: claude/status.json in the private repo Strob0t/shared-state (written every 5 minutes from
-# the API's rate-limit headers). Fetched with gh, cached for 60 s under ~/.cache/claude-usage/ and
+# Source: claude/status.json in a private GitHub repo named by USAGE_STATUS_REPO (owner/name;
+# written every 5 minutes from the API's rate-limit headers). Fetched with gh, cached for 60 s
+# under ~/.cache/claude-usage/ and
 # refreshed in the background, so a tool call never waits on the network. Unknown usage (no gh or
 # jq, a failed fetch, a status older than 20 minutes) never blocks: the guard fails open and says so
 # in the context line. Nothing here reads credentials or the usage API directly.
 #
-# Environment: CLAUDE_USAGE_BLOCK_PCT (default 90: the status lags the API by up to six minutes
-# and three sessions burn in parallel), CLAUDE_USAGE_WEEK_BLOCK_PCT (default 97: the weekly limit
-# is a hard rate limit too, there is no weekly pacing), CLAUDE_USAGE_GUARD=off disables the guard.
+# Environment: USAGE_STATUS_REPO (the status repo, owner/name; unset: the guard says so and
+# never blocks), USAGE_GUARD_TZ (the time zone the release time is also shown in; default UTC),
+# CLAUDE_USAGE_BLOCK_PCT (default 90: the status lags the API by up to six minutes and three
+# sessions burn in parallel), CLAUDE_USAGE_WEEK_BLOCK_PCT (default 97: the weekly limit is a
+# hard rate limit too, there is no weekly pacing), CLAUDE_USAGE_GUARD=off disables the guard.
 set -u
 
 [ "${CLAUDE_USAGE_GUARD:-on}" = "off" ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
+status_repo=${USAGE_STATUS_REPO:-}
+local_tz=${USAGE_GUARD_TZ:-UTC}
 
 input=$(cat)
 event=$(jq -r '.hook_event_name // ""' <<<"$input" 2>/dev/null)
@@ -50,8 +55,9 @@ now=$(date +%s)
 
 fetch() {
   command -v gh >/dev/null 2>&1 || return 1
+  [ -n "$status_repo" ] || return 1
   timeout 15 gh api -H "Accept: application/vnd.github.raw+json" \
-    repos/Strob0t/shared-state/contents/claude/status.json 2>/dev/null
+    "repos/$status_repo/contents/claude/status.json" 2>/dev/null
 }
 
 store() {  # fetch into the cache file; keep the old file when the fetch fails
@@ -82,7 +88,13 @@ if [ ! -f "$file" ] || [ $((now - $(stat -c %Y "$file"))) -ge 60 ]; then
 fi
 
 if [ ! -f "$file" ]; then
-  [ "$event" = UserPromptSubmit ] && echo "usage-guard: usage unknown (no status fetched), not blocking; tell the user"
+  if [ "$event" = UserPromptSubmit ]; then
+    if [ -z "$status_repo" ]; then
+      echo "usage-guard: USAGE_STATUS_REPO is not set (owner/name of the status repo), not blocking; tell the user"
+    else
+      echo "usage-guard: usage unknown (no status fetched), not blocking; tell the user"
+    fi
+  fi
   exit 0
 fi
 
@@ -107,7 +119,7 @@ wpct_i=${wpct%%.*}
 [ -n "$wpct_i" ] || wpct_i=0
 
 fmt() { date -d "@$1" '+%H:%M %Z' 2>/dev/null; }
-fmt_berlin() { TZ=Europe/Berlin date -d "@$1" '+%H:%M %Z' 2>/dev/null; }
+fmt_local() { TZ="$local_tz" date -d "@$1" '+%H:%M %Z' 2>/dev/null; }
 fmt_day() { date -d "@$1" '+%a %H:%M %Z' 2>/dev/null; }
 
 blocked=""
@@ -123,7 +135,7 @@ if [ "$stale" -eq 0 ]; then
 fi
 
 if [ "$event" = UserPromptSubmit ]; then
-  line="usage-guard: 5h ${pct:-?}% (reset $(fmt "$reset") = $(fmt_berlin "$reset")), 7d ${wpct:-?}% (reset $(fmt_day "$wreset")); blocks at ${threshold}%; status ${age}s old"
+  line="usage-guard: 5h ${pct:-?}% (reset $(fmt "$reset") = $(fmt_local "$reset")), 7d ${wpct:-?}% (reset $(fmt_day "$wreset")); blocks at ${threshold}%; status ${age}s old"
   [ "$stale" -eq 1 ] && line="$line; STALE: not blocking, tell the user the status feed stopped"
   [ -n "$blocked" ] && line="$line; BLOCKED until $(fmt "$release")"
   echo "$line"
@@ -136,7 +148,7 @@ fi
 wake=$((release + 60))
 cron_expr="$(date -d "@$wake" '+%-M %-H %-d %-m') *"
 {
-  echo "Usage budget exceeded ($blocked). Tool calls are blocked until $(fmt "$release") ($(fmt_berlin "$release"))."
-  echo "Do not retry and run nothing else. Commit what is finished with plain git add/commit/push calls (they pass this guard; run no tests), then call CronCreate once (it passes too; load it with ToolSearch if needed): recurring=false, durable=false, cron \"$cron_expr\" (local time, one minute after the release), prompt = your full state (done, open, branch, last commit hash, running agents, what to do next). Tell the user in one line that you are parked until $(fmt_berlin "$release") and end the turn."
+  echo "Usage budget exceeded ($blocked). Tool calls are blocked until $(fmt "$release") ($(fmt_local "$release"))."
+  echo "Do not retry and run nothing else. Commit what is finished with plain git add/commit/push calls (they pass this guard; run no tests), then call CronCreate once (it passes too; load it with ToolSearch if needed): recurring=false, durable=false, cron \"$cron_expr\" (local time, one minute after the release), prompt = your full state (done, open, branch, last commit hash, running agents, what to do next). Tell the user in one line that you are parked until $(fmt_local "$release") and end the turn."
 } >&2
 exit 2

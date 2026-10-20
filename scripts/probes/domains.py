@@ -8,7 +8,7 @@ domain check's ``HEAD https://<domain>/`` (its timeout, the plugin's client
 and headers) and a ``GET`` of the same page, and prints per step the
 outcome and its time. A domain *answers* by the domain check's rule: below
 400, or ``_site_answers`` (an error page or a challenge page is the site).
-Run it in the dev container (the home connection) and on the Pi
+Run it in the dev container (a residential connection) and on the production host
 (``prodctl.py probe domains``, the VPN exit) to compare the two.
 
 ``--history`` also prints the plugins' long-term record from the app on

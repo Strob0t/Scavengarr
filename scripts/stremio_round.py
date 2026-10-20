@@ -1,9 +1,13 @@
 """Run a Stremio round: first answer, cached answer and playable streams per title.
 
 Usage (against a running server):
-    poetry run python scripts/stremio_round.py --base https://scavengarr.lan \\
-        [--insecure] [--ids-file docs/plans/round-titles.txt] [--out FILE] \\
+    poetry run python scripts/stremio_round.py --base https://scavengarr.example.lan \\
+        [--insecure] [--ids-file .cache/live/round-titles.txt] [--out FILE] \\
         [--no-playcheck] [--portainer [--container scavengarr]]
+
+The ids file is local and untracked (``.cache/`` is ignored): one ``movie/<imdb id>``
+or ``series/<imdb id>`` per line with an optional ``# title``, so the maintainer's
+titles stay out of the repository.
 
 Per id of the ids file (one after another, never in parallel): the stream
 request once (the first answer: wall time, streams and the ``X-Cache`` and
@@ -45,7 +49,7 @@ from stremio_measure import _source
 from stremio_playcheck import check_stream, verdict_codecs
 from stremio_profile import cpu_seconds
 
-DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / "docs/plans/round-titles.txt"
+DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / ".cache/live/round-titles.txt"
 
 # A first answer waits for the plugins' search (deadline 60 s in production)
 _STREAM_TIMEOUT = 120.0
@@ -237,6 +241,11 @@ def _codec_table(rows: list[Row]) -> list[str]:
 
 async def run(args: argparse.Namespace) -> str:
     """Measure every id of the ids file one after another; return the table."""
+    if not args.ids_file.exists():
+        raise SystemExit(
+            f"no ids file {args.ids_file} (local, untracked): one movie/<imdb id> or "
+            "series/<imdb id> per line, an optional '# title' after it"
+        )
     ids = read_ids(args.ids_file)
     if not ids:
         raise SystemExit(f"no ids in {args.ids_file}")

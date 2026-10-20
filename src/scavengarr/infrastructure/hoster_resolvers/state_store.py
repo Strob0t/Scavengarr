@@ -108,7 +108,7 @@ class HosterStateStore:
             if reason is not None:
                 await self._discard(reason)
                 return
-            # A clock set back (the Pi has none until NTP) counts as no
+            # A clock set back (the production host has none until NTP) counts as no
             # downtime: lifetimes never grow
             age_s = max(0.0, time.time() - snapshot["taken_at"])
             try:
@@ -180,3 +180,9 @@ class HosterStateStore:
             log.warning("hoster_state_save_failed", error=str(exc))
             return
         self._saved = changes
+        log.info(
+            "hoster_state_saved",
+            resolutions=len(snapshot["results"]),
+            redirects=len(snapshot["redirects"]),
+            breakers=sum(len(entries) for entries in snapshot["breakers"].values()),
+        )

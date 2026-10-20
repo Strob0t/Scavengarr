@@ -26,7 +26,8 @@ Usage (``poetry run python scripts/prodctl.py ...``):
                                          the post-deploy check: the container,
                                          the start's records, four stream
                                          requests through the public addon URL
-                                         (``--base``, up to ``/api/v1/stremio``);
+                                         (``--base``, up to ``/api/v1/stremio``),
+                                         the readiness probe's network gauge;
                                          one table, exit 1 on a failed check
                                          (``deploy_check.py``)
 
@@ -52,6 +53,7 @@ from deploy_check import (
     Answer,
     container_check,
     failed,
+    network_check,
     parse_time,
     startup_checks,
     stream_checks,
@@ -123,24 +125,27 @@ def select_lines(
     return lines[-limit:] if limit > 0 else lines, len(lines)
 
 
-def cpu_cores(sample: dict[str, Any]) -> tuple[float, int]:
+def cpu_cores(sample: dict[str, Any]) -> tuple[float | None, int]:
     """The CPU cores a ``docker stats`` sample shows in use (the sample's
-    interval against its predecessor), and the cores online."""
+    interval against its predecessor), and the cores online; ``None`` in use
+    without a predecessor to measure against."""
     cpu = sample.get("cpu_stats", {})
     pre = sample.get("precpu_stats", {})
     used = _nested(cpu, "cpu_usage", "total_usage") - _nested(
         pre, "cpu_usage", "total_usage"
     )
     system = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
+    measured = "system_cpu_usage" in pre and system > 0
     cpus = cpu.get("online_cpus") or len(
         cpu.get("cpu_usage", {}).get("percpu_usage") or [1]
     )
-    return (used / system * cpus if system > 0 else 0.0), cpus
+    return (used / system * cpus if measured else None), cpus
 
 
 def stats_line(name: str, sample: dict[str, Any]) -> str:
     """CPU cores in use, memory without page cache, processes, network totals."""
     cores, cpus = cpu_cores(sample)
+    in_use = "?" if cores is None else f"{cores:.3f}"
     memory = sample.get("memory_stats", {})
     page_cache = memory.get("stats", {})
     resident = memory.get("usage", 0) - page_cache.get(
@@ -150,7 +155,7 @@ def stats_line(name: str, sample: dict[str, Any]) -> str:
     rx = sum(n.get("rx_bytes", 0) for n in networks)
     tx = sum(n.get("tx_bytes", 0) for n in networks)
     return (
-        f"{name}: CPU {cores:.2f} of {cpus} cores | memory {_size(resident)}"
+        f"{name}: CPU {in_use} of {cpus} cores | memory {_size(resident)}"
         f" of {_size(memory.get('limit', 0))} | processes"
         f" {sample.get('pids_stats', {}).get('current', '?')}"
         f" | network rx {_size(rx)} tx {_size(tx)}"
@@ -311,7 +316,9 @@ def stream_answers(
         for sid in ids:
             started = time.monotonic()
             try:
-                resp = http.get(f"{base}/stream/{sid}.json")
+                with http.stream("GET", f"{base}/stream/{sid}.json") as resp:
+                    headers_seconds = time.monotonic() - started
+                    resp.read()
             except httpx.HTTPError as exc:
                 answers.append(
                     Answer(
@@ -336,14 +343,18 @@ def stream_answers(
                     streams,
                     seconds,
                     resp.headers.get("X-Request-ID"),
+                    headers_seconds=headers_seconds,
                 )
             )
     return answers
 
 
 def _check(args: argparse.Namespace) -> int:
-    """The post-deploy check: two Portainer requests (the containers, the
-    log since the start) and four stream requests; read-only beyond those."""
+    """The post-deploy check: ten Portainer requests (the containers, the
+    container's start and the log since the start through one client,
+    ``/metrics`` in one exec of three requests through another, each client
+    with its endpoint lookup and container listing first) and four stream
+    requests; read-only beyond those."""
     client = portainer_client(args.container)
     checks = [container_check(client.containers(), args.container)]
     started_at = parse_time(client.inspect()["State"]["StartedAt"])
@@ -355,6 +366,8 @@ def _check(args: argparse.Namespace) -> int:
     records = parse_records(client.logs(int(started_at) - 1, timestamps=True))
     checks += startup_checks(records, started_at)
     checks += stream_checks(answers, records, deadline_s=args.deadline)
+    metrics = _fetch(args.container, "/metrics")["/metrics"]
+    checks.append(network_check(metrics if isinstance(metrics, str) else None))
     print(mask(render_checks(checks)))
     return 1 if failed(checks) else 0
 
@@ -425,7 +438,12 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except httpx.HTTPError as exc:
+        # httpx names the whole URL, Portainer's address and port included
+        print(mask(f"{args.command} failed: {exc}"), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

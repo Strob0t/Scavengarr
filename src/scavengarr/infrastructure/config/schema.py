@@ -25,7 +25,7 @@ LogFormat = Literal["json", "console"]
 
 
 class TelemetryConfig(BaseModel):
-    """Metrics and on-demand tracing (``docs/features/observability.md``)."""
+    """Metrics and on-demand tracing (``docs/current/observability.md``)."""
 
     tracing_endpoint: str | None = Field(
         default=None,
@@ -339,7 +339,7 @@ class StremioConfig(BaseModel):
         default=0.35,
         description=(
             "Score penalty when the result adds words to the reference title "
-            '("Dark Matter" for "Dark"); a matching year makes up part of it.'
+            "(a word beyond the title); a matching year makes up part of it."
         ),
     )
     title_year_tolerance_movie: int = Field(
@@ -366,8 +366,8 @@ class StremioConfig(BaseModel):
         description=(
             "Let Stremio's streaming server transcode HLS streams. Stremio Web "
             "has the server probe every stream, and an HLS source then goes "
-            "through the server's converter, which re-encodes the video (on a "
-            "Raspberry Pi 4 too slow for 1080p). Off, the HLS proxy refuses "
+            "through the server's converter, which re-encodes the video (on the "
+            "production host too slow for 1080p). Off, the HLS proxy refuses "
             "the server's ffmpeg the stream's playlist, and Stremio Web plays "
             "it itself."
         ),

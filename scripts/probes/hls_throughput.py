@@ -1,4 +1,5 @@
-"""HLS throughput from the Pi: one connection, read-ahead, byte ranges, both.
+"""HLS throughput from the production host: one connection, read-ahead, byte ranges,
+both.
 
     probe hls_throughput [--hoster firestream] [--segments 10]
                          [--in-flight 3[,4,...]]
@@ -21,12 +22,12 @@ bitrate (segment bytes × 8 over their ``EXTINF`` durations), the failed
 requests by status (a 429) or error, and whether the CDN honoured the
 ranges (``206`` with ``Content-Range``; once a range is answered with
 the whole segment, the range runs stop). A 429 ends the runs: the
-Pi's address is its playbacks' too.
+production host's address is its playbacks' too.
 
 With ``--imdb`` the probe first asks the app (``http://127.0.0.1:$PORT``)
 for the title's streams so that fresh links exist; that fills the app's
 caches like any Stremio request. Otherwise the probe changes nothing. Run
-it while nothing plays: the runs share the Pi's connection with the app.
+it while nothing plays: the runs share the production host's connection with the app.
 Prints no URLs, only the CDN's domain.
 
 ``--file`` measures a direct file instead (a stream behind ``/play/``): the
@@ -303,7 +304,7 @@ async def run_all(
     fetcher: Fetcher, segments: list[Segment], runs: list[Run], per_run: int
 ) -> None:
     """The runs in order, *per_run* of *segments* each. A CDN that ignores
-    ranges skips the range runs; a 429 ends the runs (the Pi's address is
+    ranges skips the range runs; a 429 ends the runs (the production host's address is
     the playbacks' too)."""
     ignored = False
     for index, run in enumerate(runs):

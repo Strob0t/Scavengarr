@@ -1,6 +1,6 @@
 ## Context
 
-Scavengarr runs as one uvicorn process on a Raspberry Pi 4 (4 cores, 8 GB) next to Prometheus, Grafana and node-exporter. A Stremio stream request fans out into about 17 plugin searches and 20-40 hoster resolutions; it answers at `resolve_target_count` hosters with a video, when the search and every resolution are done, or at `stream_deadline_seconds` (`docs/plans/round5-measures.md`). Searches are shared per title (single-flight) and cached; a cached answer resolves the other links in the background.
+Scavengarr runs as one uvicorn process on the production host (4 cores, 8 GB) next to Prometheus, Grafana and node-exporter. A Stremio stream request fans out into about 17 plugin searches and 20-40 hoster resolutions; it answers at `resolve_target_count` hosters with a video, when the search and every resolution are done, or at `stream_deadline_seconds` (`docs/plans/round5-measures.md`). Searches are shared per title (single-flight) and cached; a cached answer resolves the other links in the background.
 
 The existing `MetricsCollector` (`infrastructure/metrics.py`) keeps per-plugin averages and the event-loop lag for the JSON endpoint. Analyses of rounds 4 and 5 were built by hand from logs.
 
@@ -21,7 +21,7 @@ The existing `MetricsCollector` (`infrastructure/metrics.py`) keeps per-plugin a
 ## Decisions
 
 ### Decision 1: prometheus-client for metrics, OpenTelemetry for traces only
-`prometheus-client` is the reference library, pure Python, and Prometheus already pulls on the Pi. OpenTelemetry metrics would need Prometheus' OTLP receiver (`--web.enable-otlp-receiver`, no authentication) or a collector. A dedicated `CollectorRegistry` per `Telemetry` instance keeps tests independent of the global registry. One process, so no multiprocess mode.
+`prometheus-client` is the reference library, pure Python, and Prometheus already pulls on the production host. OpenTelemetry metrics would need Prometheus' OTLP receiver (`--web.enable-otlp-receiver`, no authentication) or a collector. A dedicated `CollectorRegistry` per `Telemetry` instance keeps tests independent of the global registry. One process, so no multiprocess mode.
 
 ### Decision 2: A stage records duration and outcome
 `TelemetryPort.stage(name, **labels)` is a context manager around one step. On exit it observes the duration in the histogram `scavengarr_<name>_seconds{labels}` and counts the outcome in `scavengarr_<name>_total{labels, outcome}`. The code sets the outcome (`stage.outcome = "hits"`); an exception sets it when the code did not: `CancelledError` gives `cut` (a deadline or shutdown ended the step), `TimeoutError` gives `timeout`, any other exception `error`. The exception always propagates. Labels known only later (the request's cache state) are set with `stage.label(...)`.
@@ -83,7 +83,7 @@ The backend is Tempo (local storage on disk, TraceQL in Grafana), started on dem
 
 - New dependencies: `prometheus-client` is small and pure Python. The OpenTelemetry packages and `protobuf` make the image a few MB bigger; in exchange tracing needs no rebuild.
 - A stage name or label typo fails at runtime; the tests use the real adapter, so a typo fails a test.
-- Cost estimates come from x86 measurements scaled to the Pi (±50 %); a benchmark in `tests/benchmark/` measures recording and scrape cost, and the Pi's container CPU is visible in the dashboard itself.
+- Cost estimates come from x86 measurements scaled to the production host (±50 %); a benchmark in `tests/benchmark/` measures recording and scrape cost, and the production host's container CPU is visible in the dashboard itself.
 - Tempo needs 0.2-0.7 GB RAM while it runs; therefore only on demand.
 
 ## Migration Plan

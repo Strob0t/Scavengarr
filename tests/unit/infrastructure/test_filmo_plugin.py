@@ -381,3 +381,16 @@ def test_plugin_attributes() -> None:
     assert plugin.provides == "stream"
     assert plugin._domains == ["filmo.to"]
     assert plugin.languages == ["de", "en"]
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://filmo.to/search").mock(side_effect=httpx.ReadTimeout("slow"))
+    plugin = _mod.FilmoPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("interstellar")

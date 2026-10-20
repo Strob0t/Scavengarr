@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
 from scavengarr.domain.plugins.base import PluginUnreachableError
 
@@ -610,14 +611,30 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_http_error_listing(self, _plugin, mock_client):
-        mock_client.get = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+    async def test_a_listing_no_domain_serves_is_unreachable(self, bs_mod):
+        """The listing is the search page: no domain answering is a failure
+        in the plugin record, not a search without results."""
+        refused = httpx.ConnectError("Connection refused")
+        p = bs_mod.BurningSeriesPlugin()
+        with respx.mock:
+            respx.route().mock(side_effect=refused)
+            p._client = httpx.AsyncClient()
 
-        results = await _plugin.search("test")
+            with pytest.raises(PluginUnreachableError):
+                await p.search("test")
 
-        assert results == []
+    @pytest.mark.asyncio
+    async def test_a_listing_that_times_out_is_a_timeout(self, bs_mod):
+        p = bs_mod.BurningSeriesPlugin()
+        with respx.mock:
+            respx.get("https://burningseries.ac/andere-serien").mock(
+                side_effect=httpx.ReadTimeout("slow")
+            )
+            p._client = httpx.AsyncClient()
+            p._domain_verified = True
+
+            with pytest.raises(TimeoutError):
+                await p.search("test")
 
     @pytest.mark.asyncio
     async def test_search_caches_listing(self, _plugin, mock_client):

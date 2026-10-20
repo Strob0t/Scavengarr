@@ -2,23 +2,41 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import TYPE_CHECKING, cast
+import re
+import time
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 import respx
+import structlog.testing
+from structlog.typing import EventDict
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.browser.clearance_store import CreationState
+from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
+    challenge_mark,
+    mark_resolution_passed,
+)
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
+from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers.filemoon import (
     FilemoonResolver,
     _extract_hls_from_unpacked,
     _unpack_p_a_c_k,
+    pass_expiry,
 )
+from scavengarr.infrastructure.hoster_resolvers.registry import (
+    HosterResolverRegistry,
+)
+from scavengarr.infrastructure.telemetry import Telemetry
 
 if TYPE_CHECKING:
+    from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
     from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 
 
@@ -400,6 +418,39 @@ class TestBrowserCapture:
         assert "timeout" not in pool.capture_media.await_args.kwargs
         # The player frame's ad tag stays out (row 78)
         assert pool.capture_media.await_args.kwargs["own_scripts_only"] is True
+        # The wait for a player that starts itself: on the production host a first click
+        # at 1.5 s went unanswered in 3 of 4 runs (row 103)
+        assert pool.capture_media.await_args.kwargs["autoplay_wait"] is None
+
+    @respx.mock
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("request_url", "named"),
+        [
+            ("https://n1mwq.org/api/videos/fwzwu9ny19jk/captcha", True),
+            ("https://n1mwq.org/api/videos/fwzwu9ny19jk/captcha/verify?t=1", True),
+            ("https://n1mwq.org/api/videos/fwzwu9ny19jk/embed/details", False),
+            ("https://n1mwq.org/e/captchas", False),
+        ],
+    )
+    async def test_the_players_captcha_requests_are_named(
+        self, request_url: str, named: bool
+    ) -> None:
+        """A cold context meets the player's own captcha, a warm one skips it
+        (row 91): a capture cut after it ends as ``challenge`` (R7)."""
+        respx.get(f"{_BYSE}/e/{_BYSE_ID}").respond(200, text=self._SPA)
+        respx.get(_DETAILS).respond(200, text=f'{{"code":"{_BYSE_ID}"}}')
+        pool = _FakePool(None)
+
+        async with httpx.AsyncClient() as client:
+            resolver = FilemoonResolver(
+                http_client=client, stealth_pool=cast("StealthPool", pool)
+            )
+            await resolver.resolve(f"{_BYSE}/e/{_BYSE_ID}")
+
+        (pattern,) = pool.challenges
+        assert pattern is not None
+        assert bool(pattern.search(request_url)) is named
 
     @pytest.mark.asyncio
     async def test_mp4_stream_without_referer(self) -> None:
@@ -476,6 +527,7 @@ class _FakePool:
         self.urls: list[str] = []
         self.players: list[str | None] = []
         self.own_scripts: list[bool] = []
+        self.challenges: list[re.Pattern[str] | None] = []
 
     async def capture_media(
         self,
@@ -484,10 +536,14 @@ class _FakePool:
         timeout: float | None = None,
         player: str | None = None,
         own_scripts_only: bool = False,
+        challenge_requests: re.Pattern[str] | None = None,
+        passive_widget: bool = False,
+        autoplay_wait: float | None = None,
     ) -> CapturedMedia | None:
         self.urls.append(url)
         self.players.append(player)
         self.own_scripts.append(own_scripts_only)
+        self.challenges.append(challenge_requests)
         return self.media
 
 
@@ -609,3 +665,318 @@ class TestByseDetailsGate:
 
         assert details.called
         assert pool.urls == ["https://filemoon.to/e/fwzwu9ny19jk"]
+
+
+def _pass_origin(host: str, value: str) -> dict[str, object]:
+    return {
+        "origin": f"https://{host}",
+        "localStorage": [{"name": "byse:captcha-clearance:embed", "value": value}],
+    }
+
+
+class TestPassExpiry:
+    """Byse's captcha pass in a kept storage state: the player's
+    localStorage item ``byse:captcha-clearance:embed``, a token and its
+    ``expiresAt`` in epoch milliseconds (row 106)."""
+
+    def test_the_items_expiry_in_epoch_seconds(self) -> None:
+        value = json.dumps({"token": "t", "expiresAt": 1_760_001_800_000})
+        state = {"cookies": [], "origins": [_pass_origin("n1mwq.org", value)]}
+
+        assert pass_expiry(state) == 1_760_001_800.0
+
+    def test_the_latest_of_several_player_hosts(self) -> None:
+        older = json.dumps({"token": "t", "expiresAt": 1_760_000_000_000})
+        newer = json.dumps({"token": "u", "expiresAt": 1_760_001_800_000})
+        state = {
+            "origins": [
+                _pass_origin("n1mwq.org", newer),
+                _pass_origin("x9z.org", older),
+            ]
+        }
+
+        assert pass_expiry(state) == 1_760_001_800.0
+
+    def test_none_without_a_pass(self) -> None:
+        other = {
+            "origin": "https://n1mwq.org",
+            "localStorage": [{"name": "volume", "value": "1"}],
+        }
+        for state in ({}, {"origins": []}, {"origins": [other]}):
+            assert pass_expiry(state) is None
+
+    def test_a_malformed_item_is_no_pass(self) -> None:
+        for value in (
+            "not json",
+            "[]",
+            json.dumps({"token": "t"}),
+            json.dumps({"expiresAt": "soon"}),
+            json.dumps({"expiresAt": True}),
+        ):
+            state = {"origins": [_pass_origin("n1mwq.org", value)]}
+            assert pass_expiry(state) is None
+
+    def test_malformed_origins_are_skipped(self) -> None:
+        value = json.dumps({"token": "t", "expiresAt": 1_760_001_800_000})
+        state = {
+            "origins": [
+                "junk",
+                {"localStorage": "junk"},
+                {"localStorage": ["junk"]},
+                _pass_origin("n1mwq.org", value),
+            ]
+        }
+
+        assert pass_expiry(state) == 1_760_001_800.0
+
+
+def _store(expires_at: float | None) -> ClearanceStore:
+    """A clearance store whose kept state holds a Byse pass that ends at
+    *expires_at* (epoch seconds), or none."""
+    kept = None
+    if expires_at is not None:
+        value = json.dumps({"token": "t", "expiresAt": int(expires_at * 1000)})
+        state: Any = {"cookies": [], "origins": [_pass_origin("n1mwq.org", value)]}
+        kept = CreationState(state, ["n1mwq.org"], [])
+    store = MagicMock()
+    store.creation_state = AsyncMock(return_value=kept)
+    return cast("ClearanceStore", store)
+
+
+class _ColdPool(_FakePool):
+    """A stealth pool that also records whether the resolution's challenge
+    mark stood when its capture began, answers after *delay* seconds, and
+    with *gone* shows the page's verdict instead: the file is gone."""
+
+    def __init__(
+        self, media: CapturedMedia | None, *, delay: float = 0.0, gone: bool = False
+    ) -> None:
+        super().__init__(media)
+        self.delay = delay
+        self.gone = gone
+        self.open_at_start: list[bool] = []
+
+    async def capture_media(
+        self,
+        url: str,
+        *,
+        timeout: float | None = None,
+        player: str | None = None,
+        own_scripts_only: bool = False,
+        challenge_requests: re.Pattern[str] | None = None,
+        passive_widget: bool = False,
+        autoplay_wait: float | None = None,
+    ) -> CapturedMedia | None:
+        mark = challenge_mark.get()
+        self.open_at_start.append(mark is not None and mark.open)
+        await asyncio.sleep(self.delay)
+        if self.gone:
+            mark_resolution_passed()
+            return None
+        return await super().capture_media(
+            url,
+            timeout=timeout,
+            player=player,
+            own_scripts_only=own_scripts_only,
+            challenge_requests=challenge_requests,
+            passive_widget=passive_widget,
+            autoplay_wait=autoplay_wait,
+        )
+
+
+def _byse_pages(embed: str = TestBrowserCapture._SPA, details: int = 200) -> None:
+    """The Byse embed page and the details API's answer (respx)."""
+    respx.get(f"{_BYSE}/e/{_BYSE_ID}").respond(200, text=embed)
+    respx.get(_DETAILS).respond(details, text=f'{{"code":"{_BYSE_ID}"}}')
+
+
+class TestColdStart:
+    """A capture that starts without a kept captcha pass meets the Byse
+    player's captcha first, and production's cold captures found their
+    stream 17.4 to 31.5 s after the start, past the 10 s bound: such a
+    capture counts as challenged from its start (row 121, decision D7)."""
+
+    @staticmethod
+    async def _resolve(pool: _ColdPool, store: ClearanceStore | None) -> ChallengeMark:
+        """The resolution's challenge mark after resolving the Byse link."""
+        mark = ChallengeMark()
+        token = challenge_mark.set(mark)
+        try:
+            async with httpx.AsyncClient() as client:
+                resolver = FilemoonResolver(
+                    http_client=client,
+                    stealth_pool=cast("StealthPool", pool),
+                    clearance_store=store,
+                )
+                await resolver.resolve(f"{_BYSE}/e/{_BYSE_ID}")
+        finally:
+            challenge_mark.reset(token)
+        return mark
+
+    @respx.mock
+    async def test_a_kept_pass_leaves_the_capture_as_it_was(self) -> None:
+        _byse_pages()
+        pool = _ColdPool(None)
+
+        mark = await self._resolve(pool, _store(time.time() + 600))
+
+        assert pool.open_at_start == [False]
+        assert (mark.kind, mark.open) == (None, False)
+
+    @respx.mock
+    async def test_without_a_pass_the_capture_starts_challenged(self) -> None:
+        _byse_pages()
+        pool = _ColdPool(None)
+
+        mark = await self._resolve(pool, _store(None))
+
+        assert pool.open_at_start == [True]
+        assert (mark.kind, mark.open) == ("hoster_captcha", True)
+
+    @respx.mock
+    @pytest.mark.parametrize("left", [-600.0, 0.0, 20.0])
+    async def test_a_pass_gone_or_ending_counts_as_none(self, left: float) -> None:
+        """The player looks at the pass at its first click, seconds into the
+        capture: one with less than 30 s left is as good as gone."""
+        _byse_pages()
+        pool = _ColdPool(None)
+
+        await self._resolve(pool, _store(time.time() + left))
+
+        assert pool.open_at_start == [True]
+
+    @respx.mock
+    async def test_a_gone_video_is_no_challenge(self) -> None:
+        """The details API's 404 is the hoster's verdict: no capture, and
+        the link stays a dead link."""
+        _byse_pages(details=404)
+        pool = _ColdPool(None)
+
+        mark = await self._resolve(pool, _store(None))
+
+        assert pool.urls == []
+        assert mark.kind is None
+
+    @respx.mock
+    async def test_an_offline_page_is_no_challenge(self) -> None:
+        _byse_pages(embed="<html><body>File Not Found</body></html>")
+        pool = _ColdPool(None)
+
+        mark = await self._resolve(pool, _store(None))
+
+        assert pool.urls == []
+        assert mark.kind is None
+
+    @respx.mock
+    async def test_without_a_store_the_pages_decide(self) -> None:
+        _byse_pages()
+        pool = _ColdPool(None)
+
+        mark = await self._resolve(pool, None)
+
+        assert pool.open_at_start == [False]
+        assert mark.kind is None
+
+
+class TestColdStartOutcome:
+    """The cold start through the registry: a capture without a kept pass
+    that the bound cuts ends as ``challenge``, counts no breaker failure and
+    runs on to cache its stream; with a pass the same cut stays a timeout;
+    a page past its captcha keeps its verdict on the link."""
+
+    _URL = f"{_BYSE}/e/{_BYSE_ID}"
+    _MEDIA = CapturedMedia(
+        url="https://cdn.example/hls/master.m3u8", referer="https://n1mwq.org/"
+    )
+
+    @staticmethod
+    def _outcome(telemetry: Telemetry, outcome: str) -> float | None:
+        return telemetry.registry.get_sample_value(
+            "scavengarr_hoster_resolve_total",
+            {"resolver": "filemoon", "outcome": outcome},
+        )
+
+    async def _run(
+        self, pool: _ColdPool, store: ClearanceStore
+    ) -> tuple[HosterResolverRegistry, Telemetry, list[EventDict]]:
+        """Resolve the link once with a 0.05 s bound, then let a capture that
+        runs on past it end (``_COMPLETION_S`` is far longer than the test's
+        delays)."""
+        _byse_pages()
+        telemetry = Telemetry()
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[
+                    FilemoonResolver(
+                        http_client=client,
+                        stealth_pool=cast("StealthPool", pool),
+                        clearance_store=store,
+                    )
+                ],
+                resolve_timeout=0.05,
+                circuit_breaker=PluginCircuitBreaker(
+                    failure_threshold=1, cooldown_seconds=60.0
+                ),
+                telemetry=telemetry,
+            )
+            with structlog.testing.capture_logs() as logs:
+                assert await registry.resolve(self._URL) is None
+                completions = [c for c, _ in registry._completions.values()]
+                await asyncio.wait_for(
+                    asyncio.gather(*completions, return_exceptions=True), 5
+                )
+            await registry.aclose()
+        return registry, telemetry, logs
+
+    @staticmethod
+    def _breaker(registry: HosterResolverRegistry) -> PluginCircuitBreaker:
+        breaker = registry._circuit_breaker
+        assert breaker is not None
+        return breaker
+
+    @respx.mock
+    async def test_a_cut_capture_without_a_pass_ends_as_challenge(self) -> None:
+        registry, telemetry, logs = await self._run(
+            _ColdPool(self._MEDIA, delay=0.2), _store(None)
+        )
+
+        assert self._outcome(telemetry, "challenge") == 1
+        assert self._outcome(telemetry, "timeout") is None
+        assert self._breaker(registry).snapshot() == {}
+        event = next(e for e in logs if e["event"] == "hoster_resolve_challenge")
+        assert (event["hoster"], event["kind"], event["passed"]) == (
+            "bysezejataos",
+            "hoster_captcha",
+            False,
+        )
+        assert event["cooldown_s"] == 60
+        # The capture ran on past the bound and cached its stream, which
+        # ended the cooldown: the next request finds the stream
+        found, stream = registry.cached(self._URL)
+        assert found and stream is not None
+        assert stream.video_url == self._MEDIA.url
+        assert not any(e["event"] == "hoster_resolve_timeout" for e in logs)
+
+    @respx.mock
+    async def test_with_a_pass_a_cut_capture_stays_a_timeout(self) -> None:
+        registry, telemetry, logs = await self._run(
+            _ColdPool(self._MEDIA, delay=0.2), _store(time.time() + 600)
+        )
+
+        assert self._outcome(telemetry, "timeout") == 1
+        assert self._outcome(telemetry, "challenge") is None
+        assert self._breaker(registry).state("filemoon") == "open"
+        assert registry.cached(self._URL) == (False, None)
+        assert any(e["event"] == "hoster_resolve_timeout" for e in logs)
+
+    @respx.mock
+    async def test_a_page_past_its_captcha_keeps_its_verdict(self) -> None:
+        """No pass, and the page says the file is gone: a dead link, cached
+        as one, not a challenge."""
+        registry, telemetry, _ = await self._run(
+            _ColdPool(None, gone=True), _store(None)
+        )
+
+        assert self._outcome(telemetry, "dead") == 1
+        assert self._outcome(telemetry, "challenge") is None
+        assert registry.cached(self._URL) == (True, None)

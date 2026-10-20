@@ -19,6 +19,7 @@ from scavengarr.domain.entities import (
     TorznabQuery,
 )
 from scavengarr.domain.entities.crawljob import CrawlJob
+from scavengarr.domain.entities.torznab import category_matches
 from scavengarr.domain.plugins import GrabResolvingPlugin
 from scavengarr.domain.ports import PluginRegistryPort
 from scavengarr.domain.ports.cache import CachePort
@@ -28,9 +29,16 @@ from scavengarr.domain.ports.search_engine import SearchEnginePort
 log = structlog.get_logger(__name__)
 
 
-def _search_cache_key(plugin_name: str, query: str, category: int | None) -> str:
+def _search_cache_key(
+    plugin_name: str,
+    query: str,
+    category: int | None,
+    kinds: tuple[int, ...] = (),
+) -> str:
     """Compute deterministic cache key for a search query."""
     cat_str = str(category) if category is not None else "none"
+    if kinds:
+        cat_str += ":" + ",".join(str(kind) for kind in sorted(kinds))
     raw = f"{plugin_name}:{query.lower().strip()}:{cat_str}"
     return f"search:{hashlib.sha256(raw.encode()).hexdigest()[:16]}"
 
@@ -110,7 +118,7 @@ class TorznabSearchUseCase:
             raise TorznabPluginNotFound(q.plugin_name) from e
 
         # --- cache lookup ---
-        cache_key = _search_cache_key(q.plugin_name, q.query, q.category)
+        cache_key = _search_cache_key(q.plugin_name, q.query, q.category, q.kinds)
         raw_results = await self._cache_read(cache_key, q)
         cache_hit = raw_results is not None
 
@@ -227,9 +235,20 @@ class TorznabSearchUseCase:
     ) -> list[Any]:
         """Execute search via Python plugin (links are validated per page)."""
         try:
-            return await plugin.search(q.query, category=q.category)
+            results = await plugin.search(q.query, category=q.category)
         except Exception as e:
             raise TorznabExternalError(f"Plugin search error: {e!s}") from e
+        if not q.kinds:
+            return results
+        # Several kinds: the plugin searched unfiltered, its labels decide
+        return [
+            result
+            for result in results
+            if any(
+                category_matches(kind, cast(int, getattr(result, "category", 2000)))
+                for kind in q.kinds
+            )
+        ]
 
     async def _build_torznab_items(
         self,

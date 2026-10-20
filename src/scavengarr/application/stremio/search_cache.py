@@ -46,18 +46,28 @@ class CachedSearch:
         self.__dict__.update(state)
 
 
+def asked_plugin(result: SearchResult) -> str:
+    """The plugin whose search gave *result*: the mirror group member a
+    standby stood in for (``standby_for``), else the one that found it
+    (``source_plugin``). A search's plugins end under these names."""
+    return str(
+        result.metadata.get("standby_for") or result.metadata.get("source_plugin", "")
+    )
+
+
 def merge(
     entry: CachedSearch, plugin: str, results: list[SearchResult]
 ) -> CachedSearch:
     """*entry* with *plugin*'s results replaced by *results* (its finished
-    run) and its name gone from ``missing``.
+    run, a standby's answer for it included: ``asked_plugin``) and its name
+    gone from ``missing``.
 
     The other plugins' results stay, so a merge never thins an entry: a
     plugin that did not finish keeps its earlier results. ``total`` counts
     the plugin's new matching results in place of its old ones (an entry
     keeps no raw count per plugin).
     """
-    kept = [r for r in entry.results if r.metadata.get("source_plugin") != plugin]
+    kept = [r for r in entry.results if asked_plugin(r) != plugin]
     replaced = len(entry.results) - len(kept)
     return CachedSearch(
         results=kept + list(results),
@@ -79,14 +89,19 @@ def search_cache_key(
     same season and episode (the list's position) place the episode
     differently on the anime sites, so they neither share an entry nor
     join each other's running search (``title_search.py`` keys its
-    single-flight by this key). ``v3``: the entries from before are not
-    answered.
+    single-flight by this key). An unchecked position (``EpisodeRef``)
+    carries a ``u``: the titles place it, where the number places a
+    trusted one, so an answer placed one way is never served for the
+    other. ``v3``: the entries from before are not answered.
     """
-    absolute = episode_ref.absolute if episode_ref is not None else None
+    placement = "-"
+    if episode_ref is not None and episode_ref.absolute is not None:
+        placement = str(episode_ref.absolute)
+        if episode_ref.source == "unchecked":
+            placement = f"u{placement}"
     return (
         f"stremio:search:v3:{request.content_type}:{request.imdb_id}"
-        f":{request.season}:{request.episode}"
-        f":{'-' if absolute is None else absolute}"
+        f":{request.season}:{request.episode}:{placement}"
     )
 
 

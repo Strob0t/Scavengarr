@@ -969,6 +969,6 @@ class TestSeriesEdgeCases:
         streams = resp.json()["streams"]
         assert len(streams) == 1
         assert locating.calls[0]["episode_ref"] == EpisodeRef(
-            5, 2, laboon, "2001-03-21", absolute=62
+            5, 2, laboon, "2001-03-21", absolute=62, titles=("One Piece",)
         )
         assert "episode_ref" not in other.calls[0]

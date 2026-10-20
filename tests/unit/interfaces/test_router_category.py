@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -57,8 +58,26 @@ class TestRouterCategoryParsing:
     @patch(
         "scavengarr.interfaces.api.torznab.router.TorznabSearchUseCase",
     )
-    def test_comma_separated_takes_first(self, mock_uc_cls: MagicMock) -> None:
-        """cat='2000,5000' should produce category=2000 (first value)."""
+    @pytest.mark.parametrize(
+        ("cat", "category", "kinds"),
+        [
+            # Prowlarr's own searches and its RSS sync: the whole list
+            ("2000,5000", None, (2000, 5000)),
+            ("5000,2040,2000,5070", None, (2000, 5000)),
+            # One kind with child ids (Sonarr): the first id, as before
+            ("5030,5040", 5030, ()),
+            ("2000,", 2000, ()),
+        ],
+    )
+    def test_ids_grouped_by_kind(
+        self,
+        mock_uc_cls: MagicMock,
+        cat: str,
+        category: int | None,
+        kinds: tuple[int, ...],
+    ) -> None:
+        """One kind keeps the first id; several kinds search unfiltered and
+        name the kinds, sorted."""
         mock_instance = AsyncMock()
         mock_instance.execute.return_value = []
         mock_uc_cls.return_value = mock_instance
@@ -66,10 +85,24 @@ class TestRouterCategoryParsing:
         app = _make_app(mock_uc_cls)
         client = TestClient(app)
 
-        client.get("/api/v1/torznab/scnlog?t=search&q=test&cat=2000,5000")
+        client.get(f"/api/v1/torznab/scnlog?t=search&q=test&cat={cat}")
 
         query: TorznabQuery = mock_instance.execute.call_args[0][0]
-        assert query.category == 2000
+        assert (query.category, query.kinds) == (category, kinds)
+
+    @patch(
+        "scavengarr.interfaces.api.torznab.router.TorznabSearchUseCase",
+    )
+    def test_an_invalid_id_after_the_first_is_a_bad_request(
+        self, mock_uc_cls: MagicMock
+    ) -> None:
+        app = _make_app(mock_uc_cls)
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/torznab/scnlog?t=search&q=test&cat=2000,abc")
+
+        assert resp.status_code == 400
+        mock_uc_cls.return_value.execute.assert_not_called()
 
     @patch(
         "scavengarr.interfaces.api.torznab.router.TorznabSearchUseCase",

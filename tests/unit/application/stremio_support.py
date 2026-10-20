@@ -37,6 +37,9 @@ from scavengarr.infrastructure.stremio.stream_converter import convert_search_re
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 
+# Re-exported for the use case's tests: the suite's one eventually()
+from ..waiting import eventually as eventually
+
 
 def make_config(**overrides: object) -> StremioConfig:
     defaults = {
@@ -223,12 +226,17 @@ def fake_site(
     delay: float = 0.0,
     *,
     cancelled: asyncio.Event | None = None,
+    gate: asyncio.Event | None = None,
 ) -> AsyncMock:
-    """Plugin answering with *results* after *delay* seconds."""
+    """Plugin answering with *results* after *delay* seconds, and not before
+    the test sets *gate* (a search that runs until the test lets it end,
+    no wall clock). Sets *cancelled* when cancelled."""
 
     async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
         try:
             await asyncio.sleep(delay)
+            if gate is not None:
+                await gate.wait()
         except asyncio.CancelledError:
             if cancelled is not None:
                 cancelled.set()
@@ -276,16 +284,17 @@ def cached_use_case(
     )
 
 
-async def eventually(check: Callable[[], bool], timeout: float = 2.0) -> None:
-    end = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < end, "condition not met in time"
-        await asyncio.sleep(0.01)
-
-
 def cached_links(cache: AsyncMock) -> list[str]:
     entry = cache.data.get(SEARCH_KEY)
     return sorted(r.download_link for r in entry.results) if entry else []
+
+
+def running_links(uc: StremioStreamUseCase) -> list[str]:
+    """The links the running search for ``SEARCH_KEY`` has matched so far:
+    the title search's own state, as no public surface tells when a result
+    is in (it reaches the search after the title match's worker thread)."""
+    progress = uc._title_search._searches.get(SEARCH_KEY)
+    return sorted(r.download_link for r in progress.results) if progress else []
 
 
 class Resolutions:

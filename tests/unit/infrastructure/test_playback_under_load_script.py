@@ -14,6 +14,8 @@ import httpx
 import pytest
 import respx
 
+from ..waiting import eventually
+
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 
 
@@ -305,7 +307,7 @@ class TestRun:
             run = _mod.Run("idle")
             stop = asyncio.Event()
             task = asyncio.create_task(_mod.sample_cpu(container, run, stop))
-            await asyncio.sleep(0.05)
+            await eventually(lambda: container.calls >= 2)
             stop.set()
             await task
             return container.calls, run.cpu

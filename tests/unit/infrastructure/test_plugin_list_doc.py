@@ -1,4 +1,4 @@
-"""docs/plugins.md is generated from the plugin metadata and must stay current."""
+"""docs/reference/plugins.md is generated from the plugin metadata, kept current."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ def _generator() -> ModuleType:
 
 def test_plugin_list_is_current() -> None:
     expected = _generator().render(_ROOT / "plugins")
-    actual = (_ROOT / "docs" / "plugins.md").read_text(encoding="utf-8")
+    actual = (_ROOT / "docs" / "reference" / "plugins.md").read_text(encoding="utf-8")
     assert actual == expected, (
-        "docs/plugins.md is outdated: run "
+        "docs/reference/plugins.md is outdated: run "
         "`poetry run python scripts/generate_plugin_list.py`"
     )
 

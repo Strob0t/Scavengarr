@@ -7,10 +7,12 @@ import importlib
 import json
 import py_compile
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
+import httpx
 import pytest
 import respx
 
@@ -137,7 +139,7 @@ class TestStatsLine:
             "networks": {"eth0": {"rx_bytes": 2048, "tx_bytes": 512}},
         }
         assert _mod.stats_line("app", sample) == (
-            "app: CPU 2.00 of 4 cores | memory 100.0 MiB of 1.0 GiB | processes 7"
+            "app: CPU 2.000 of 4 cores | memory 100.0 MiB of 1.0 GiB | processes 7"
             " | network rx 2.0 KiB tx 512 B"
         )
 
@@ -161,6 +163,35 @@ class TestProbes:
         source = path.read_text()
         assert source.startswith('"""'), "probes start with a docstring"
         assert "from __future__ import annotations" in source
+
+
+class TestHttpErrors:
+    """A Portainer error ends with the masked message, not a traceback that
+    names Portainer's address, port and the request's path."""
+
+    def test_a_403_on_the_logs_call_prints_the_host_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        portainer = "http://192.0.2.7:9443"
+        docker = f"{portainer}/api/endpoints/3/docker"
+        monkeypatch.setattr(_mod, "credentials", lambda: (portainer, "key"))
+        monkeypatch.setattr(_mod, "_BUDGET", tmp_path / "budget.json")
+        with respx.mock:
+            respx.get(f"{portainer}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
+            respx.get(f"{docker}/containers/json").respond(json=[])
+            respx.get(f"{docker}/containers/scavengarr/logs").respond(403)
+
+            assert _mod.main(["logs", "--since", "5m"]) == 1
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "403 Forbidden" in captured.err
+        assert "http://<ip>:9443/…" in captured.err
+        assert "192.0.2.7" not in captured.err
+        assert "/containers/" not in captured.err
 
 
 class TestCommands:
@@ -280,6 +311,50 @@ class TestCommands:
             _mod.main(["metrics"])
 
 
+class TestStreamAnswers:
+    def test_the_times_to_the_headers_and_to_the_end(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The body's end comes after the headers: a slow body shows."""
+        clock = iter([10.0, 12.5, 14.0])
+        monkeypatch.setattr(
+            _mod, "time", SimpleNamespace(monotonic=lambda: next(clock))
+        )
+        with respx.mock:
+            respx.get("https://addon.test/stream/movie/tt1.json").respond(
+                json={"streams": [{"url": "x"}]}, headers={"X-Request-ID": "r1"}
+            )
+
+            [answer] = _mod.stream_answers(
+                "https://addon.test", ["movie/tt1"], insecure=False, timeout=5
+            )
+
+        assert (answer.headers_seconds, answer.seconds) == (2.5, 4.0)
+        assert (answer.status, answer.request_id, len(answer.streams)) == (200, "r1", 1)
+
+    def test_an_error_keeps_its_time_without_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = iter([10.0, 15.0])
+        monkeypatch.setattr(
+            _mod, "time", SimpleNamespace(monotonic=lambda: next(clock))
+        )
+        with respx.mock:
+            respx.get("https://addon.test/stream/movie/tt1.json").mock(
+                side_effect=httpx.ReadTimeout("slow")
+            )
+
+            [answer] = _mod.stream_answers(
+                "https://addon.test", ["movie/tt1"], insecure=False, timeout=5
+            )
+
+        assert (answer.error, answer.seconds, answer.headers_seconds) == (
+            "ReadTimeout",
+            5.0,
+            None,
+        )
+
+
 class TestCheck:
     _ADDON = "https://addon.test/api/v1/stremio"
     _CODES = {
@@ -289,12 +364,35 @@ class TestCheck:
         "movie/tt0816692": "Interstellar.2014",
     }
 
+    @pytest.fixture(autouse=True)
+    def _fixed_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """prodctl's clock stands still, as in TestStreamAnswers: the rows
+        read 0.0 s however slow the runner, and the settle wait returns at
+        once."""
+        monkeypatch.setattr(
+            _mod,
+            "time",
+            SimpleNamespace(
+                monotonic=lambda: 0.0, sleep=lambda _: None, time=time.time
+            ),
+        )
+
     @staticmethod
     def _stream(description: str) -> dict[str, str]:
         return {"name": "Scavengarr\n1080p", "description": description, "url": "x"}
 
-    def _mock_production(self, *, healthy: bool = True) -> None:
+    def _mock_production(self, *, healthy: bool = True, dns: float = 1.0) -> None:
         status = "Up 2 hours (healthy)" if healthy else "Up 2 hours (unhealthy)"
+        # /metrics in one exec: the readiness probe's gauge per check
+        metrics = (
+            f'scavengarr_network_ok{{check="cache"}} 1.0\n'
+            f'scavengarr_network_ok{{check="dns"}} {dns}\n'
+        )
+        respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(json={"Id": "e1"})
+        respx.post(f"{_DOCKER}/exec/e1/start").respond(
+            content=_frame(json.dumps({"/metrics": metrics}) + "\n")
+        )
+        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
         # the same pattern as the fixture's route replaces it (ps lists ?all=1)
         respx.get(f"{_DOCKER}/containers/json").respond(
             json=[{"Names": ["/scavengarr"], "State": "running", "Status": status}]
@@ -325,6 +423,7 @@ class TestCheck:
                     event="http_request",
                     request_id="r1",
                     path="/api/v1/stremio/stream/series/tt0388629:5:2.json",
+                    duration_ms=412.5,
                     client_host="10.0.0.9",
                 ),
             ]
@@ -344,9 +443,7 @@ class TestCheck:
         self,
         portainer: Path,
         capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
         self._mock_production()
         self._mock_streams(self._CODES)
 
@@ -354,7 +451,7 @@ class TestCheck:
 
         out = capsys.readouterr().out
         assert code == 0, out
-        assert out.endswith("PASS: 9 checks, 0 failed, 1 warnings\n")
+        assert out.endswith("PASS: 10 checks, 0 failed, 1 warnings\n")
         rows = [
             "| container               | PASS   | running, Up 2 hours (healthy) |",
             "| startup                 | PASS   | version 0.3.0 at 11:09:08 UTC |",
@@ -363,8 +460,11 @@ class TestCheck:
             " breakers 6 |",
             "| plugin_history_restored | PASS   | plugins 17, days 68 |",
             "| series/tt0388629:5:2    | PASS   | 1 streams, all S05E02; logged;"
-            " no placement record (DEBUG), 0.0 s |",
-            "| movie/tt0816692         | PASS   | 1 streams in 0.0 s; logged |",
+            " no placement record (DEBUG); client 0.0 s to headers, 0.0 s to the"
+            " end, server 0.4 s |",
+            "| movie/tt0816692         | PASS   | 1 streams; logged; client 0.0 s"
+            " to headers, 0.0 s to the end, server 0.4 s |",
+            "| network                 | PASS   | cache and dns answered |",
         ]
         for row in rows:
             assert row in out, row
@@ -374,10 +474,8 @@ class TestCheck:
         self,
         portainer: Path,
         capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
-        self._mock_production(healthy=False)
+        self._mock_production(healthy=False, dns=0.0)
         self._mock_streams({**self._CODES, "series/tt0388629:5:2": "S05E03"})
 
         code = _mod.main(["check", "--base", self._ADDON])
@@ -390,9 +488,14 @@ class TestCheck:
         )
         assert (
             "| series/tt0388629:5:2    | FAIL   | 1 streams, none S05E02"
-            " (first: Show.S05E03); logged, 0.0 s |"
+            " (first: Show.S05E03); logged; client 0.0 s to headers, 0.0 s to the"
+            " end, server 0.4 s |"
         ) in out
-        assert out.endswith("FAIL: 9 checks, 2 failed, 1 warnings\n")
+        assert (
+            "| network                 | FAIL   | no answer at the last probe: dns |"
+            in out
+        )
+        assert out.endswith("FAIL: 10 checks, 3 failed, 1 warnings\n")
 
 
 class TestCpuCores:
@@ -410,5 +513,61 @@ class TestCpuCores:
         }
         assert _mod.cpu_cores(sample) == (2.0, 4)
 
-    def test_an_empty_sample_is_idle_on_one_core(self) -> None:
-        assert _mod.cpu_cores({}) == (0.0, 1)
+    def test_an_empty_sample_has_no_figure(self) -> None:
+        assert _mod.cpu_cores({}) == (None, 1)
+
+
+# One-shot reads of production through Portainer (stream=false), the CPU
+# fields only: Docker's read carries its previous sample about 1 s before
+_IDLE_FRAME = {
+    "cpu_stats": {
+        "cpu_usage": {"total_usage": 189_449_619_000},
+        "system_cpu_usage": 4_841_142_920_000_000,
+        "online_cpus": 4,
+    },
+    "precpu_stats": {
+        "cpu_usage": {"total_usage": 189_446_136_000},
+        "system_cpu_usage": 4_841_138_990_000_000,
+        "online_cpus": 4,
+    },
+}
+
+
+class TestCpuFigure:
+    """``stats`` printed "CPU 0.00" for an idle app (0.0035 cores, rounded
+    to two decimals), which read as a missing sample."""
+
+    def test_an_idle_app_shows_its_load(self) -> None:
+        line = _mod.stats_line("app", _IDLE_FRAME)
+        assert line.startswith("app: CPU 0.004 of 4 cores | ")
+
+    def test_a_loaded_app(self) -> None:
+        frame = {
+            "cpu_stats": {
+                "cpu_usage": {"total_usage": 2_350_000_000},
+                "system_cpu_usage": 5_000_000_000,
+                "online_cpus": 4,
+            },
+            "precpu_stats": {
+                "cpu_usage": {"total_usage": 1_000_000_000},
+                "system_cpu_usage": 1_000_000_000,
+            },
+        }
+        # 1.35e9 ns of the container over 4.0e9 ns of the system, 4 CPUs
+        assert _mod.stats_line("app", frame).startswith("app: CPU 1.350 of 4 cores")
+
+    @pytest.mark.parametrize(
+        "precpu",
+        [
+            {},
+            {"cpu_usage": {"total_usage": 189_446_136_000}},
+            # the same sample twice: no interval
+            _IDLE_FRAME["cpu_stats"],
+        ],
+        ids=["empty", "no-system-usage", "no-interval"],
+    )
+    def test_a_frame_without_a_previous_sample_has_no_figure(
+        self, precpu: dict[str, object]
+    ) -> None:
+        frame = {"cpu_stats": _IDLE_FRAME["cpu_stats"], "precpu_stats": precpu}
+        assert _mod.stats_line("app", frame).startswith("app: CPU ? of 4 cores | ")

@@ -120,8 +120,10 @@ LABEL org.opencontainers.image.source="https://github.com/Strob0t/Scavengarr" \
 
 EXPOSE 7979
 
+# Readiness, not liveness: liveness answers over loopback while every call
+# outside fails, readiness also tells a network lost for over 5 min
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:7979/api/v1/healthz || exit 1
+    CMD curl -sf http://localhost:7979/api/v1/readyz || exit 1
 
 # Starts Xvfb (headful browser for Cloudflare Turnstile), then execs the app.
 ENTRYPOINT ["/app/entrypoint.sh"]

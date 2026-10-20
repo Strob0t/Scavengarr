@@ -40,6 +40,7 @@ from .stremio_support import (
     make_search_result,
     make_use_case,
     memory_cache,
+    running_links,
 )
 
 
@@ -189,19 +190,23 @@ class TestSearchCache:
         ]
 
     async def test_the_entry_at_the_budget_names_the_plugins_to_come(self) -> None:
-        """One slot: the second plugin starts once the first is done, after
-        the answer budget, and finishes within its own timeout. The entry
-        written at the budget names it missing; its end rewrites the entry,
-        and the search's end writes nothing new."""
+        """One slot: the second plugin starts once the first is done and
+        runs past the answer budget, within its own timeout (it ends when
+        the test lets it). The entry written at the budget names it
+        missing; its end rewrites the entry, and the search's end writes
+        nothing new."""
         cache = memory_cache()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.2),
+            "second": fake_site([hit("https://dood.to/e/second")], gate=second_may_end),
         }
         pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
         uc = cached_use_case(sites, cache, hard=0.4, pool=pool)
 
         await uc.execute(make_request())
+        await eventually(lambda: len(cache.set.await_args_list) == 1)
+        second_may_end.set()
 
         await eventually(lambda: len(cache.set.await_args_list) == 2)
         entries = [c.args[1] for c in cache.set.await_args_list]
@@ -211,14 +216,18 @@ class TestSearchCache:
 
     async def test_the_answer_waits_for_the_budget_only(self) -> None:
         """The request answers at the budget with the results so far; the
-        plugin still searching is not cancelled and its results reach the
-        cache (continue-cut-searches)."""
+        plugin still searching (one slot: it started after the first, so
+        its own timeout ends after the budget) is not cancelled and its
+        results reach the cache (continue-cut-searches)."""
         cache = memory_cache()
         cancelled = asyncio.Event()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.2),
             "second": fake_site(
-                [hit("https://dood.to/e/second")], delay=0.2, cancelled=cancelled
+                [hit("https://dood.to/e/second")],
+                cancelled=cancelled,
+                gate=second_may_end,
             ),
         }
         pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
@@ -229,6 +238,7 @@ class TestSearchCache:
 
         assert 0.3 <= time.monotonic() - started < 0.6
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
+        second_may_end.set()
         await eventually(lambda: len(cached_links(cache)) == 2)
         assert not cancelled.is_set()
 
@@ -236,19 +246,22 @@ class TestSearchCache:
         """A request finding the running search past its budget answers at
         once with what it found (source ``cache``)."""
         cache = memory_cache()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.3),
+            "first": fake_site([hit("https://voe.sx/e/first")]),
+            "second": fake_site([hit("https://dood.to/e/second")], gate=second_may_end),
         }
-        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
-        uc = cached_use_case(sites, cache, hard=0.4, pool=pool)
+        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.4)
         await uc.execute(make_request())
+        await eventually(lambda: running_links(uc) == ["https://voe.sx/e/first"])
 
         started = time.monotonic()
         streams = await uc.execute(make_request())
 
-        assert time.monotonic() - started < 0.1
+        # At once: well within a budget of its own
+        assert time.monotonic() - started < 0.2
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
+        second_may_end.set()
         await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_a_budget_below_the_plugin_timeout_answers_at_the_budget(
@@ -256,22 +269,25 @@ class TestSearchCache:
     ) -> None:
         """``stremio.answer_budget_seconds`` below the plugin timeout: the
         request answers at the budget with the fast plugin's result while
-        the slow one runs on to its own timeout; the entry at the budget
-        names it missing, the end entry is complete. (Nothing arrived by the
-        budget: nothing is stored then, an empty entry equals a miss.)"""
+        the slow one runs on (until the test lets it end); the entry at the
+        budget names it missing, the end entry is complete. (Nothing arrived
+        by the budget: nothing is stored then, an empty entry equals a
+        miss.)"""
         cache = memory_cache()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.1),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=1.0),
+            "first": fake_site([hit("https://voe.sx/e/first")]),
+            "second": fake_site([hit("https://dood.to/e/second")], gate=second_may_end),
         }
-        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.2)
+        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.3)
 
         started = time.monotonic()
         streams = await uc.execute(make_request())
 
-        assert 0.2 <= time.monotonic() - started < 0.9
+        assert 0.3 <= time.monotonic() - started < 0.9
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
-        await eventually(lambda: len(cache.set.await_args_list) == 2, timeout=3.0)
+        second_may_end.set()
+        await eventually(lambda: len(cache.set.await_args_list) == 2)
         entries = [c.args[1] for c in cache.set.await_args_list]
         assert [(e.missing, len(e.results)) for e in entries] == [
             (("second",), 1),
@@ -301,7 +317,7 @@ class TestSearchCache:
         }
         uc = cached_use_case(sites, memory_cache(), hard=10.0)
         request = asyncio.create_task(uc.execute(make_request()))
-        await asyncio.sleep(0.1)
+        await eventually(lambda: running_links(uc) == ["https://voe.sx/e/fast"])
 
         await uc.aclose()
 
@@ -371,8 +387,9 @@ class TestCompletion:
         await uc.execute(make_request())
         await eventually(lambda: cache.data[SEARCH_KEY].missing == ())
         await uc.execute(make_request())
-        await asyncio.sleep(0.05)
 
+        # A second completion would still run, or would have asked b again
+        assert not uc._title_search.running(SEARCH_KEY)
         assert cached_links(cache) == ["https://voe.sx/e/old"]
         assert b.isolated_search.await_count == 1
 
@@ -564,3 +581,153 @@ class TestBrowserWarmup:
         # All 3 plugins searched — dynamic semaphore doesn't block
         assert plugins.get.call_count >= 3
         assert isinstance(result, list)
+
+
+def _episode(link: str, title: str) -> SearchResult:
+    """An episode result as aniworld and sto give it: the site's series
+    title, the request's numbers."""
+    result = hit(link, title)
+    result.metadata.update({"season": 1, "episode": 6})
+    return result
+
+
+def _site_by_query(answers: dict[str, list[SearchResult]]) -> AsyncMock:
+    """A plugin answering each query with its own results."""
+
+    async def _search(query: str, *_args: object, **_kwargs: object):
+        return answers.get(query, [])
+
+    plugin = AsyncMock()
+    plugin.isolated_search = AsyncMock(side_effect=_search)
+    return plugin
+
+
+def _series_use_case(
+    sites: dict[str, AsyncMock], info: TitleMatchInfo
+) -> StremioStreamUseCase:
+    tmdb = AsyncMock()
+    tmdb.get_title_and_year = AsyncMock(return_value=info)
+    plugins = MagicMock()
+    plugins.get_languages.return_value = ["de"]
+    plugins.get_by_provides.side_effect = lambda p: (
+        sorted(sites) if p == "stream" else []
+    )
+    plugins.get.side_effect = sites.__getitem__
+    config = make_config(plugin_timeout_seconds=1.0, stream_deadline_seconds=2.0)
+    return make_use_case(tmdb=tmdb, plugins=plugins, config=config)
+
+
+_SHIPPUDEN = TitleMatchInfo(
+    title="Naruto: Shippūden", year=2007, alt_titles=["Naruto: Shippuden"]
+)
+_TYBW = TitleMatchInfo(
+    title="Bleach: Thousand Year Blood War",
+    year=2022,
+    alt_titles=["Bleach: Thousand-Year Blood War"],
+)
+_EPISODE = make_request(imdb_id="tt0988824", content_type="series", season=1, episode=6)
+
+
+class TestShorterTitles:
+    """The base title ("Naruto" of "Naruto: Shippūden") finds the parent
+    series on a site that lists both: a plugin's partial match yields to
+    its other match, and counts where the site lists only the shorter name
+    (row 92)."""
+
+    async def test_naruto_beside_naruto_shippuden_is_dropped(self) -> None:
+        site = _site_by_query(
+            {
+                "Naruto Shippuden": [
+                    _episode("https://voe.sx/e/shippuden", "Naruto Shippuden")
+                ],
+                "Naruto": [_episode("https://dood.to/e/naruto", "Naruto")],
+            }
+        )
+        uc = _series_use_case({"sto": site}, _SHIPPUDEN)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/shippuden"]
+
+    async def test_bleach_beside_the_thousand_year_blood_war_is_dropped(
+        self,
+    ) -> None:
+        site = _site_by_query(
+            {
+                "Bleach Thousand Year Blood War": [
+                    _episode(
+                        "https://voe.sx/e/tybw",
+                        "Bleach: Thousand-Year Blood War - S01E06",
+                    )
+                ],
+                "Bleach": [_episode("https://dood.to/e/bleach", "Bleach - S01E06")],
+            }
+        )
+        uc = _series_use_case({"sto": site}, _TYBW)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert [s.url for s in streams] == ["https://voe.sx/e/tybw"]
+
+    async def test_a_name_another_language_holds_whole_is_no_partial(self) -> None:
+        """The review's case (code review 2026-10-12, finding 11): TMDB's
+        German title is "Yu-Gi-Oh! Duel Monsters", its English one
+        "Yu-Gi-Oh!", and the German aniworld names the series "Yu-Gi-Oh!".
+        The request's series titles hold that name whole, so aniworld's
+        other match does not drop it."""
+        aniworld = AsyncMock()
+        aniworld.isolated_search = AsyncMock(
+            side_effect=lambda *_args, **_kwargs: [
+                _episode("https://voe.sx/e/yugioh", "Yu-Gi-Oh!"),
+                _episode("https://dood.to/e/duel", "Yu-Gi-Oh! Duel Monsters"),
+            ]
+        )
+        sites = {"aniworld": aniworld, "english": _site_by_query({})}
+        tmdb = AsyncMock()
+        tmdb.get_title_and_year = AsyncMock(
+            side_effect=lambda imdb_id, *, language: TitleMatchInfo(
+                title="Yu-Gi-Oh!" if language == "en" else "Yu-Gi-Oh! Duel Monsters",
+                year=2000,
+            )
+        )
+        plugins = MagicMock()
+        plugins.get_languages.side_effect = lambda name: (
+            ["en"] if name == "english" else ["de"]
+        )
+        plugins.get_by_provides.side_effect = lambda p: (
+            sorted(sites) if p == "stream" else []
+        )
+        plugins.get.side_effect = sites.__getitem__
+        config = make_config(plugin_timeout_seconds=1.0, stream_deadline_seconds=2.0)
+        uc = make_use_case(tmdb=tmdb, plugins=plugins, config=config)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert sorted(s.url for s in streams) == [
+            "https://dood.to/e/duel",
+            "https://voe.sx/e/yugioh",
+        ]
+
+    async def test_a_site_that_lists_only_the_shorter_name_keeps_it(self) -> None:
+        """Another plugin's full match does not drop it."""
+        bleach = _site_by_query(
+            {"Bleach": [_episode("https://dood.to/e/bleach", "Bleach - S01E06")]}
+        )
+        tybw = _site_by_query(
+            {
+                "Bleach Thousand Year Blood War": [
+                    _episode(
+                        "https://voe.sx/e/tybw",
+                        "Bleach: Thousand-Year Blood War - S01E06",
+                    )
+                ]
+            }
+        )
+        uc = _series_use_case({"aniworld": bleach, "sto": tybw}, _TYBW)
+
+        streams = await uc.execute(_EPISODE)
+
+        assert sorted(s.url for s in streams) == [
+            "https://dood.to/e/bleach",
+            "https://voe.sx/e/tybw",
+        ]

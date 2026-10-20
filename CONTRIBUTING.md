@@ -38,7 +38,7 @@ poetry run start --host 0.0.0.0 --port 7979 --config data/config.yaml
 xvfb-run -a poetry run start --host 0.0.0.0 --port 7979 --config data/config.yaml
 ```
 
-The repository also contains a dev container (`.devcontainer/`) with Python, Node 22, Chromium and Xvfb preinstalled. On its first start it creates `.env.devcontainer` from `.env.devcontainer.example`; add your `GH_TOKEN` and git identity there and rebuild. Port 7979 is published on all interfaces of the host, so a server started in the container is reachable from the LAN (for example from Stremio). Details: [AGENTS.md → Dev container](AGENTS.md#9-dev-container).
+The repository also contains a dev container (`.devcontainer/`) with Python, Node 22, Chromium and Xvfb preinstalled. On its first start it creates `.env.devcontainer` from `.env.devcontainer.example`; add your `GH_TOKEN` and git identity there and rebuild. Port 7979 is published on all interfaces of the host, so a server started in the container is reachable from the LAN (for example from Stremio). Details: [The dev container](docs/how-to/dev-container.md).
 
 ---
 
@@ -51,7 +51,7 @@ poetry run pytest -m live                       # live smoke tests against the r
 poetry run pytest tests/benchmark/ -s -v        # concurrency benchmarks
 ```
 
-The offline suite has about 6,500 tests and must pass before every commit. CI (`.github/workflows/ci.yml`) runs pre-commit and the offline suite on every push to `staging` and on every pull request. Live tests hit real websites; a failure there means a site or hoster changed, not that your change is wrong. They do not run in CI: GitHub's datacenter IPs get harder Cloudflare challenges than a home network.
+The offline suite has about 6,500 tests and must pass before every commit. CI (`.github/workflows/ci.yml`) runs pre-commit and the offline suite on every push to `staging` and on every pull request. Live tests hit real websites; a failure there means a site or hoster changed, not that your change is wrong. They do not run in CI: GitHub's datacenter IPs get harder Cloudflare challenges than a residential network.
 
 Scavengarr is developed **test-first**: write a failing test, make it pass with the smallest change, refactor, commit. Test layout and mock conventions:
 
@@ -96,32 +96,21 @@ src/scavengarr/
   infrastructure/   # adapters: plugins base classes, hoster resolvers, link validation,
                     # cache, Torznab presenter, config, logging, scoring
   interfaces/       # FastAPI routers, CLI, composition root (dependency wiring)
-plugins/            # one Python file per site (42 plugins)
+plugins/            # one Python file per site (43 plugins)
 scripts/            # maintenance scripts (e.g. plugin list generator)
 tests/              # unit, integration, E2E, live tests and benchmarks
-docs/               # feature docs, architecture, plans, generated plugin list
+docs/               # docs index, current, target (decision records), how-to, reference (generated lists), plans
 data/config.yaml    # default configuration (mounted by Docker Compose)
 ```
 
-Scavengarr follows Clean Architecture: outer layers depend on inner ones only, and the domain never imports FastAPI, httpx or diskcache. Read [docs/architecture/clean-architecture.md](docs/architecture/clean-architecture.md) before larger changes.
+Scavengarr follows Clean Architecture: outer layers depend on inner ones only, and the domain never imports FastAPI, httpx or diskcache. Read [docs/target/architecture.md](docs/target/architecture.md) (the rules) and [docs/current/architecture.md](docs/current/architecture.md) (the module map and the request flows) before larger changes.
 
 ---
 
 ## Tech stack
 
-| Component | Library |
-|---|---|
-| HTTP framework | FastAPI + Uvicorn |
-| Static scraping | httpx |
-| HTML parsing | `selectolax` (lexbor, C, CSS selectors) |
-| Browser scraping | Patchright (Playwright fork, Chromium) |
-| Title matching | RapidFuzz |
-| Release parsing | guessit |
-| Configuration | pydantic-settings, PyYAML, python-dotenv |
-| Caching | diskcache (SQLite) / Redis |
-| Logging | structlog |
-| Metrics and tracing | prometheus-client, OpenTelemetry (OTLP) |
-| CLI | argparse (stdlib) |
+Every dependency with its purpose and the reason for its choice, the tools beside the Python packages and the alternatives deliberately not used are in [docs/reference/tech-stack.md](docs/reference/tech-stack.md).
+A commit that adds, removes or replaces a dependency updates that file in the same commit; `tests/unit/infrastructure/test_tech_stack_doc.py` checks it against `pyproject.toml`.
 
 ---
 
@@ -137,7 +126,7 @@ Every plugin must:
 - parse pages with `selectolax` through `await parse_page(parser, html)`,
 - declare `name`, `provides` (`stream`, `download` or `both`), `_domains` (primary domain first, then mirrors) and, if not German, `languages`.
 
-Analyse the site in a real browser before writing code. The full guide is [docs/features/python-plugins.md → Adding a New Plugin](docs/features/python-plugins.md).
+Analyse the site in a real browser before writing code. The full guide is [docs/how-to/new-plugin.md](docs/how-to/new-plugin.md).
 
 After adding, removing or changing a plugin's metadata, regenerate the plugin list (a test fails otherwise):
 
@@ -147,7 +136,7 @@ poetry run python scripts/generate_plugin_list.py
 
 ## Adding a hoster resolver
 
-Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters built on XFileSharing or a generic direct-download pattern only need a new config constant (`XFSConfig` in `xfs.py`, `GenericDDLConfig` in `generic_ddl.py`) — no new tests or wiring. Everything else gets its own resolver with `respx`-based tests. JDownloader's open-source hoster plugins are a good reference for how a hoster works. Guide: [docs/features/hoster-resolvers.md → Adding a New Resolver](docs/features/hoster-resolvers.md).
+Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters built on XFileSharing or a generic direct-download pattern only need a new config constant (`XFSConfig` in `xfs.py`, `GenericDDLConfig` in `generic_ddl.py`) — no new tests or wiring. Everything else gets its own resolver with `respx`-based tests. JDownloader's open-source hoster plugins are a good reference for how a hoster works. Guide: [docs/how-to/new-resolver.md](docs/how-to/new-resolver.md); the registered resolvers: [docs/reference/resolvers.md](docs/reference/resolvers.md).
 
 ---
 
@@ -160,7 +149,7 @@ Resolvers live in `src/scavengarr/infrastructure/hoster_resolvers/`. Hosters bui
 
 ## Documentation
 
-Docs ship with the code: when behaviour, features, configuration or architecture change, update the matching files in the same commit — `CHANGELOG.md`, `docs/features/`, `docs/architecture/`, `README.md`, `AGENTS.md`. Larger changes start with a short plan in `docs/plans/` (problem, design, affected files, tests).
+Docs ship with the code: when behaviour, features, configuration or architecture change, update the matching files in the same commit — `CHANGELOG.md`, `docs/current/`, `docs/target/`, `docs/how-to/`, `docs/reference/`, `README.md`, `AGENTS.md`. Larger changes start with a short plan in `docs/plans/` (problem, design, affected files, tests).
 
 ## AI-assisted contributions
 

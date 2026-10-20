@@ -266,8 +266,10 @@ class TestCircuitBreakerAndTimeout:
         plugin = _plugin([])
         plugin.search = AsyncMock(side_effect=_search_by_category)
         breaker = PluginCircuitBreaker(failure_threshold=1)
+        # The series answer's episode filter (a worker thread) runs inside
+        # the timeout as well: 0.05 s failed with 50 ms added to thread starts
         runner = _runner(
-            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.2
         )
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
 
@@ -291,8 +293,10 @@ class TestCircuitBreakerAndTimeout:
         plugin = _plugin([])
         plugin.search = AsyncMock(side_effect=_search)
         breaker = PluginCircuitBreaker(failure_threshold=2)
+        # Room for the empty answer's episode filter, a worker thread inside
+        # the timeout (0.05 s failed with 50 ms added to thread starts)
         runner = _runner(
-            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.2
         )
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
 
@@ -382,6 +386,28 @@ class TestPluginRecord:
         assert [c.args for c in history.count.call_args_list] == [
             ("a", "searches"),
             ("a", "timeouts"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("failure", "counter"),
+        [
+            (TimeoutError("a: search timed out"), "timeouts"),
+            (PluginUnreachableError("a"), "unreachable_searches"),
+        ],
+    )
+    async def test_a_raised_failure_of_the_site_is_counted_as_one(
+        self, failure: Exception, counter: str
+    ) -> None:
+        """The search page's timeout or a site without an answer, raised by
+        the plugin's base (row 139): no search without results."""
+        history = MagicMock(spec=["count"])
+        runner = _runner(_registry({"a": _plugin(failure)}), history=history)
+
+        await _search(runner, ["a"], ["q"])
+
+        assert [c.args for c in history.count.call_args_list] == [
+            ("a", "searches"),
+            ("a", counter),
         ]
 
     async def test_a_skipped_plugin_is_not_counted(self) -> None:
@@ -668,6 +694,28 @@ class TestMirrorStandby:
             ("hdfilme", "streamcloud")
         ]
 
+    async def test_a_standbys_results_name_the_member(self) -> None:
+        """The standby answers the member's search: its results name the
+        member it stood in for (``standby_for``), so the search's progress
+        takes them as the member's (code review 2026-10-12, finding 4)."""
+        plugins = self._plugins("hdfilme")
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        results = await _search(runner, list(plugins), ["q"])
+
+        assert [
+            (r.metadata["source_plugin"], r.metadata.get("standby_for"))
+            for r in results
+        ] == [("streamcloud", "hdfilme")]
+
+    async def test_a_members_own_results_name_no_standby(self) -> None:
+        plugins = self._plugins()
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+
+        results = await _search(runner, list(plugins), ["q"])
+
+        assert [r.metadata.get("standby_for") for r in results] == [None]
+
     async def test_the_member_that_missed_ranks_behind(self) -> None:
         plugins = self._plugins("hdfilme")
         runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
@@ -934,10 +982,13 @@ class TestOnResults:
     resolves links while slower plugins still search."""
 
     async def test_a_fast_plugins_results_come_before_a_slow_one_ends(self) -> None:
+        """The slow plugin ends once the fast one's results are out: a runner
+        holding them back until every plugin ends never gets there."""
+        fast_out = asyncio.Event()
         slow_done = asyncio.Event()
 
         async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(fast_out.wait(), 1)
             slow_done.set()
             return [_sr("https://b/1")]
 
@@ -948,6 +999,7 @@ class TestOnResults:
 
         async def _on_results(results: list[SearchResult]) -> None:
             reported.append(([r.download_link for r in results], slow_done.is_set()))
+            fast_out.set()
 
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
         async with pool.request() as budget:
@@ -1045,6 +1097,7 @@ class TestTelemetry:
             ([], "empty"),
             (RuntimeError("boom"), "error"),
             (PluginUnreachableError("a"), "unreachable"),
+            (TimeoutError("a: search timed out"), "timeout"),
         ],
     )
     async def test_outcome_and_duration(
@@ -1118,6 +1171,8 @@ class TestPluginDone:
             ([_sr("https://a/1")], True),
             ([], True),
             (RuntimeError("boom"), False),
+            (TimeoutError("a: search timed out"), False),
+            (PluginUnreachableError("a"), False),
         ],
     )
     async def test_outcome(

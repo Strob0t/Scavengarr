@@ -343,15 +343,20 @@ class BytePlugin(HttpxPluginBase):
     ) -> tuple[list[dict[str, str]], int, int]:
         """Fetch a single search results page.
 
-        Returns ``(results, total_hits, max_page)``.
+        Returns ``(results, total_hits, max_page)``. A failure of the site on
+        the first page raises (a timeout, no domain answering), so the plugin
+        record counts it; a later page that fails ends the pagination.
         """
         params = {"q": query, "t": "1"}
         if page_num > 1:
             params.update({"h": "1", "e": "0", "start": str(page_num)})
-
-        html = await self._fetch_text(
-            f"{self.base_url}/", params=params, context="search_page"
-        )
+            html = await self._fetch_text(
+                f"{self.base_url}/", params=params, context="search_page"
+            )
+        else:
+            html = await self._fetch_search_page(
+                "/", params=params, context="search_page"
+            )
         if html is None:
             return [], 0, 1
 

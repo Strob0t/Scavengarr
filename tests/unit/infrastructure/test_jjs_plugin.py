@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "jjs.py"
@@ -554,6 +556,54 @@ class TestJjsPlugin:
 
         results = await plugin.search("test")
         assert results == []
+
+    @pytest.mark.asyncio()
+    @respx.mock
+    async def test_a_search_page_that_times_out_is_a_timeout(self) -> None:
+        """A slow site is a timeout in the plugin record, not a search
+        without results (row 139)."""
+        respx.get("https://jjs.page/?s=test").mock(side_effect=httpx.ReadTimeout("x"))
+        plugin = _make_plugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(TimeoutError):
+            await plugin.search("test")
+
+    @pytest.mark.asyncio()
+    @respx.mock
+    async def test_a_search_page_answering_503_is_unreachable(self) -> None:
+        respx.get("https://jjs.page/?s=test").respond(503)
+        plugin = _make_plugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("test")
+
+    @pytest.mark.asyncio()
+    async def test_a_later_page_that_fails_keeps_the_pages_before(self) -> None:
+        """Only the first page raises: a failed later page is a partial
+        result."""
+        page1_html = _search_page_html(pagination=_pagination_html(1, 3))
+        detail_html = _detail_page_html()
+
+        async def mock_fetch(url: str, **kwargs: object) -> str | None:
+            if "page/2" in url:
+                return None
+            if url.endswith("/?s=iron+man"):
+                return page1_html
+            return detail_html
+
+        plugin = _make_plugin()
+        plugin._fetch_text = AsyncMock(side_effect=mock_fetch)
+
+        results = await plugin.search("iron man")
+
+        assert len(results) == 1
+        raising = [
+            c.kwargs.get("raising", False) for c in plugin._fetch_text.call_args_list
+        ]
+        assert raising[0] is True
+        assert not any(raising[1:])
 
     @pytest.mark.asyncio()
     async def test_category_filter_movies(self) -> None:

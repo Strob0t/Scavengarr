@@ -1,9 +1,9 @@
 """The post-deploy check's evaluation: pass or fail per check, one table.
 
 ``prodctl.py check`` gathers the inputs (the container's row and start time,
-its log since the start, four stream answers through the public endpoint)
-and this module judges them, so the judgement is tested from fixtures
-without a network:
+its log since the start, its ``/metrics``, four stream answers through the
+public endpoint) and this module judges them, so the judgement is tested
+from fixtures without a network:
 
 1. the container is running and healthy;
 2. the newest ``app_startup_complete`` record is younger than the
@@ -15,7 +15,9 @@ without a network:
    stream builder adds); the request's ``http_request`` record shows it
    reached the container, and its ``stremio_episode_ref`` record (DEBUG)
    names the placement when the log level has it;
-6. the movie id answers within the deadline with at least one stream.
+6. the movie id answers within the deadline with at least one stream;
+7. the readiness probe's gauge ``scavengarr_network_ok`` reads 1 for the
+   cache backend and the DNS (none yet: a warning).
 
 Stream descriptions are the only site data in the table; the caller masks
 the output (``portainer.mask``).
@@ -44,6 +46,11 @@ MOVIE_ID = "movie/tt0816692"
 _STARTUP = "app_startup_complete"
 _RESTORED = ("hoster_state_restored", "plugin_history_restored")
 _CODE = re.compile(r"S\d{2}E\d{2}", re.I)
+# The readiness probe's gauge per check (cache, dns)
+# More than this between the server's duration and the client's: the time
+# went on the way (the proxy, the network), not into the search
+_GAP_WARN_S = 5.0
+_NETWORK = re.compile(r'^scavengarr_network_ok\{check="(\w+)"\} (\S+)$', re.M)
 
 
 @dataclass(frozen=True)
@@ -60,9 +67,11 @@ class Answer:
     id: str
     status: int | None
     streams: list[dict[str, Any]] = field(default_factory=list)
+    # to the body's end; ``headers_seconds`` to the response headers
     seconds: float = 0.0
     request_id: str | None = None
     error: str | None = None
+    headers_seconds: float | None = None
 
 
 def parse_time(value: str) -> float:
@@ -151,6 +160,33 @@ def _request_records(
     return [r for r in records if r.get("request_id") == request_id]
 
 
+def _timing(answer: Answer, own: Sequence[dict[str, Any]]) -> tuple[str, float]:
+    """The client's times beside the server's ``duration_ms`` of the request's
+    ``http_request`` record, and how much longer the client took (0 without
+    the record)."""
+    if answer.headers_seconds is None:
+        client = f"client {answer.seconds:.1f} s"
+    else:
+        client = (
+            f"client {answer.headers_seconds:.1f} s to headers,"
+            f" {answer.seconds:.1f} s to the end"
+        )
+    served = next(
+        (
+            r
+            for r in own
+            if r.get("event") == "http_request" and r.get("duration_ms") is not None
+        ),
+        None,
+    )
+    if served is None:
+        return client, 0.0
+    server = float(served["duration_ms"]) / 1000
+    gap = answer.seconds - server
+    more = f" ({gap:.1f} s more on the way)" if gap > _GAP_WARN_S else ""
+    return f"{client}, server {server:.1f} s{more}", gap
+
+
 def stream_checks(
     answers: Sequence[Answer],
     records: Sequence[dict[str, Any]],
@@ -180,6 +216,7 @@ def stream_checks(
             else "no placement record (DEBUG)"
         )
         count = len(answer.streams)
+        timing, gap = _timing(answer, own)
         if name in expected:
             code = expected[name]
             with_code = [
@@ -207,31 +244,37 @@ def stream_checks(
                 sample = _first_line(answer.streams[0]) if answer.streams else "none"
                 detail = f"{count} streams, none {code} (first: {sample}); {seen}"
                 status = "fail"
-            checks.append(Check(name, status, f"{detail}, {answer.seconds:.1f} s"))
+        elif count and answer.seconds <= deadline_s:
+            detail, status = f"{count} streams; {seen}", "pass"
+        elif not count:
+            detail, status = "no streams", "fail"
         else:
-            within = answer.seconds <= deadline_s
-            if count and within:
-                checks.append(
-                    Check(
-                        name,
-                        "pass",
-                        f"{count} streams in {answer.seconds:.1f} s; {seen}",
-                    )
-                )
-            elif not count:
-                checks.append(
-                    Check(name, "fail", f"no streams, {answer.seconds:.1f} s")
-                )
-            else:
-                checks.append(
-                    Check(
-                        name,
-                        "fail",
-                        f"{count} streams but {answer.seconds:.1f} s over the"
-                        f" {deadline_s:.0f} s deadline",
-                    )
-                )
+            detail = (
+                f"{count} streams but {answer.seconds:.1f} s over the"
+                f" {deadline_s:.0f} s deadline"
+            )
+            status = "fail"
+        if status == "pass" and gap > _GAP_WARN_S:
+            status = "warn"
+        checks.append(Check(name, status, f"{detail}; {timing}"))
     return checks
+
+
+def network_check(metrics: str | None) -> Check:
+    """Check 7: the readiness probe's gauge, from ``/metrics`` (``None``:
+    the endpoint did not answer). Every check must have answered at the
+    probe's last run; no sample yet means nothing asked readiness."""
+    if metrics is None:
+        return Check("network", "fail", "/metrics did not answer")
+    values = {check: float(value) for check, value in _NETWORK.findall(metrics)}
+    if not values:
+        return Check("network", "warn", "no scavengarr_network_ok sample yet")
+    down = sorted(check for check, value in values.items() if value != 1.0)
+    if down:
+        return Check(
+            "network", "fail", f"no answer at the last probe: {', '.join(down)}"
+        )
+    return Check("network", "pass", f"{' and '.join(sorted(values))} answered")
 
 
 def failed(checks: Iterable[Check]) -> bool:

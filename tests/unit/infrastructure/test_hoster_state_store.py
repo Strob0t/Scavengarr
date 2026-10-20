@@ -109,7 +109,7 @@ class TestRestart:
         assert not _events(logs, "hoster_state_discarded")
 
     async def test_a_snapshot_from_the_future_keeps_its_lifetimes(self) -> None:
-        """The Pi has no clock until NTP: a negative downtime counts as 0."""
+        """The production host lacks a clock until NTP: negative downtime is 0."""
         cache = _backend()
         await cache.set(
             _KEY,
@@ -270,6 +270,27 @@ class TestWrites:
         await process.store.aclose()
 
         assert [e["url"] for e in (await cache.get(_KEY))["results"]] == [_ALIVE]
+
+    async def test_a_write_logs_its_counts_once(self) -> None:
+        """The shutdown's write shows in the log; an unchanged state writes
+        nothing and logs nothing."""
+        cache = _backend()
+        process = _Process(cache)
+        await process.store.restore()
+        await process.registry.resolve(_ALIVE)
+        process.hoster_breaker.record_failure("filemoon")
+
+        with structlog.testing.capture_logs() as logs:
+            await process.store.aclose()
+            await process.store.aclose()
+
+        [event] = _events(logs, "hoster_state_saved")
+        assert (event["resolutions"], event["redirects"], event["breakers"]) == (
+            1,
+            0,
+            1,
+        )
+        assert event["log_level"] == "info"
 
     async def test_a_failed_write_is_tried_again(self) -> None:
         cache = _backend()

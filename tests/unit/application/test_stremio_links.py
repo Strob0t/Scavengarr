@@ -14,6 +14,8 @@ from scavengarr.application.use_cases.stremio_links import StremioLinks
 from scavengarr.domain.entities.stremio import CachedStreamLink, ResolvedStream
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 
+from ..waiting import eventually
+
 _OLD = "https://cdn.example/old.mp4"
 _NEW = "https://cdn.example/new.mp4"
 
@@ -160,7 +162,11 @@ class TestCurrent:
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36"
 _PLAYER_URL = "https://cdn.example/player.mp4"
-_FIREFOX = {"user-agent": _UA, "accept-language": "de", "referer": "https://s.lan/"}
+_FIREFOX = {
+    "user-agent": _UA,
+    "accept-language": "de",
+    "referer": "https://s.example.lan/",
+}
 
 
 def _veev_link(*, age: float = 60) -> CachedStreamLink:
@@ -426,7 +432,7 @@ class TestShutdown:
         registry = _Registry(ResolvedStream(video_url=_NEW), delay=30)
         links, _ = _links(registry)
         request = asyncio.create_task(links.current(_link(age=2 * 3600)))
-        await asyncio.sleep(0.01)
+        await eventually(lambda: bool(registry.calls))
 
         await links.aclose()
 

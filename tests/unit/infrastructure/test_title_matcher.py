@@ -76,6 +76,13 @@ class TestNormalize:
     def test_strips_mixed_punctuation(self) -> None:
         assert _normalize("T2: Trainspotting!") == "t2 trainspotting"
 
+    def test_decodes_entities(self) -> None:
+        """The sites escape their titles twice: the episode index decodes
+        what is left, and so does the matcher (code review 2026-10-12,
+        finding 11)."""
+        assert _normalize("Rick &amp; Morty") == "rick morty"
+        assert _normalize("Someone&#039;s Dream") == "someone s dream"
+
 
 # ---------------------------------------------------------------------------
 # _strip_year
@@ -308,7 +315,7 @@ class TestFilterByTitleMatch:
             _sr("Iron Man 2"),
             _sr("Avengers Endgame"),
         ]
-        kept = filter_by_title_match(results, ref, threshold=0.7)
+        kept = filter_by_title_match(results, ref, threshold=0.7).matching
         titles = [r.title for r in kept]
         assert "Iron Man" in titles
         assert "Iron Man 2" not in titles
@@ -316,19 +323,19 @@ class TestFilterByTitleMatch:
 
     def test_none_reference_passes_all(self) -> None:
         results = [_sr("Iron Man"), _sr("Random Movie")]
-        kept = filter_by_title_match(results, None, threshold=0.7)
+        kept = filter_by_title_match(results, None, threshold=0.7).matching
         assert len(kept) == 2
 
     def test_all_filtered_returns_empty(self) -> None:
         ref = TitleMatchInfo(title="Iron Man", year=2008)
         results = [_sr("Completely Unrelated Film")]
-        kept = filter_by_title_match(results, ref, threshold=0.7)
+        kept = filter_by_title_match(results, ref, threshold=0.7).matching
         assert kept == []
 
     def test_no_year_still_filters_by_title(self) -> None:
         ref = TitleMatchInfo(title="Iron Man")
         results = [_sr("Iron Man"), _sr("Spider Man")]
-        kept = filter_by_title_match(results, ref, threshold=0.7)
+        kept = filter_by_title_match(results, ref, threshold=0.7).matching
         assert len(kept) == 1
         assert kept[0].title == "Iron Man"
 
@@ -351,7 +358,7 @@ class TestFilterByTitleMatch:
         ]
 
         with structlog.testing.capture_logs() as logs:
-            kept = filter_by_title_match(results, ref, threshold=0.7)
+            kept = filter_by_title_match(results, ref, threshold=0.7).matching
 
         assert kept == results[:1]
         assert [e["reason"] for e in _events(logs, "title_match_filtered")] == [
@@ -381,11 +388,129 @@ class TestFilterByTitleMatch:
             _sr("The Shawshank Redemption"),
             _sr("Completely Wrong Movie"),
         ]
-        kept = filter_by_title_match(results, ref, threshold=0.7)
+        kept = filter_by_title_match(results, ref, threshold=0.7).matching
         titles = [r.title for r in kept]
         assert "Die Verurteilten" in titles
         assert "The Shawshank Redemption" in titles
         assert "Completely Wrong Movie" not in titles
+
+
+class TestPartialMatches:
+    """A series result named only by a shorter form of the reference's
+    titles ("Naruto" for "Naruto: Shippūden") is a partial match: it counts
+    only where its plugin gave no other match (``SearchProgress``)."""
+
+    _SHIPPUDEN = TitleMatchInfo(
+        title="Naruto: Shippūden",
+        year=2007,
+        alt_titles=["Naruto: Shippuden"],
+        content_type="series",
+    )
+    _TYBW = TitleMatchInfo(
+        title="Bleach: Thousand Year Blood War",
+        year=2022,
+        alt_titles=["Bleach: Thousand-Year Blood War"],
+        content_type="series",
+    )
+
+    def test_the_parent_series_is_partial(self) -> None:
+        """aniworld names a result by the series, sto adds the episode."""
+        naruto = _sr("Naruto", category=5070)
+        shippuden = _sr("Naruto Shippuden", category=5070)
+        sto_naruto = _sr(
+            "Naruto - S01E06 - Gefährliche Mission! Die Reise ins Land der Welle",
+            category=5070,
+        )
+        sto_shippuden = _sr(
+            "Naruto Shippuden - S01E06 - Endlich wieder Nudelsuppe!", category=5070
+        )
+
+        matches = filter_by_title_match(
+            [naruto, shippuden, sto_naruto, sto_shippuden], self._SHIPPUDEN
+        )
+
+        assert matches.matching == [shippuden, sto_shippuden]
+        assert matches.partial == [naruto, sto_naruto]
+        assert score_title(naruto, self._SHIPPUDEN).partial
+        assert not score_title(shippuden, self._SHIPPUDEN).partial
+
+    def test_bleach_is_partial_for_the_thousand_year_blood_war(self) -> None:
+        bleach = _sr("Bleach - S01E01 - Der Krieg des Blutes", category=5070)
+        tybw = _sr("Bleach: Thousand-Year Blood War", category=5070)
+
+        matches = filter_by_title_match([bleach, tybw], self._TYBW)
+
+        assert matches.matching == [tybw]
+        assert matches.partial == [bleach]
+
+    def test_the_series_titles_judge_a_partial_match(self) -> None:
+        """The review's case (code review 2026-10-12, finding 11): the German
+        group's reference is "Yu-Gi-Oh! Duel Monsters", while the request's
+        series titles hold the English "Yu-Gi-Oh!", aniworld's name for the
+        series. The series titles judge the name, as ``locate()`` does."""
+        yugioh = _sr("Yu-Gi-Oh! - S01E06", category=5070)
+        german = TitleMatchInfo(
+            title="Yu-Gi-Oh! Duel Monsters", year=2000, content_type="series"
+        )
+        every_language = TitleMatchInfo(
+            title="Yu-Gi-Oh! Duel Monsters",
+            year=2000,
+            content_type="series",
+            series_titles=("Yu-Gi-Oh! Duel Monsters", "Yu-Gi-Oh!"),
+        )
+
+        assert score_title(yugioh, german).partial
+        assert not score_title(yugioh, every_language).partial
+        assert score_title(yugioh, every_language).score == 1.0
+
+    def test_a_name_without_its_article_is_the_series(self) -> None:
+        """The review's case (code review 2026-10-12, finding 10): the site
+        names the series without its article, its spin-off with every word
+        of the request's title. Neither is partial, so the spin-off cannot
+        drop the series."""
+        ref = TitleMatchInfo(title="The Walking Dead", year=2010, content_type="series")
+        series = _sr("Walking Dead - S01E01", category=5000)
+        spin_off = _sr("The Walking Dead: World Beyond - S01E01", category=5000)
+
+        matches = filter_by_title_match([series, spin_off], ref)
+
+        assert series in matches.matching
+        assert matches.partial == []
+
+    def test_an_ampersand_names_the_series(self) -> None:
+        ref = TitleMatchInfo(title="Rick and Morty", year=2013, content_type="series")
+        series = _sr("Rick & Morty - S01E01", category=5000)
+
+        assert not score_title(series, ref).partial
+
+    def test_movies_have_no_partial_matches(self) -> None:
+        """Scene names drop subtitles: "Dune.2021" is "Dune: Part One"."""
+        ref = TitleMatchInfo(title="Dune: Part One", year=2021, content_type="movie")
+        dune = _sr("Dune", release_name="Dune.2021.German.DL.1080p.BluRay.x264")
+
+        matches = filter_by_title_match([dune], ref)
+
+        assert matches.matching == [dune]
+        assert matches.partial == []
+
+    def test_an_imdb_match_is_no_partial_match(self) -> None:
+        ref = TitleMatchInfo(
+            title="Naruto: Shippūden", content_type="series", imdb_id="tt0988824"
+        )
+        naruto = _sr("Naruto", metadata={"imdb": "tt0988824"})
+
+        assert filter_by_title_match([naruto], ref).matching == [naruto]
+
+    def test_the_summary_counts_the_partial_matches(self) -> None:
+        results = [_sr("Naruto"), _sr("Naruto Shippuden"), _sr("Bleach")]
+
+        with structlog.testing.capture_logs() as logs:
+            filter_by_title_match(results, self._SHIPPUDEN)
+
+        [summary] = _events(logs, "title_match_summary")
+        assert summary["kept"] == 2
+        assert summary["partial"] == 1
+        assert summary["dropped"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -928,7 +1053,7 @@ class TestDuneFranchise:
             _sr("Dune: Part Two (2024)"),
             _sr("Completely Unrelated Film"),
         ]
-        kept = filter_by_title_match(results, ref, threshold=0.7)
+        kept = filter_by_title_match(results, ref, threshold=0.7).matching
         titles = [r.title for r in kept]
         assert "Dune: Part Two (2024)" in titles
         assert "Completely Unrelated Film" not in titles
@@ -994,5 +1119,5 @@ class TestExtraWords:
         ]
         kept = filter_by_title_match(
             results, self._DARK, threshold=0.7, extra_words_penalty=0.35
-        )
+        ).matching
         assert [r.title for r in kept] == ["Dark"]

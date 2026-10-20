@@ -1,8 +1,7 @@
 """Series episodes per plugin: what the episode filter keeps, and its leaks.
 
-``poetry run python -P scripts/probes/series_episodes.py [--json FILE] [ID ...]``
-(``-P``: the sibling probe ``redis.py`` would shadow the package;
-``xvfb-run -a`` without a display: the browser fallback runs headful)
+``poetry run python scripts/probes/series_episodes.py [--json FILE] [ID ...]``
+(``xvfb-run -a`` without a display: the browser fallback runs headful)
 starts the app's composition (plugins, browser fallback, title lookup)
 and runs every stream plugin's search directly, with the queries, the
 category, season and episode of a Stremio request, under the plugin
@@ -29,8 +28,8 @@ both sites list, sto alone and aniworld alone (row 71: does sto add streams
 where aniworld places the episode too?). The links stay in memory: the
 output names hosters and counts only.
 
-Without ids: the series of ``docs/plans/round-titles.txt`` plus Severance
-S01E05 and S02E05. Mirror groups are not collapsed: every member is asked.
+Without ids: the series of ``.cache/live/round-titles.txt`` (a local file) plus
+Severance S01E05 and S02E05. Mirror groups are not collapsed: every member is asked.
 Read-only: it searches the sites and writes nothing but a temporary cache.
 """
 
@@ -81,7 +80,7 @@ from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
 
 REPO = Path(__file__).resolve().parents[2]
-ROUND_TITLES = REPO / "docs" / "plans" / "round-titles.txt"
+ROUND_TITLES = REPO / ".cache" / "live" / "round-titles.txt"
 EXTRA_IDS = ("series/tt11280740:1:5", "series/tt11280740:2:5")  # Severance
 SERIES = 5000
 
@@ -502,6 +501,8 @@ async def probe(
         series_meta=state.series_meta,
     )
     names = _plugin_names(state, only)
+    # The app's titles: every stream plugin's language, whichever it asks
+    languages = titles.languages(_plugin_names(state, None))
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
     records: list[Record] = []
@@ -534,7 +535,10 @@ async def probe(
                     continue
             for result in results:
                 found.setdefault(result_key(result), result)
-        matched = await titles.matching(list(found.values()), ref)
+        matches = await titles.matching(list(found.values()), ref)
+        # A plugin's partial matches count only without another of its
+        # matches (the app's SearchProgress)
+        matched = matches.matching or matches.partial
         assert req.season is not None and req.episode is not None
         _record(sid, name, matched, req.season, req.episode, records, kept_links)
 
@@ -547,8 +551,13 @@ async def probe(
             print(f"{sid}: no translation", file=sys.stderr)
             continue
         req, absolute = request
-        infos, meta = await titles.title_infos(req, titles.languages(names))
-        episode_ref = titles.episode_ref(req, meta, absolute=absolute)
+        infos, meta = await titles.title_infos(req, languages)
+        episode_ref = titles.episode_ref(
+            req,
+            meta,
+            absolute=absolute,
+            titles=titles.series_titles(infos, languages),
+        )
         references[sid] = _reference(req, episode_ref)
         tasks = []
         for langs, group in titles.language_groups(names).items():

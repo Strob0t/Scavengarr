@@ -18,6 +18,7 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from urllib.parse import urljoin
 
@@ -30,6 +31,7 @@ from scavengarr.infrastructure.plugins.episode_index import (
     Located,
     RowSelectors,
     episode_index,
+    is_partial_series,
     locate,
 )
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -190,20 +192,26 @@ class AniworldPlugin(HttpxPluginBase):
     async def _ajax_search(self, query: str) -> list[dict[str, str]]:
         """Search via POST /ajax/search endpoint.
 
-        Returns JSON array of {title, description, link} dicts.
+        Returns JSON array of {title, description, link} dicts. A failure of
+        the site raises (a timeout, no domain answering), so the plugin record
+        counts it.
         """
-        resp = await self._safe_fetch(
-            f"{self.base_url}/ajax/search",
+        body = await self._fetch_search_page(
+            "/ajax/search",
             method="POST",
             context="ajax_search",
             data={"keyword": query},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
-        if resp is None or not resp.text.strip():
+        if body is None or not body.strip():
             # A search without hits is answered with an empty body
             return []
 
-        data = self._safe_parse_json(resp, context="ajax_search")
+        try:
+            data = json.loads(body)
+        except ValueError:
+            self._log.warning("aniworld_invalid_json", context="ajax_search")
+            return []
         if not isinstance(data, list):
             return []
 
@@ -258,7 +266,12 @@ class AniworldPlugin(HttpxPluginBase):
         detail_parser = await parse_page(_DetailPageParser(self.base_url), resp.text)
 
         page = await self._episode_page(
-            detail_url, detail_parser, season, episode, episode_ref
+            detail_url,
+            detail_parser,
+            season,
+            episode,
+            episode_ref,
+            name=item.get("title", ""),
         )
         if page is None:
             return None
@@ -295,11 +308,14 @@ class AniworldPlugin(HttpxPluginBase):
         season: int | None,
         episode: int | None,
         episode_ref: EpisodeRef | None,
+        *,
+        name: str,
     ) -> tuple[str, dict[str, str | int]] | None:
         """The episode page to scrape and the placement its result claims
         (``season`` and ``episode`` for the Stremio episode filter).
 
-        A reference: the located row's page, the request's season and
+        A reference: the row it locates on the series named *name*, the
+        located row's page, the request's season and
         episode, the site's as ``site_season`` and ``site_episode`` and the
         evidence as ``episode_located_by``. A season: the page built from
         the numbers (a season without episode starts at its first episode).
@@ -307,7 +323,9 @@ class AniworldPlugin(HttpxPluginBase):
         """
         series = detail_url.rstrip("/")
         if episode_ref is not None:
-            located = await self._locate_episode(series, detail.seasons, episode_ref)
+            located = await self._locate_episode(
+                series, detail.seasons, episode_ref, name
+            )
             if located is None:
                 return None
             return (
@@ -333,10 +351,12 @@ class AniworldPlugin(HttpxPluginBase):
         return None
 
     async def _locate_episode(
-        self, series_url: str, seasons: list[int], ref: EpisodeRef
+        self, series_url: str, seasons: list[int], ref: EpisodeRef, name: str
     ) -> Located | None:
         """The row of the series' season pages *ref* means (the index is
-        cached per series); ``None``, logged, when no row matches.
+        cached per series); ``None``, logged, when no row matches. On a
+        series whose *name* is only a shorter form of the request's titles
+        (``is_partial_series``) the title alone places it.
 
         A series page without season links is a single season: its
         episode table is ``/staffel-1``.
@@ -351,12 +371,15 @@ class AniworldPlugin(HttpxPluginBase):
             selectors=_ROW_SELECTORS,
             semaphore=self._new_semaphore(),
         )
-        located = locate(index, ref)
+        partial = is_partial_series([name], ref)
+        located = locate(index, ref, partial=partial)
         reference = {
             "slug": slug,
             "season": ref.season,
             "episode": ref.episode,
             "absolute": ref.absolute,
+            "absolute_source": ref.source,
+            "partial": partial,
         }
         if located is None:
             self._log.info("aniworld_episode_not_located", rows=len(index), **reference)

@@ -114,7 +114,7 @@ class _DetailPageParser:
     """Parse filmpalast.to detail page for streaming links (selectolax).
 
     The detail pages are ~300 KB: html.parser took 20 ms per page on x86
-    and the largest share of the parsing CPU on a Raspberry Pi.
+    and the largest share of the parsing CPU on the production host.
 
     Structure::
 
@@ -201,16 +201,22 @@ class FilmpalastPlugin(HttpxPluginBase):
     ) -> tuple[list[dict[str, str]], bool]:
         """Fetch one search results page.
 
-        Returns ``({title, detail_url} list, has_next_page)``.
+        Returns ``({title, detail_url} list, has_next_page)``. A failure of
+        the site on the first page raises (a timeout, no domain answering),
+        so the plugin record counts it; a later page that fails ends the
+        pagination.
         """
-        url = f"{self.base_url}/search/title/{quote(term, safe='')}"
+        path = f"/search/title/{quote(term, safe='')}"
         if page_num > 1:
-            url += f"/{page_num}"
-        resp = await self._safe_fetch(url, context="search_page")
-        if resp is None:
+            html = await self._fetch_text(
+                f"{self.base_url}{path}/{page_num}", context="search_page"
+            )
+        else:
+            html = await self._fetch_search_page(path, context="search_page")
+        if html is None:
             return [], False
 
-        parser = await parse_page(_SearchResultParser(), resp.text)
+        parser = await parse_page(_SearchResultParser(), html)
 
         self._log.info(
             "filmpalast_search_page",

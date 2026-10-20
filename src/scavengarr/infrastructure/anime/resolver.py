@@ -123,6 +123,10 @@ class KitsuAnimeIdResolver:
         )
         return number
 
+    async def has_whole_series_entry(self, imdb_id: str) -> bool | None:
+        kitsu_ids = self._lists.whole_series(imdb_id)
+        return None if kitsu_ids is None else bool(kitsu_ids)
+
     async def aclose(self) -> None:
         fetches = list(self._fetching.values())
         for fetch in fetches:

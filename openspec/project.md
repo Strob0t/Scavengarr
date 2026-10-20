@@ -6,16 +6,20 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 
 ## Tech Stack
 
-- **Language**: Python `^3.12,<3.14` (`pyproject.toml`; Docker images use Python 3.12, ruff targets `py312`)
-- **Framework**: FastAPI + Uvicorn (ASGI) for the web server
+Every dependency with its purpose and the reason for its choice, the tools beside the Python packages and the alternatives deliberately not used: [`docs/reference/tech-stack.md`](../docs/reference/tech-stack.md) (checked against `pyproject.toml` by `tests/unit/infrastructure/test_tech_stack_doc.py`).
+In short:
+
+- **Language**: Python in the range of `pyproject.toml`; the image runs the version of its base image (`Dockerfile.prod`), and ruff targets the lowest
+- **Framework**: FastAPI on Uvicorn (ASGI), with uvloop and httptools
 - **Scraping**:
   - **httpx plugins**: `HttpxPluginBase` (`src/scavengarr/infrastructure/plugins/httpx_base.py`) — `httpx` (async HTTP) + `selectolax` (lexbor HTML parser)
   - **Playwright plugins**: `PlaywrightPluginBase` (`src/scavengarr/infrastructure/plugins/playwright_base.py`) — Patchright (Playwright fork), one shared Chromium via `SharedBrowserPool`
-- **Hoster resolvers**: 62 resolvers in `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters)
-- **Configuration**: Pydantic Settings with precedence CLI → ENV (incl. `--dotenv` file) → YAML → defaults
+- **Hoster resolvers**: `src/scavengarr/infrastructure/hoster_resolvers/` (streaming and DDL hosters; the list: `docs/reference/resolvers.md`)
+- **Configuration**: pydantic-settings with precedence CLI → ENV (incl. `--dotenv` file) → YAML → defaults
 - **Plugins**: Python plugins only (`plugins/*.py`); the YAML plugin system was removed in `42fced9`
 - **Cache**: `diskcache` (default) or Redis (`cache.backend: redis`)
 - **Logging**: `structlog` with JSON (prod) or console (dev) output
+- **Metrics and traces**: `prometheus-client` (`/metrics`), OpenTelemetry spans on demand (`telemetry.tracing_endpoint`)
 - **CLI**: stdlib `argparse` (`src/scavengarr/interfaces/cli/__main__.py`)
 - **Containerization**: Docker (`Dockerfile.prod`)
 
@@ -36,7 +40,7 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 - **Plugin-driven scraping**: Site-specific logic encapsulated in Python plugins inheriting `HttpxPluginBase` or `PlaywrightPluginBase`
 - **Type-safe configuration**: Pydantic Settings with strict validation and deterministic precedence
 - **Deployment mode**: single process (FastAPI + plugins + background scoring); a distributed coordinator/worker mode is not implemented
-- **OpenSpec**: two legacy changes live in `openspec/changes/`; features since then are tracked in `CHANGELOG.md`, `docs/features/` and `docs/plans/`
+- **OpenSpec**: the open changes live in `openspec/changes/`, the requirements of every capability with a spec in `openspec/specs/`; features built without a change are tracked in `CHANGELOG.md` and `docs/`
 
 ### Testing Strategy
 
@@ -61,11 +65,12 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
 - **Single entrypoint**: `load_config()` (`src/scavengarr/infrastructure/config/load.py`) called once in the CLI `start()` function
 - **Precedence (high → low)**:
   1. CLI arguments (`--config`, `--dotenv`, `--plugin-dir`, `--log-level`, `--log-format`)
-  2. Environment variables (`SCAVENGARR_*` prefix; `CACHE_*` for cache settings). A `.env` file passed via `--dotenv` is loaded into the environment without overriding variables that are already set
+  2. Environment variables (`SCAVENGARR_<SECTION>_<KEY>`, `SCAVENGARR_<KEY>` and the flat names; no variable without the prefix, `CACHE_*` included). A `.env` file passed via `--dotenv` is loaded into the environment without overriding variables that are already set
   3. YAML config file (path via `--config` or `SCAVENGARR_CONFIG`; no default path; the Docker image sets `SCAVENGARR_CONFIG=/app/config/config.yaml`)
   4. Built-in defaults (`src/scavengarr/infrastructure/config/defaults.py` + field defaults in `schema.py`)
 - **No side effects**: Config loading is pure (never creates dirs, writes files, or starts network activity)
-- **Secrets**: never log secrets; a redaction helper does not exist yet
+- **Secrets**: never log secrets; the startup line `config_effective` shows a secret setting as `***`, and the log processors mask URL passwords and secret query parameters
+- **Requirements**: `specs/configuration/spec.md`
 
 ### Plugin System
 
@@ -74,8 +79,8 @@ Scavengarr is a **self-hosted, container-ready indexer** that emulates the Torzn
   - Must export a module-level `plugin` with a non-empty `name` and an `async def search(query, category, season, episode)` method
   - Inherit `HttpxPluginBase` or `PlaywrightPluginBase` (shared client/browser setup, domain fallback, cleanup, semaphore)
   - Declare `provides` (`"stream"`, `"download"` or `"both"`) and `languages` (default `["de"]`)
-- **Lazy-loading**: Plugins are imported on demand (`PluginRegistry.get(name)`)
-- **Caching**: Loaded plugins are cached in-memory for subsequent requests
+- **Loading**: the first registry call after discovery imports every plugin file once (the startup makes it); later calls answer from the loaded plugins
+- **Requirements**: `specs/plugin-system/spec.md`
 
 ## Domain Context
 
@@ -83,7 +88,7 @@ Understanding of German and English streaming and DDL site structures (HTML list
 
 ## Important Constraints
 
-- **Python version**: `^3.12,<3.14` (enforced via `pyproject.toml`)
+- **Python version**: the range of `pyproject.toml` (`>=3.12,<3.15`)
 - **Privacy & security**:
   - Never log secrets in plaintext (passwords, API keys, cookies)
   - SSL verification stays enabled (httpx default)
@@ -100,20 +105,11 @@ Understanding of German and English streaming and DDL site structures (HTML list
 - **Optional services**:
   - Redis (alternative cache backend)
   - TMDB API (optional API key for Stremio title lookup; IMDB/Wikidata fallback without key)
-- **Metrics**: JSON metrics at `/api/v1/stats/metrics` (Prometheus format: future)
+- **Metrics**: Prometheus at `/metrics`, JSON at `/api/v1/stats/metrics`
 
 ## Development Dependencies
 
-From `[tool.poetry.group.dev.dependencies]`:
-
-- **Poetry**: Dependency management and packaging
-- **pytest**, **pytest-asyncio**, **pytest-cov**, **pytest-mock**: Testing
-- **respx**: httpx-native HTTP mocking
-- **requests**: test helper dependency
-- **ruff**: Linting and formatting
-- **pre-commit**: Git hooks for quality enforcement
-
-Runtime libraries relevant for development: `structlog`, `httpx`, `patchright`, `pydantic-settings`, `diskcache`, `redis`, `guessit`, `rapidfuzz`, `unidecode`.
+Poetry manages the dependencies; the development group of `pyproject.toml` (pytest with its plugins, respx, ruff, basedpyright, pre-commit) is listed with its reasons in [`docs/reference/tech-stack.md`](../docs/reference/tech-stack.md#development).
 
 ## OpenSpec Integration
 
@@ -126,16 +122,15 @@ OpenSpec changes live in `openspec/changes/<change-id>/`:
 ### Changes
 
 Open (`openspec list`):
-- `add-stream-media-quality` – Stream quality and size from the stream itself (approved 2026-10-06)
-- `add-container-image` – A published multi-arch container image (approved 2026-10-06)
-- `persist-resolver-state` – Hoster resolutions and circuit breakers that survive a restart (approved 2026-10-06)
-- `add-anime-ids` – `kitsu:` stream requests (approved 2026-10-06)
+- `add-container-image` – A published multi-arch container image (approved 2026-10-06; task 2.3 waits for the production host's switch to the published image)
+- `react-to-challenges` – A capture that meets a challenge is an outcome of its own, with a cooldown instead of the breaker, and finishes in the background (the maintainer's decision of 2026-10-12, backlog rows 89 and 90)
+- `keep-capture-state` – A capture hoster's storage state outlives restarts, recycles and relaunches (R4, the maintainer's decision of 2026-10-12, measured by backlog row 91)
 
-Archived after its release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`.
+Archived after their release: `add-observability` (Prometheus metrics, request ids, on-demand tracing; shipped in v0.3.0), its requirements now in `specs/observability/spec.md`; on 2026-10-12, shipped in v0.4.0: `add-anime-ids` (`specs/stremio-anime-ids/`), `continue-cut-searches` (`specs/stremio-search-continuation/`), `series-identity` (`specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; its task 6.3, fireani's episode location, deferred while the site does not answer), `proxy-direct-streams` (`specs/stremio-file-proxy/`) and `persist-resolver-state` (`specs/hoster-resolution-persistence/`); on 2026-10-18: `add-stream-media-quality` (`specs/stremio-stream-quality/`) and `place-episodes-by-number-first` (its deltas merged into `specs/stremio-anime-episodes/` and `specs/stremio-series-identity/`; the search cache key and the unchecked position's title check were specified with the archiving).
 
-Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, [ideas-backlog.md](../docs/plans/ideas-backlog.md) I16):
-- `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it
-- `add-plugin-loader` – Plugin discovery and validation: Python part implemented under `domain/plugins` + `infrastructure/plugins`; YAML part superseded (removed in `42fced9`)
+Archived unfinished on 2026-10-06, without specs (`changes/archive/`; untouched since January, the archived backlog I16); their specs were written from the current behaviour later (backlog row 120):
+- `add-config-system` – Type-safe config loading (Pydantic Settings): implemented except wrapped YAML errors; the startup log's `config_effective` (secrets masked) came later without it; requirements in `specs/configuration/`
+- `add-plugin-loader` – Plugin discovery and validation: Python part implemented under `domain/plugins` + `infrastructure/plugins`; YAML part superseded (removed in `42fced9`); requirements in `specs/plugin-system/`
 
 Features built without an OpenSpec change (see `CHANGELOG.md`): Playwright plugins and shared browser pool, per-plugin authentication, Torznab use cases and presenter, FastAPI endpoints (`/api/v1/torznab/{plugin}?t=search|caps`), Stremio addon, hoster resolvers, search caching, plugin scoring.
 
@@ -146,19 +141,19 @@ These are fixed across all OpenSpec changes and AI implementations:
 | Contract | Value | Source |
 |---|---|---|
 | **Entry Point** | `poetry run start` (`scavengarr.interfaces.cli:start`, `src/scavengarr/interfaces/cli/__main__.py`) | `pyproject.toml` |
-| **Config Prefix** | `SCAVENGARR_` (cache settings: `CACHE_`) | `add-config-system` |
-| **Plugin Directory** | Configurable via `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`) | `add-plugin-loader` |
-| **Plugin Format** | `.py` (Python plugins inheriting `HttpxPluginBase`/`PlaywrightPluginBase`) | `add-plugin-loader` |
+| **Config Prefix** | `SCAVENGARR_` | `specs/configuration/` |
+| **Plugin Directory** | Configurable via `SCAVENGARR_PLUGIN_DIR` (default: `./plugins`) | `specs/plugin-system/` |
+| **Plugin Format** | `.py` (Python plugins inheriting `HttpxPluginBase`/`PlaywrightPluginBase`) | `specs/plugin-system/` |
 | **Scraping Engines** | httpx and Playwright (equal-weight, chosen per plugin) | `AGENTS.md` |
 | **Cache Backend** | `diskcache` (default), Redis (optional) | `add-config-system` |
-| **Logging Framework** | `structlog` with JSON/console output | `add-config-system` |
-| **Config Precedence** | CLI > ENV (incl. `--dotenv`) > YAML > defaults | `add-config-system` |
+| **Logging Framework** | `structlog` with JSON/console output | `specs/configuration/` |
+| **Config Precedence** | CLI > ENV (incl. `--dotenv`) > YAML > defaults | `specs/configuration/` |
 | **Python Version** | `>=3.12,<3.15` | `pyproject.toml` |
 | **API Prefix** | `/api/v1` (port 7979 by default) | `src/scavengarr/interfaces/app.py` |
 
 ---
 
-**Last Updated**: 2026-10-06
+**Last Updated**: 2026-10-19
 **Author**: Scavengarr Team
 **OpenSpec Changes**: see [Changes](#changes)
 

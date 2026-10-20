@@ -103,10 +103,13 @@ class TestStreamKind:
     @pytest.mark.parametrize(
         ("url", "kind"),
         [
-            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/file", "file"),
-            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/file?x=1", "file"),
-            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/scavengarr.m3u8", "hls"),
-            ("https://scavengarr.lan/api/v1/stremio/proxy/ab12/", "hls"),
+            ("https://app.example.lan/api/v1/stremio/proxy/ab12/file", "file"),
+            ("https://app.example.lan/api/v1/stremio/proxy/ab12/file?x=1", "file"),
+            (
+                "https://app.example.lan/api/v1/stremio/proxy/ab12/scavengarr.m3u8",
+                "hls",
+            ),
+            ("https://app.example.lan/api/v1/stremio/proxy/ab12/", "hls"),
             ("https://cdn.example/hls/master.txt", "hls"),
             ("https://cdn.example/v.m3u8?t=1", "hls"),
             ("https://cdn.example/v.mp4", "file"),
@@ -117,7 +120,7 @@ class TestStreamKind:
 
     @respx.mock
     async def test_a_proxied_file_is_checked_as_a_file(self) -> None:
-        url = "https://scavengarr.lan/api/v1/stremio/proxy/ab12/file"
+        url = "https://app.example.lan/api/v1/stremio/proxy/ab12/file"
         respx.get(url).mock(
             side_effect=[
                 httpx.Response(

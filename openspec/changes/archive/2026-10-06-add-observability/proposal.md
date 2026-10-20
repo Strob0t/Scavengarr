@@ -2,11 +2,11 @@
 
 ## Why
 
-The only metrics today are the JSON of `/api/v1/stats/metrics`: averages per plugin since the start, the event-loop lag of the last 5 minutes and the circuit breaker states. They have no distributions (p95), no phases of a Stremio request, no hoster outcomes and no reason why an answer went out. Every tuning decision of the last rounds (answer policy, timeouts, breakers, dead plugins and hosters) needed a manual end-to-end round on the Raspberry Pi plus a log analysis. Such a round costs the Pi minutes of CPU (17 first searches took about 2.6 min) and still shows a few dozen requests only.
+The only metrics today are the JSON of `/api/v1/stats/metrics`: averages per plugin since the start, the event-loop lag of the last 5 minutes and the circuit breaker states. They have no distributions (p95), no phases of a Stremio request, no hoster outcomes and no reason why an answer went out. Every tuning decision of the last rounds (answer policy, timeouts, breakers, dead plugins and hosters) needed a manual end-to-end round on the production host plus a log analysis. Such a round costs the production host minutes of CPU (17 first searches took about 2.6 min) and still shows a few dozen requests only.
 
 Metrics from real use answer the same questions all the time, without a test load. One request can only be reconstructed from log time windows; a request id in the log context makes that direct.
 
-The user set a hard limit: recording, collecting and showing the metrics must cost far less compute than the service itself. On the Pi a first stream request costs 9.2 s CPU (2.5 s Python, 6.7 s Chromium) and playing through the HLS proxy about 4.4 s CPU per minute.
+The user set a hard limit: recording, collecting and showing the metrics must cost far less compute than the service itself. On the production host a first stream request costs 9.2 s CPU (2.5 s Python, 6.7 s Chromium) and playing through the HLS proxy about 4.4 s CPU per minute.
 
 ## What Changes
 
@@ -29,4 +29,4 @@ The user set a hard limit: recording, collecting and showing the metrics must co
   - `src/scavengarr/interfaces/api/stremio/router.py` (HLS proxy), `interfaces/app.py` (`/metrics`, request id), `interfaces/composition.py` (wiring, shutdown), `interfaces/api/stats/router.py` (JSON from the new metrics), `infrastructure/config/schema.py` (`telemetry` section).
 - Dependencies: `prometheus-client` (pure Python); `opentelemetry-sdk` and `opentelemetry-exporter-otlp-proto-http` (bring `protobuf`), imported only with tracing on.
 - Deployment: Prometheus scrapes `<scavengarr host>:7979/metrics` every 60 s; Tempo only when tracing is wanted.
-- Cost (estimates, checked by a benchmark): about 10 µs per recorded stage (under 1 ms per first stream request); a scrape of about 650 series takes a few ms, about 20-30 s CPU per day at 60 s on the Pi, under 1 % of what the container uses.
+- Cost (estimates, checked by a benchmark): about 10 µs per recorded stage (under 1 ms per first stream request); a scrape of about 650 series takes a few ms, about 20-30 s CPU per day at 60 s on the production host, under 1 % of what the container uses.

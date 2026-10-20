@@ -15,6 +15,7 @@ from scavengarr.domain.plugins.base import (
     PluginUnreachableError,
     SearchResult,
 )
+from scavengarr.domain.ports.browser_fetcher import Redirect
 from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
@@ -611,6 +612,66 @@ class TestChallengeFlag:
         assert flag.seen is True
         assert flag.unsolved_search is True
 
+    async def _link_out(
+        self, monkeypatch: pytest.MonkeyPatch, redirect: Redirect
+    ) -> tuple[str | None, ChallengeFlag]:
+        """A link-out answered with a challenge, which the browser resolves
+        to *redirect*."""
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        fetcher = AsyncMock()
+        fetcher.resolve_redirect = AsyncMock(return_value=redirect)
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", fetcher)
+        respx.get("https://example.com/external/abc").respond(403, html=self._CHALLENGE)
+        plugin = _TestPlugin()
+        flag = ChallengeFlag()
+        token = challenge_flag.set(flag)
+        try:
+            async with httpx.AsyncClient() as client:
+                plugin._client = client
+                found = await plugin._resolve_redirect(
+                    "https://example.com/external/abc"
+                )
+        finally:
+            challenge_flag.reset(token)
+        fetcher.resolve_redirect.assert_awaited_once()
+        return found, flag
+
+    @respx.mock
+    async def test_a_link_out_the_browser_resolves_is_solved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        found, flag = await self._link_out(
+            monkeypatch, Redirect("https://hoster.example/e/1", passed=True)
+        )
+
+        assert found == "https://hoster.example/e/1"
+        assert flag.seen is True
+        # The browser got past it (row 88: it stayed open, so unsolved)
+        assert flag.unsolved_search is False
+
+    @respx.mock
+    async def test_a_link_out_the_browser_does_not_resolve_is_unsolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        found, flag = await self._link_out(monkeypatch, Redirect(None, passed=False))
+
+        assert found is None
+        assert flag.seen is True
+        assert flag.unsolved_search is True
+
+    @respx.mock
+    async def test_a_dead_link_out_behind_a_passed_challenge_is_solved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The review's case (code review 2026-10-12, finding 14): the browser
+        gets past the challenge, and the link-out answers a same-host 404 (an
+        expired hash). A dead link, not an unsolved challenge."""
+        found, flag = await self._link_out(monkeypatch, Redirect(None, passed=True))
+
+        assert found is None
+        assert flag.seen is True
+        assert flag.unsolved_search is False
+
     @respx.mock
     async def test_an_error_page_leaves_the_flag(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1068,3 +1129,306 @@ class TestDomainList:
             await plugin._verify_domain()
 
         assert not list_route.called
+
+
+def _route_fails(route: respx.Route, failure: httpx.Response | Exception) -> None:
+    """Let *route* answer *failure*: an error answer or a raised exception."""
+    if isinstance(failure, httpx.Response):
+        route.mock(return_value=failure)
+    else:
+        route.mock(side_effect=failure)
+
+
+class TestSearchPage:
+    """The search page's raising mode (``_fetch_search_page``): a failure of
+    the site stays one, so the plugin record counts a timeout or an
+    unreachable site instead of a search without results (row 139). Every
+    other page keeps the lenient mode, ``None`` with the log line."""
+
+    @respx.mock
+    async def test_an_answering_page_is_returned(self) -> None:
+        respx.get("https://only.com/search", params={"q": "x"}).respond(
+            200, text="<html>hits</html>"
+        )
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        html = await plugin._fetch_search_page("/search", params={"q": "x"})
+
+        assert html == "<html>hits</html>"
+
+    @respx.mock
+    async def test_a_timeout_stays_a_timeout(self) -> None:
+        respx.get("https://only.com/search").mock(side_effect=httpx.ReadTimeout("x"))
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs, pytest.raises(TimeoutError):
+            await plugin._fetch_search_page("/search")
+
+        assert [e["event"] for e in logs] == ["single_timeout"]
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.Response(503, text="<html>Service Unavailable</html>"),
+            httpx.ConnectError("refused"),
+            httpx.ConnectTimeout("no connection"),
+            httpx.RemoteProtocolError("closed"),
+        ],
+    )
+    @respx.mock
+    async def test_the_only_domain_without_an_answer_is_unreachable(
+        self, failure: httpx.Response | Exception
+    ) -> None:
+        """A 5xx, a transport error and a connect timeout: the domain does
+        not answer, as in the domain check."""
+        _route_fails(respx.get("https://only.com/search"), failure)
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._fetch_search_page("/search")
+
+    @respx.mock
+    async def test_a_domain_without_an_answer_hands_the_page_to_the_next(
+        self,
+    ) -> None:
+        refused = httpx.ConnectError("refused")
+        respx.get("https://example.com/search").mock(side_effect=refused)
+        respx.head("https://example.com/").mock(side_effect=refused)
+        respx.head("https://fallback.com/").respond(200)
+        respx.get("https://fallback.com/search").respond(200, text="<html>hits</html>")
+        plugin = _TestPlugin()
+        plugin._client = httpx.AsyncClient()
+        plugin._domain_verified = True
+
+        html = await plugin._fetch_search_page("/search")
+
+        assert html == "<html>hits</html>"
+        assert plugin.base_url == "https://fallback.com"
+        assert plugin._domain_verified is True
+
+    @respx.mock
+    async def test_no_domain_answering_is_unreachable(self) -> None:
+        respx.get("https://example.com/search").respond(503)
+        respx.head("https://example.com/").respond(503)
+        respx.head("https://fallback.com/").mock(
+            side_effect=httpx.ConnectError("refused")
+        )
+        plugin = _TestPlugin()
+        plugin._client = httpx.AsyncClient()
+        plugin._domain_verified = True
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._fetch_search_page("/search")
+
+        # The next search checks the domains again
+        assert plugin._domain_verified is False
+
+    @respx.mock
+    async def test_the_page_failing_on_the_answering_domain_too_is_unreachable(
+        self,
+    ) -> None:
+        """The front page answers the check, the search page fails there
+        again: no domain serves the search."""
+        search = respx.get("https://example.com/search").respond(502)
+        respx.head("https://example.com/").respond(200)
+        plugin = _TestPlugin()
+        plugin._client = httpx.AsyncClient()
+        plugin._domain_verified = True
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._fetch_search_page("/search")
+
+        assert search.call_count == 2
+
+    @respx.mock
+    async def test_a_client_error_stays_none(self) -> None:
+        respx.get("https://only.com/search").respond(404)
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        assert await plugin._fetch_search_page("/search") is None
+
+    @respx.mock
+    async def test_a_challenge_stays_with_the_challenge_record(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 503 challenge page is the site behind a challenge, not a site
+        that does not answer."""
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        monkeypatch.setattr(HttpxPluginBase, "_browser_fetcher", None)
+        respx.get("https://only.com/search").respond(
+            503, html=TestSafeFetchChallenge._CHALLENGE
+        )
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        assert await plugin._fetch_search_page("/search") is None
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.Response(503),
+            httpx.ConnectError("refused"),
+            httpx.ReadTimeout("slow"),
+        ],
+    )
+    @respx.mock
+    async def test_every_other_page_stays_lenient(
+        self, failure: httpx.Response | Exception
+    ) -> None:
+        """``_fetch_text()`` keeps ``None``: a missing detail page is a
+        partial result."""
+        _route_fails(respx.get("https://only.com/detail"), failure)
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        assert await plugin._fetch_text("https://only.com/detail") is None
+
+
+class TestSearchPagePost:
+    """A search that is a POST below ``base_url`` (a form, an API) in the
+    raising mode: ``_fetch_search_page(method="POST")`` sends it through
+    ``_safe_fetch(raising=True)``, with the same mapping as a GET."""
+
+    @respx.mock
+    async def test_an_answering_post_is_returned(self) -> None:
+        route = respx.post("https://only.com/search").respond(200, text="<p>hits</p>")
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        html = await plugin._fetch_search_page(
+            "/search",
+            method="POST",
+            data={"q": "x"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+
+        assert html == "<p>hits</p>"
+        request = route.calls.last.request
+        assert request.content == b"q=x"
+        assert request.headers["X-Requested-With"] == "XMLHttpRequest"
+
+    @respx.mock
+    async def test_a_json_body_is_sent(self) -> None:
+        route = respx.post("https://only.com/api").respond(200, json={"hits": []})
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        body = await plugin._fetch_search_page(
+            "/api", method="POST", json_body={"query": "x"}
+        )
+
+        assert body == '{"hits":[]}'
+        assert route.calls.last.request.content == b'{"query":"x"}'
+
+    @respx.mock
+    async def test_a_read_timeout_stays_a_timeout(self) -> None:
+        respx.post("https://only.com/search").mock(side_effect=httpx.ReadTimeout("x"))
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs, pytest.raises(TimeoutError):
+            await plugin._fetch_search_page("/search", method="POST", data={})
+
+        assert [e["event"] for e in logs] == ["single_timeout"]
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.Response(503, text="<html>Service Unavailable</html>"),
+            httpx.ConnectError("refused"),
+            httpx.ConnectTimeout("no connection"),
+            httpx.RemoteProtocolError("closed"),
+        ],
+    )
+    @respx.mock
+    async def test_the_only_domain_without_an_answer_is_unreachable(
+        self, failure: httpx.Response | Exception
+    ) -> None:
+        _route_fails(respx.post("https://only.com/search"), failure)
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin._fetch_search_page("/search", method="POST", data={})
+
+    @respx.mock
+    async def test_a_client_error_stays_none(self) -> None:
+        respx.post("https://only.com/search").respond(404)
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        assert (
+            await plugin._fetch_search_page("/search", method="POST", data={}) is None
+        )
+
+    @respx.mock
+    async def test_a_challenge_stays_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_cf_blocked_until", {})
+        respx.post("https://only.com/search").respond(
+            503, html=TestSafeFetchChallenge._CHALLENGE
+        )
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with structlog.testing.capture_logs() as logs:
+            html = await plugin._fetch_search_page("/search", method="POST", data={})
+
+        assert html is None
+        assert [e["event"] for e in logs] == ["single_challenge"]
+
+    @respx.mock
+    async def test_a_domain_without_an_answer_hands_the_post_to_the_next(
+        self,
+    ) -> None:
+        refused = httpx.ConnectError("refused")
+        respx.post("https://example.com/search").mock(side_effect=refused)
+        respx.head("https://example.com/").mock(side_effect=refused)
+        respx.head("https://fallback.com/").respond(200)
+        moved = respx.post("https://fallback.com/search").respond(
+            200, text="<p>hits</p>"
+        )
+        plugin = _TestPlugin()
+        plugin._client = httpx.AsyncClient()
+        plugin._domain_verified = True
+
+        html = await plugin._fetch_search_page(
+            "/search", method="POST", data={"q": "x"}
+        )
+
+        assert html == "<p>hits</p>"
+        assert moved.calls.last.request.content == b"q=x"
+        assert plugin.base_url == "https://fallback.com"
+
+
+class TestSafeFetchRaising:
+    """``_safe_fetch()``'s modes: lenient by default, ``raising=True`` for a
+    search page."""
+
+    @pytest.mark.parametrize(
+        "failure",
+        [httpx.Response(503), httpx.ConnectError("refused"), httpx.ReadTimeout("x")],
+    )
+    @respx.mock
+    async def test_the_default_stays_lenient(
+        self, failure: httpx.Response | Exception
+    ) -> None:
+        _route_fails(respx.get("https://only.com/page"), failure)
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        assert await plugin._safe_fetch("https://only.com/page") is None
+
+    @respx.mock
+    async def test_a_raising_read_timeout_is_a_timeout(self) -> None:
+        respx.get("https://only.com/page").mock(side_effect=httpx.ReadTimeout("x"))
+        plugin = _SingleDomainPlugin()
+        plugin._client = httpx.AsyncClient()
+
+        with pytest.raises(TimeoutError):
+            await plugin._safe_fetch("https://only.com/page", raising=True)

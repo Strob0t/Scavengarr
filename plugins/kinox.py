@@ -190,10 +190,12 @@ class KinoxPlugin(HttpxPluginBase):
     _domains = _DOMAINS
 
     async def _search_page(self, query: str) -> list[dict[str, str]]:
-        """Fetch search page and parse results."""
-        html = await self._fetch_text(
-            f"{self.base_url}/Search.html", params={"q": query}, context="search"
-        )
+        """Fetch search page and parse results.
+
+        A failure of the site raises (a timeout, no mirror answering), so
+        the plugin record counts it as one.
+        """
+        html = await self._fetch_search_page("/Search.html", params={"q": query})
         if html is None:
             return []
 

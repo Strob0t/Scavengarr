@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+# The rule itself is the domain's (the Torznab use case filters by it too)
+from scavengarr.domain.entities.torznab import category_matches
 from scavengarr.domain.plugins.base import SearchResult
 
 # The labels ``stream_category()`` gives
@@ -31,17 +33,6 @@ _SERIES_TITLE_RE = re.compile(
     r"(?:^|[\s._\-(\[])S\d{1,2}(?:E\d{1,4})?(?=$|[\s._\-)\]])|\bStaffel\b",
     re.IGNORECASE,
 )
-
-
-def category_matches(requested: int | None, accepted: int) -> bool:
-    """Whether a result labelled *accepted* answers a request for *requested*.
-
-    A parent request (5000 = any TV) covers its children (5000-5999); a
-    child request (5070) only matches itself; no request matches all.
-    """
-    if requested is None or requested == accepted:
-        return True
-    return requested % 1000 == 0 and accepted // 1000 == requested // 1000
 
 
 def served_category(requested: int, offered: Iterable[int]) -> int | None:

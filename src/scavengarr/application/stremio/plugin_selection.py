@@ -2,7 +2,7 @@
 
 Every plugin that provides streams, or, with scored selection on, the best
 scored of them plus now and then one more (the exploration slot). See
-``docs/features/plugin-scoring-and-probing.md``.
+``docs/current/plugins.md``.
 """
 
 from __future__ import annotations

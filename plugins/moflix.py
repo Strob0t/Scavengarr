@@ -12,7 +12,7 @@ Scrapes moflix-stream.xyz (German streaming aggregator) through its REST API:
 Cloudflare challenges the API for some IPs (a VPN, at times a home line):
 ``_fetch_text()`` lets the browser pass it once, then the calls go on over
 httpx with the browser's session. Until 1.2.0 the plugin ran every search in
-the browser, too slow for Stremio on a Raspberry Pi.
+the browser, too slow for Stremio on the production host.
 
 Domain fallback: moflix-stream.xyz, moflix-stream.click
 """
@@ -110,11 +110,18 @@ class MoflixPlugin(HttpxPluginBase):
         return self._parse_json_text(body, context="api")
 
     async def _api_search(self, query: str) -> list[dict]:
-        """Search the API and return raw result dicts."""
+        """Search the API and return raw result dicts.
+
+        A failure of the site raises (a timeout, no domain answering), so the
+        plugin record counts it.
+        """
         encoded = quote(query, safe="")
         path = f"/api/v1/search/{encoded}?query={encoded}&limit={_SEARCH_LIMIT}"
 
-        data = await self._api_fetch(path)
+        body = await self._fetch_search_page(
+            path, context="api", headers=self._api_headers()
+        )
+        data = self._parse_json_text(body, context="api")
         if not data:
             return []
 

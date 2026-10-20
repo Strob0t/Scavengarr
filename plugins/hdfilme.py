@@ -278,12 +278,11 @@ class HdfilmePlugin(HttpxPluginBase):
         ``/?story={query}&do=search&subaction=search``
 
         Pagination is JS-based (only first page fetchable via httpx).
-        Returns up to ~24 results per page.
+        Returns up to ~24 results per page. A failure of the site raises (a
+        timeout, the site not answering), so the plugin record counts it.
         """
-        html = await self._fetch_text(
-            self.base_url,
-            params={"story": query, "do": "search", "subaction": "search"},
-            context="search",
+        html = await self._fetch_search_page(
+            "/", params={"story": query, "do": "search", "subaction": "search"}
         )
         if html is None:
             return []

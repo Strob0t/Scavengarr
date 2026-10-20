@@ -5,6 +5,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def category_kind(category: int) -> int:
+    """The kind of a Torznab category: its thousands (5070 TV/Anime is a
+    5000, 2040 Movies/HD a 2000)."""
+    return category - category % 1000
+
+
+def category_matches(requested: int | None, accepted: int) -> bool:
+    """Whether a result labelled *accepted* answers a request for *requested*.
+
+    A parent request (5000 = any TV) covers its children (5000-5999); a
+    child request (5070) only matches itself; no request matches all.
+    """
+    if requested is None or requested == accepted:
+        return True
+    return requested % 1000 == 0 and accepted // 1000 == requested // 1000
+
+
 @dataclass(frozen=True)
 class TorznabQuery:
     action: str  # "search", "caps", etc.
@@ -13,6 +30,9 @@ class TorznabQuery:
 
     # Optional filters
     category: int | None = None  # Torznab category (2000=Movies, 5000=TV)
+    # Several kinds asked at once (``cat=2000,5000``): the plugin searches
+    # unfiltered (category None) and the results of these kinds stay
+    kinds: tuple[int, ...] = ()
 
     # Extended search parameters (Prowlarr)
     extended: int | None = None  # 1 = extended search mode

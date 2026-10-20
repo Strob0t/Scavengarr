@@ -71,7 +71,7 @@ logging:
 cache:
   backend: "diskcache" # diskcache | redis; env: SCAVENGARR_CACHE_BACKEND
   dir: "./.cache/scavengarr" # env: SCAVENGARR_CACHE_DIR (Docker image: /app/cache)
-  ttl_seconds: 3600 # env: SCAVENGARR_CACHE_TTL_SECONDS
+  ttl_seconds: 3600 # no effect: every cache writer sets its own TTL
   search_ttl_seconds: 1800 # was 900 — 30min cache, repeated searches are instant
   crawljob_ttl_seconds: 3600 # how long a grab stays downloadable
   max_concurrent: 10 # env: SCAVENGARR_CACHE_MAX_CONCURRENT
@@ -116,7 +116,7 @@ stremio:
   auto_tune_all: true # container-aware auto-tune ALL concurrency params (cgroup v2/v1)
   max_concurrent_playwright: 7 # was 5 — more parallel PW plugins
   max_results_per_plugin: 50 # was 100 — fewer results per plugin, faster turnaround
-  # Answer policy (decided 2026-10-05, docs/plans/round5-measures.md): the
+  # Answer policy (docs/target/decisions/0007-plugin-timeout-of-30-s.md): the
   # answer goes out at resolve_target_count streams or when the search and
   # every resolution are done, at the latest stream_deadline_seconds after
   # the request; links resolve while plugins search, and plugins still
@@ -125,13 +125,13 @@ stremio:
   stream_deadline_seconds: 60.0 # latest answer
   verify_streams: true # drop resolved URLs that do not return video bytes
   plugin_health_interval_seconds: 1800.0 # check every plugin's site; searches skip sites that did not answer (0 = off)
-  allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on a Pi 4)
+  allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on the production host)
 
   # Title matching
   title_match_threshold: 0.7
   title_year_bonus: 0.2
   title_sequel_penalty: 0.35
-  title_extra_words_penalty: 0.35 # result adds words: "Dark Matter" for "Dark"
+  title_extra_words_penalty: 0.35 # result adds words to the title
   title_year_tolerance_movie: 1
   title_year_tolerance_series: 3
 

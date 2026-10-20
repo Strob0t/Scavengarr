@@ -1,46 +1,66 @@
 """A browser-capture resolver's capture, timed in the container.
 
     probe capture_timing -- URL [--hoster filemoon] [--runs 2] [--timeout S]
-        [--diagnose] [--block DOMAIN ...]
+        [--diagnose] [--block DOMAIN ...] [--restore] [--autoplay-wait S]
 
 Resolves the hoster page *URL* (a link as the plugins store it) with the
 app's resolver for ``--hoster`` (one that captures in the stealth browser:
 filemoon, supervideo, doodstream, vixeo or an XFS hoster) in a browser of
 the probe's own: a second Chromium on the app's display (the entrypoint's
 Xvfb ``:99``), its temporary files in a directory of its own (removed at
-exit), a stealth pool without a clearance store and no cache, breaker or
-resolver cache, so the probe writes nothing the app reads. Before the
+exit), a stealth pool without a clearance store (with ``--restore`` one in
+a temporary directory) and no cache, breaker or resolver cache, so the
+probe writes nothing the app reads. Before the
 launch it reads the container's available memory, the free ``/dev/shm``
 and whether the app's Chromium runs with ``--disable-dev-shm-usage``; it
 launches nothing when memory or shared memory is short.
 
 ``--timeout`` bounds navigation and the challenge (default: production's
 ``stremio.probe_stealth_timeout_seconds``); the player's clicks keep the
-app's waits, and the registry's bound (``http_timeout_resolve_seconds``)
-is left out, so a slow capture shows its whole time. A run ends after
-90 s at the latest, the whole probe after its runs' share plus a minute,
-and at exit the probe kills every process it started. Per run it prints
-the pages the browser loaded (the path's first segment, when the load
-started, how long it took), the clicks on the player, when the stream was
-captured (its CDN's domain) and the resolver's whole time, then
-production's two bounds. ``--diagnose`` adds per run the page's requests
-(domain, path with its ids masked as ``/api/videos/<id>/embed/playback``,
-resource type, and the status, ``redirect``, the browser's error or
-``pending``) and, after the clicks, what each frame can play: its video
-element (MediaError code, network state) and the answers of MediaSource
-and canPlayType for H.264, AAC and HLS, and how many popups the page
-opened (the capture closes them). ``--block DOMAIN`` (repeatable) aborts
-every request to the domain and its subdomains in the probe's browser, as
-the client's block: such a request reads ``blocked``, apart from the
-capture's own cut of the media (``net::ERR_FAILED``) and the network's
-errors. Prints no URLs: domains, paths with ids masked and times only. Run
-it while nothing plays: its browser shares the Pi's CPU with the app.
+app's waits, the first after the resolver's own (3 s for a player that
+starts itself, 0.5 s for Vixeo's) or, with ``--autoplay-wait``, the
+probe's for every resolver alike, and the registry's bound
+(``http_timeout_resolve_seconds``) is left out, so a slow capture shows
+its whole time. A run ends after 90 s at the latest, the whole probe
+after its runs' share plus a minute, and at exit the probe kills every
+process it started. Per run it prints the pages the browser loaded (the
+path's first segment, when the load started, how long it took), the
+clicks on the player, when the stream was captured (its CDN's domain),
+the challenges the run met by the app's rule (a captcha provider's
+challenge frame such as ``turnstile``, or a request the resolver names as
+its hoster's captcha, split into ``captcha`` and ``captcha/verify``, each
+with when it was first met) and the resolver's whole time, then the wait
+before the first click the captures used and production's two bounds.
+``--restore`` lets the runs' captures keep their hosts' state as
+the app does (read from the capture's page into the app's
+``ClearanceStore``, in a temporary directory deleted at the end) and adds
+two runs after the others: it prints how long each capture took to read
+the state it kept and the make-up of the state a new context starts from
+(the cookies' names per domain, ids masked, and the keys, databases and
+records per origin, no values), then resolves the link once more in a
+relaunched browser in a fresh context (the cold ``control``) and once in a
+relaunched browser whose context the app creates from the store
+(``restored``), as after a restart of the app. ``--diagnose`` adds per run
+the page's requests (domain, path with its ids masked as
+``/api/videos/<id>/embed/playback``, resource type, and the status,
+``redirect``, the browser's error or ``pending``, with when the request
+went out and how long its outcome took) and, after the clicks,
+what each frame can play: its video element (MediaError code, network
+state) and the answers of MediaSource and canPlayType for H.264, AAC and
+HLS, and how many popups the page opened (the capture closes them).
+``--block DOMAIN`` (repeatable) aborts every request to the domain and its
+subdomains in the probe's browser, as the client's block: such a request
+reads ``blocked``, apart from the capture's own cut of the media
+(``net::ERR_FAILED``) and the network's errors. Prints no URLs: domains,
+paths with ids masked and times only. Run it while nothing plays: its
+browser shares the production host's CPU with the app.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import os
@@ -52,7 +72,7 @@ import tempfile
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -63,8 +83,10 @@ import structlog
 
 from scavengarr.domain.ports.hoster_resolver import HosterResolverPort
 from scavengarr.infrastructure.browser import stealth_pool as stealth
+from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
 from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia, StealthPool
+from scavengarr.infrastructure.cache.cache_factory import create_cache
 from scavengarr.infrastructure.config import load_config
 from scavengarr.infrastructure.hoster_resolvers.doodstream import DoodStreamResolver
 from scavengarr.infrastructure.hoster_resolvers.filemoon import FilemoonResolver
@@ -99,6 +121,8 @@ _FRAME_READ_S = 3.0
 # --block: the browser's error for a request the probe aborted (Chromium
 # names it net::ERR_BLOCKED_BY_CLIENT.Inspector: the block came over DevTools)
 _BLOCKED_ERROR = "net::ERR_BLOCKED_BY_CLIENT"
+# A hoster captcha's verification request (the player's answer)
+_CAPTCHA_VERIFY = "/captcha/verify"
 # Asked in each frame after the clicks: the player's video element (its
 # MediaError code and network state) and what the browser can play
 _FRAME_CHECK = """() => {
@@ -298,13 +322,17 @@ class PageLoad:
 
 @dataclass
 class RequestNote:
-    """A request of a watched page: domain, path shape, resource type and
-    outcome (the status, ``redirect``, the browser's error or ``pending``)."""
+    """A request of a watched page: domain, path shape, resource type,
+    outcome (the status, ``redirect``, the browser's error or ``pending``),
+    when it went out and when its outcome came, in seconds after the run's
+    start."""
 
     domain: str
     shape: str
     kind: str
     outcome: str = "pending"
+    at: float | None = None
+    answered: float | None = None
 
 
 @dataclass(frozen=True)
@@ -338,6 +366,47 @@ class Run:
     requests: list[RequestNote] = field(default_factory=list)
     frames: list[FrameNote] = field(default_factory=list)
     popups: int = 0
+    # challenge_mark()s, each with when it was first met
+    challenges: list[tuple[str, float]] = field(default_factory=list)
+    # --restore: the hosts whose state the capture kept, how long it took
+    # to read it, and when the read began
+    keep: tuple[int, float, float] | None = None
+    # The wait before the first click its capture used; none without one
+    autoplay_wait: float | None = None
+
+
+def challenge_mark(
+    request: Any, named: re.Pattern[str] | None, *, passive_widget: bool = False
+) -> str | None:
+    """The challenge *request* shows by the app's rule (``_challenge_of``):
+    a captcha provider's frame (``turnstile``, ``hcaptcha``, ``recaptcha``)
+    unless the resolver's widget is passive (*passive_widget*, DoodStream),
+    or a request *named* as the hoster's captcha, ``captcha`` or
+    ``captcha/verify``; None for any other request."""
+    kind = stealth._challenge_of(request, named, passive_widget=passive_widget)
+    if kind != "hoster_captcha":
+        return kind
+    verify = _CAPTCHA_VERIFY in urlsplit(request.url).path
+    return "captcha/verify" if verify else "captcha"
+
+
+def watch_challenges(
+    page: Any,
+    run: Run,
+    named: Callable[[], re.Pattern[str] | None],
+    passive: Callable[[], bool] = lambda: False,
+) -> None:
+    """Note in *run* each challenge *page* meets, once, in order, with the
+    seconds into the run of its first request; *named* gives the running
+    resolver's captcha pattern, *passive* whether its widget is passive
+    (``passive_widget``)."""
+
+    def requested(request: Any) -> None:
+        mark = challenge_mark(request, named(), passive_widget=passive())
+        if mark is not None and all(mark != kind for kind, _ in run.challenges):
+            run.challenges.append((mark, time.monotonic() - run.started))
+
+    page.on("request", requested)
 
 
 def watch_requests(page: Any, run: Run) -> None:
@@ -352,7 +421,10 @@ def watch_requests(page: Any, run: Run) -> None:
         if hop is not None and hop.outcome == "pending":
             hop.outcome = "redirect"
         note = RequestNote(
-            domain(request.url), shape(request.url), request.resource_type
+            domain(request.url),
+            shape(request.url),
+            request.resource_type,
+            at=time.monotonic() - run.started,
         )
         notes[request] = note
         run.requests.append(note)
@@ -360,12 +432,14 @@ def watch_requests(page: Any, run: Run) -> None:
     def answered(response: Any) -> None:
         if (note := notes.get(response.request)) is not None:
             note.outcome = str(response.status)
+            note.answered = time.monotonic() - run.started
 
     def failed(request: Any) -> None:
         if (note := notes.get(request)) is not None:
             failure = request.failure or "failed"
             blocked = failure.startswith(_BLOCKED_ERROR)
             note.outcome = "blocked" if blocked else failure
+            note.answered = time.monotonic() - run.started
 
     page.on("request", requested)
     page.on("response", answered)
@@ -434,6 +508,13 @@ class TimedStealthPool(StealthPool):
     run: Run | None = None
     diagnose: bool = False
     blocked: tuple[str, ...] = ()
+    # The running resolver's captcha pattern (``challenge_requests``) and
+    # whether its widget is passive (``passive_widget``)
+    named: re.Pattern[str] | None = None
+    passive_widget: bool = False
+    # --autoplay-wait: the wait before the first click, for every resolver
+    # alike in place of its own
+    autoplay_wait: float | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -468,9 +549,13 @@ class TimedStealthPool(StealthPool):
         return loaded
 
     async def _prepare(self, page: Any) -> None:
-        if self.diagnose and self.run is not None:
-            watch_requests(page, self.run)
-            count_popups(page, self.run)
+        if self.run is not None:
+            watch_challenges(
+                page, self.run, lambda: self.named, lambda: self.passive_widget
+            )
+            if self.diagnose:
+                watch_requests(page, self.run)
+                count_popups(page, self.run)
         if not self.blocked:
             return
         matches = blocked_by(self.blocked)
@@ -484,11 +569,35 @@ class TimedStealthPool(StealthPool):
 
     async def capture_media(self, url: str, **kwargs: Any) -> CapturedMedia | None:
         # The image's own parameters, whichever version runs the probe
+        self.named = kwargs.get("challenge_requests")
+        self.passive_widget = kwargs.get("passive_widget", False)
+        if self.autoplay_wait is not None:
+            kwargs["autoplay_wait"] = self.autoplay_wait
+        if self.run is not None:
+            wait = kwargs.get("autoplay_wait")
+            self.run.autoplay_wait = (
+                stealth._MEDIA_AUTOPLAY_WAIT_S if wait is None else wait
+            )
         media = await super().capture_media(url, **kwargs)
         if self.run is not None and media is not None:
             self.run.stream_at = time.monotonic() - self.run.started
             self.run.cdn = domain(media.url)
         return media
+
+
+def wait_lines(
+    runs: Iterable[tuple[int | str, Run]], *, override: float | None
+) -> list[str]:
+    """The wait before the first click the runs' captures used, the
+    probe's (*override*) or each resolver's own; none when no run reached
+    a capture (a resolution over HTTP)."""
+    waits = sorted(
+        {run.autoplay_wait for _, run in runs if run.autoplay_wait is not None}
+    )
+    if not waits:
+        return []
+    whose = "the resolver's" if override is None else "the probe's"
+    return [f"autoplay wait: {', '.join(f'{wait:g} s' for wait in waits)} ({whose})"]
 
 
 def note_clicks(pool: TimedStealthPool) -> None:
@@ -504,14 +613,38 @@ def note_clicks(pool: TimedStealthPool) -> None:
     stealth._click_point = noted
 
 
+def note_keeps(pool: TimedStealthPool) -> None:
+    """Note in ``pool.run`` when the capture began to read the state it
+    keeps and how long that took (the capture looks
+    ``collect_capture_state`` up in its module)."""
+    collect = stealth.collect_capture_state
+
+    async def noted(
+        page: Any, hosts: Collection[str]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        started = time.monotonic()
+        read = await collect(page, hosts)
+        if pool.run is not None:
+            pool.run.keep = (
+                len(hosts),
+                time.monotonic() - started,
+                started - pool.run.started,
+            )
+        return read
+
+    stealth.collect_capture_state = noted
+
+
 def note_frames(pool: TimedStealthPool) -> None:
     """With ``pool.diagnose``, note what the page's frames can play once
     the capture's clicks are done (the capture looks ``_start_player`` up
     in its module)."""
     start_player = stealth._start_player
 
-    async def noted(page: Any, found: Any, player: str | None) -> CapturedMedia | None:
-        media = await start_player(page, found, player)
+    async def noted(
+        page: Any, found: Any, player: str | None, **kwargs: Any
+    ) -> CapturedMedia | None:
+        media = await start_player(page, found, player, **kwargs)
         if pool.diagnose and pool.run is not None:
             pool.run.frames = await frame_notes(page)
         return media
@@ -533,7 +666,7 @@ def capture_resolvers(
     return {resolver.name: resolver for resolver in resolvers}
 
 
-def report_row(number: int, run: Run) -> str:
+def report_row(label: int | str, run: Run) -> str:
     pages = ", ".join(
         f"{p.kind}: {p.at:.1f} s, {p.took:.1f} s{'' if p.loaded else ' (failed)'}"
         for p in run.pages
@@ -546,26 +679,93 @@ def report_row(number: int, run: Run) -> str:
     took = f"cut at {run.took:.0f} s" if run.cut else f"{run.took:.1f} s"
     if not run.cut and not run.resolved:
         took += " (nothing)"
+    challenges = (
+        ", ".join(f"{kind} {at:.1f} s" for kind, at in run.challenges) or "none"
+    )
     return (
-        f"| {number} | {pages or 'none'} | {clicks + ' s' if clicks else '–'}"
-        f" | {stream} | {took} |"
+        f"| {label} | {pages or 'none'} | {clicks + ' s' if clicks else '–'}"
+        f" | {stream} | {challenges} | {took} |"
     )
 
 
+def cookie_name(name: str) -> str:
+    """*name* with each part that is no plain word masked (``_ga_<id>``)."""
+    parts = re.split(r"([-_.])", name)
+    return "".join(
+        part if not part or part in "-_." or _SUBWORD_RE.fullmatch(part) else "<id>"
+        for part in parts
+    )
+
+
+def _counted(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def state_lines(state: Mapping[str, Any]) -> list[str]:
+    """The make-up of a context's *state*: its cookies' names per domain
+    and its local storage keys and IndexedDB databases counted per origin,
+    with the databases' records and how many of them are encoded (a value
+    or key no plain JSON holds: a date, a typed array, a file); no
+    values."""
+    cookies, origins = state.get("cookies", []), state.get("origins", [])
+    names: dict[str, set[str]] = {}
+    for cookie in cookies:
+        where = domain(f"https://{str(cookie.get('domain', '')).lstrip('.')}")
+        names.setdefault(where, set()).add(cookie_name(str(cookie.get("name", ""))))
+    stored: dict[str, tuple[int, int, int, int]] = {}
+    for origin in origins:
+        where = domain(str(origin.get("origin", "")))
+        keys, databases, records, encoded = stored.get(where, (0, 0, 0, 0))
+        bases = [b for b in origin.get("indexedDB") or [] if isinstance(b, dict)]
+        rows = [
+            row
+            for base in bases
+            for store in base.get("stores") or []
+            for row in store.get("records") or []
+        ]
+        stored[where] = (
+            keys + len(origin.get("localStorage") or []),
+            databases + len(bases),
+            records + len(rows),
+            encoded + sum("valueEncoded" in r or "keyEncoded" in r for r in rows),
+        )
+    total = f"{_counted(len(cookies), 'cookie')}, {_counted(len(origins), 'origin')}"
+    lines = [f"state: {total}"]
+    lines.extend(
+        f"- cookies {where}: {', '.join(sorted(found))}"
+        for where, found in sorted(names.items())
+    )
+    lines.extend(
+        f"- origin {where}: {_counted(keys, 'localStorage key')},"
+        f" {_counted(databases, 'IndexedDB database')}"
+        + (f" ({_counted(records, 'record')}, {encoded} encoded)" if databases else "")
+        for where, (keys, databases, records, encoded) in sorted(stored.items())
+    )
+    return lines
+
+
 def request_lines(run: Run) -> list[str]:
-    """*run*'s requests in the order they came, alike ones counted
-    together; images, fonts and stylesheets summed up in one line."""
+    """*run*'s requests in the order they came, each with when it went out
+    and how long its outcome took, alike ones counted together with the
+    first one's times; images, fonts and stylesheets summed up in one
+    line."""
     alike: Counter[tuple[str, str, str, str]] = Counter()
+    first: dict[tuple[str, str, str, str], RequestNote] = {}
     quiet: Counter[str] = Counter()
     for note in run.requests:
         if note.kind in _QUIET_KINDS:
             quiet[note.kind] += 1
         else:
-            alike[note.domain, note.shape, note.kind, note.outcome] += 1
-    lines = [
-        f"- {where} {path} {kind}: {outcome}" + (f" ×{count}" if count > 1 else "")
-        for (where, path, kind, outcome), count in alike.items()
-    ]
+            key = (note.domain, note.shape, note.kind, note.outcome)
+            alike[key] += 1
+            first.setdefault(key, note)
+    lines: list[str] = []
+    for key, count in alike.items():
+        where, path, kind, outcome = key
+        lines.append(
+            f"- {where} {path} {kind}: {outcome}{_times(first[key])}"
+            + (f" ×{count}" if count > 1 else "")
+        )
     if len(lines) > _MAX_REQUEST_LINES:
         more = f"- … {len(lines) - _MAX_REQUEST_LINES} more"
         lines[_MAX_REQUEST_LINES:] = [more]
@@ -573,6 +773,15 @@ def request_lines(run: Run) -> list[str]:
         summed = ", ".join(f"{count} {kind}" for kind, count in sorted(quiet.items()))
         lines.append(f"- also {summed}")
     return lines
+
+
+def _times(note: RequestNote) -> str:
+    """When *note*'s request went out and how long its outcome took."""
+    if note.at is None:
+        return ""
+    if note.answered is None:
+        return f" at {note.at:.1f} s"
+    return f" at {note.at:.1f} s ({note.answered - note.at:.1f} s)"
 
 
 def _answer(value: bool | None) -> str:
@@ -593,9 +802,10 @@ def frame_line(note: FrameNote) -> str:
     )
 
 
-def diagnosis_lines(number: int, run: Run) -> list[str]:
+def diagnosis_lines(label: int | str, run: Run) -> list[str]:
     lines = [
-        f"### Run {number}: requests (domain, path with ids masked, type: outcome)"
+        f"### Run {label}: requests (domain, path with ids masked, type: outcome"
+        " at when it went out (how long the outcome took))"
     ]
     lines.extend(request_lines(run) or ["- none"])
     lines.append(f"popups opened: {run.popups} (the capture closes them)")
@@ -610,6 +820,93 @@ async def _close(label: str, closing: Any) -> None:
             await closing
     except Exception as exc:  # noqa: BLE001
         print(f"cleanup: {label} failed ({type(exc).__name__})")
+
+
+_TABLE = (
+    "| run | pages (path: start, load) | clicks at | stream at | challenge at"
+    " | resolve |",
+    "|---|---|---|---|---|---|",
+)
+
+
+async def timed_run(
+    pool: TimedStealthPool, resolver: HosterResolverPort, url: str
+) -> Run:
+    """One resolution of *url*, cut after ``RUN_LIMIT_S``; it ends once its
+    capture's page has closed (its state is read after the stream went
+    out), so the next run's page is the only one."""
+    run = Run(time.monotonic())
+    pool.run = run
+    try:
+        async with asyncio.timeout(RUN_LIMIT_S):
+            run.resolved = await resolver.resolve(url) is not None
+    except TimeoutError:
+        run.cut = True
+    run.took = time.monotonic() - run.started
+    await asyncio.gather(*pool._keep_tasks)
+    return run
+
+
+@contextlib.asynccontextmanager
+async def capture_store() -> AsyncIterator[ClearanceStore]:
+    """The app's ``ClearanceStore`` over a cache in a temporary directory,
+    deleted at the end."""
+    with tempfile.TemporaryDirectory(prefix="capture-state-") as directory:
+        async with create_cache("diskcache", directory=directory) as cache:
+            yield ClearanceStore(cache)
+
+
+def keep_lines(runs: Iterable[tuple[int | str, Run]]) -> list[str]:
+    """How long each run's capture took to read the state it kept, and when
+    the read began against its stream's hand-over."""
+    lines: list[str] = []
+    for label, run in runs:
+        if run.keep is None:
+            continue
+        hosts, took, began = run.keep
+        line = (
+            f"state read by run {label}: {_counted(hosts, 'host')}"
+            f" in {took * 1000:.0f} ms"
+        )
+        if run.stream_at is not None:
+            gap = (began - run.stream_at) * 1000
+            side = "after" if gap >= 0 else "before"
+            line += f", begun {abs(gap):.0f} ms {side} the stream went out"
+        lines.append(line)
+    return lines or ["state read by no run"]
+
+
+async def restore_runs(
+    pool: TimedStealthPool,
+    browser: SharedBrowserPool,
+    resolver: HosterResolverPort,
+    url: str,
+    store: ClearanceStore,
+) -> list[tuple[int | str, Run]]:
+    """--restore: the state the runs' captures kept in *store*, then *url*
+    in a relaunched browser twice: in a fresh context (the control), then in
+    one the app creates from the store."""
+    # The store writes in the background
+    await asyncio.gather(*pool._keep_tasks)
+    creation = await store.creation_state()
+    if creation is None:
+        print("restore: the runs kept no state")
+        return []
+    print("\n".join(state_lines(creation.state)))
+    runs: list[tuple[int | str, Run]] = []
+    for label, kept in (("control", None), ("restored", store)):
+        await _close("stealth pool", pool.cleanup())
+        await _close("browser", browser.cleanup())
+        pool._clearance_store = kept
+        started = time.monotonic()
+        await browser.warmup()
+        took = time.monotonic() - started
+        print(f"browser relaunched for the {label} run: {took:.1f} s")
+        print("\n".join(_TABLE))
+        run = await timed_run(pool, resolver, url)
+        runs.append((label, run))
+        print(report_row(label, run), flush=True)
+    return runs
 
 
 async def probe(args: argparse.Namespace) -> int:
@@ -634,10 +931,18 @@ async def probe(args: argparse.Namespace) -> int:
     pool = TimedStealthPool(browser_pool=browser, timeout_ms=int(timeout * 1000))
     pool.diagnose = args.diagnose
     pool.blocked = tuple(args.block)
+    pool.autoplay_wait = args.autoplay_wait
     note_clicks(pool)
     note_frames(pool)
+    note_keeps(pool)
     http = build_http_client(config)
+    stores = contextlib.AsyncExitStack()
+    store: ClearanceStore | None = None
     try:
+        if args.restore:
+            # The runs' captures keep their state as the app's do
+            store = await stores.enter_async_context(capture_store())
+            pool._clearance_store = store
         resolver = capture_resolvers(http, pool).get(args.hoster)
         if resolver is None:
             print(f"no capture resolver {args.hoster!r}")
@@ -658,35 +963,33 @@ async def probe(args: argparse.Namespace) -> int:
         )
         if pool.blocked:
             print(f"blocked, with their subdomains: {', '.join(pool.blocked)}")
-        print("| run | pages (path: start, load) | clicks at | stream at | resolve |")
-        print("|---|---|---|---|---|")
-        runs: list[Run] = []
+        print("\n".join(_TABLE))
+        runs: list[tuple[int | str, Run]] = []
         for number in range(1, args.runs + 1):
-            run = Run(time.monotonic())
-            runs.append(run)
-            pool.run = run
-            try:
-                async with asyncio.timeout(RUN_LIMIT_S):
-                    run.resolved = await resolver.resolve(args.url) is not None
-            except TimeoutError:
-                run.cut = True
-            run.took = time.monotonic() - run.started
+            run = await timed_run(pool, resolver, args.url)
+            runs.append((number, run))
             print(report_row(number, run), flush=True)
-        print(
+        if store is not None:
+            print("\n".join(keep_lines(runs)))
+            runs.extend(await restore_runs(pool, browser, resolver, args.url, store))
+        bounds = (
             f"Production's bounds: resolve {config.http_timeout_resolve_seconds:g} s"
             " (http_timeout_resolve_seconds; the wait for a browser page does not"
             f" count), navigation and challenge"
             f" {config.stremio.probe_stealth_timeout_seconds:g} s"
             " (stremio.probe_stealth_timeout_seconds)"
         )
+        print("\n".join([*wait_lines(runs, override=args.autoplay_wait), bounds]))
         if args.diagnose:
-            for number, run in enumerate(runs, 1):
-                print("\n".join(diagnosis_lines(number, run)))
+            for label, run in runs:
+                print("\n".join(diagnosis_lines(label, run)))
     finally:
         pool.run = None
+        # Its keeps end before the store's cache closes
         await _close("stealth pool", pool.cleanup())
         await _close("browser", browser.cleanup())
         await _close("http client", http.aclose())
+        await _close("capture store", stores.aclose())
     return 0
 
 
@@ -713,7 +1016,27 @@ def _parser() -> argparse.ArgumentParser:
         metavar="DOMAIN",
         help="abort every request to DOMAIN and its subdomains (repeatable)",
     )
+    parser.add_argument(
+        "--restore",
+        action="store_true",
+        help="keep the runs' state as the app does, then resolve in a relaunched"
+        " browser, cold and restored from it",
+    )
+    parser.add_argument(
+        "--autoplay-wait",
+        type=float,
+        default=None,
+        metavar="S",
+        help="the capture's wait before its first click, for every resolver"
+        " alike (default: each resolver's own)",
+    )
     return parser
+
+
+def probe_limit(args: argparse.Namespace) -> float:
+    """The whole probe's bound: its runs' share plus a minute."""
+    runs = args.runs + (2 if args.restore else 0)
+    return runs * RUN_LIMIT_S + 60
 
 
 def main() -> None:
@@ -725,7 +1048,7 @@ def main() -> None:
     workdir = Path(tempfile.mkdtemp(prefix="capture_timing-"))
     # The browser's profile and artifacts land here (Node's os.tmpdir())
     os.environ["TMPDIR"] = str(workdir)
-    watchdog(args.runs * RUN_LIMIT_S + 60, workdir)
+    watchdog(probe_limit(args), workdir)
     code = 1
     try:
         code = asyncio.run(probe(args))

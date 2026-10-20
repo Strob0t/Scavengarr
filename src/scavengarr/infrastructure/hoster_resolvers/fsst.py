@@ -1,4 +1,4 @@
-"""fsst (fsst.online) hoster resolver — MP4 from the Playerjs setup.
+"""fsst (fsst.online) hoster resolver — the best MP4 of the Playerjs setup.
 
 kinoger's first player tab links ``fsst.online/embed/<id>/``, which redirects
 to the player host (incvideo1.online), a Kernel Video Sharing site. Its

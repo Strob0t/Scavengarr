@@ -46,6 +46,23 @@ def test_compose_trusts_a_reverse_proxy_on_private_networks() -> None:
     assert "8.8.8.8" not in trusted
 
 
+def test_dependabot_opens_its_pull_requests_against_staging() -> None:
+    """`main` takes merges from `staging` only (AGENTS.md §1): an update PR
+    against `main` would bypass `staging`, so every ecosystem names it."""
+    config = yaml.safe_load((_ROOT / ".github" / "dependabot.yml").read_text())
+
+    targets = {
+        update["package-ecosystem"]: update.get("target-branch")
+        for update in config["updates"]
+    }
+
+    assert targets == {
+        "pip": "staging",
+        "github-actions": "staging",
+        "docker": "staging",
+    }
+
+
 def test_shipped_config_has_no_container_only_paths() -> None:
     """`poetry run start --config data/config.yaml` must work outside Docker.
 
@@ -75,6 +92,25 @@ def test_the_build_context_holds_what_the_image_copies() -> None:
     assert "plugins/" in sources
     for source in sources:
         assert source.strip("/").split("/")[0] not in ignored, source
+
+
+def test_the_image_healthcheck_asks_readiness() -> None:
+    """Liveness answers over loopback while every outbound call fails: the
+    image asks readiness, which tells a lost network (row 125)."""
+    text = (_ROOT / "Dockerfile.prod").read_text()
+    healthcheck = text[text.index("HEALTHCHECK") :].split("\n\n")[0]
+
+    assert "/api/v1/readyz" in healthcheck
+    assert "/api/v1/healthz" not in healthcheck
+
+
+def test_agents_md_holds_rules_only() -> None:
+    """Every session reads AGENTS.md whole, so it keeps the rules under 3,000
+    words and links the details in `docs/` (the dev container's in
+    `docs/how-to/dev-container.md`)."""
+    words = len((_ROOT / "AGENTS.md").read_text(encoding="utf-8").split())
+
+    assert words < 3000, f"AGENTS.md has {words} words: move details into docs/"
 
 
 @pytest.mark.skipif(

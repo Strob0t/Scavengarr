@@ -49,8 +49,8 @@ services:
       # SCAVENGARR_CACHE_MAX_CONCURRENT: "50" # Redis takes more parallel ops
       # Traces to Tempo (profile "tracing"); Prometheus scrapes /metrics anyway:
       # SCAVENGARR_TELEMETRY_TRACING_ENDPOINT: http://tempo:4318
-      # Every setting reads SCAVENGARR_<SECTION>_<KEY> (docs/features/
-      # configuration.md, "Application Variables"). The values of the default
+      # Every setting reads SCAVENGARR_<SECTION>_<KEY> (docs/reference/
+      # configuration.md, "Settings"). The values of the default
       # config file, as environment entries; they win over the seeded file:
       # SCAVENGARR_ENVIRONMENT: "prod"
       # SCAVENGARR_TMDB_API_KEY: ""
@@ -75,6 +75,13 @@ services:
     init: true # reaps orphaned Chromium/driver processes (python would be PID 1)
     # CPU profiles in the container (scripts/stremio_profile.py --py-spy):
     # cap_add: [SYS_PTRACE]
+    # Docker's json-file log grows without a bound otherwise: an outage
+    # without a network wrote 670 000 records in 24 h
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
     restart: unless-stopped
 
   byparr:
@@ -94,7 +101,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Traces on demand (docs/features/observability.md): add it to Grafana as a
+  # Traces on demand (docs/current/observability.md): add it to Grafana as a
   # Tempo data source (http://<host>:3200); keeps 3 days
   tempo:
     image: grafana/tempo:3.1.0

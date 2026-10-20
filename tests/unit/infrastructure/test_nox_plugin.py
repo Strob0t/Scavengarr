@@ -7,6 +7,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock
 
 import httpx
@@ -15,6 +16,7 @@ import respx
 import structlog.testing
 
 from scavengarr.domain.plugins import GrabResolvingPlugin
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "nox.py"
 _BASE = "https://nox.to"
@@ -419,10 +421,11 @@ class TestNoxSearch:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_search_http_error(self, plugin):
+    async def test_a_search_api_answering_500_is_unreachable(self, plugin):
         respx.get(f"{_BASE}/api/search").respond(500)
 
-        assert await plugin.search("Iron Man") == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("Iron Man")
         await plugin.cleanup()
 
     @respx.mock
@@ -689,3 +692,18 @@ class TestNoxResolveDownload:
         await plugin.cleanup()
 
         assert urls == ["https://filer.net/folder/a", "https://tolink.to/f/c"]
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    nox_mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://nox.to/api/search").mock(side_effect=httpx.ReadTimeout("slow"))
+    plugin = nox_mod.NoxPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

@@ -141,7 +141,7 @@ class TestRegistryVerifiesPlayback:
     async def test_a_network_error_in_the_check_is_neither_cached_nor_counted(
         self,
     ) -> None:
-        """A timeout of the first-KiB check on a loaded Pi cached a working
+        """A timeout of the first-KiB check on a loaded production host cached a working
         link as dead for 900 s and counted against the hoster, while the same
         error from the resolver did neither (code review, 2026-10-06)."""
         respx.get(_MP4).mock(

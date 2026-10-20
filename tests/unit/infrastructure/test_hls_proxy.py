@@ -17,6 +17,7 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
     FileCut,
+    SegmentCut,
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
@@ -152,9 +153,9 @@ class TestRewriteManifest:
         """VidHide's stream URL names its CDN host in mixed case and its
         playlists list the segments under the lower-case host: compared
         as written, every segment stayed unproxied and the player got 403
-        for a token bound to the Pi (step 27, 2026-10-07)."""
+        for a token bound to the production host (step 27, 2026-10-07)."""
         cdn_base = "https://2ZO6sb3MYz7fapc.acek-cdn.com/hls2/01/abc_h/"
-        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        proxy_base = "https://scavengarr.example.lan/api/v1/stremio/proxy/sid/"
         content = (
             "#EXTM3U\n#EXTINF:6.0,\n"
             "https://2zo6sb3myz7fapc.acek-cdn.com/hls2/01/abc_h/seg-1-v1-a1.ts?t=x\n"
@@ -171,7 +172,7 @@ class TestRewriteManifest:
         (``/secure/98/<id>/video.m3u8``): left as is, the player resolves
         it against the proxy's host and gets a 404."""
         cdn_base = "https://ve12.vidsonic.net/hls/r00nm90ihj96/"
-        proxy_base = "https://scavengarr.lan/api/v1/stremio/proxy/sid/"
+        proxy_base = "https://scavengarr.example.lan/api/v1/stremio/proxy/sid/"
         content = (
             "#EXTM3U\n"
             '#EXT-X-STREAM-INF:BANDWIDTH=1646000,CODECS="avc1.64001f,mp4a.40.2"\n'
@@ -969,6 +970,25 @@ class TestFileCut:
         with pytest.raises(FileCut):
             await self._play(answers)
 
+    async def test_a_file_reads_with_its_own_60_s_bound(self) -> None:
+        """A file's read timeout is not the segments' stall bound."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 34464]),
+            ),
+        ]
+
+        _, seen, _, _ = await self._play(answers)
+
+        assert [r.extensions["timeout"]["read"] for r in seen] == [60.0, 60.0]
+
     async def test_an_empty_answer_is_not_resumed(self) -> None:
         answers = [
             httpx.Response(200, headers={"Content-Length": "0"}, stream=_Chunks([])),
@@ -1001,6 +1021,359 @@ class TestFileCut:
         assert sent == [len(packed)]
 
 
+class TestSegmentCut:
+    """A segment the CDN cuts mid-body: resumed once from the next byte when
+    the answer is unencoded and promised a length, else cut with one warning.
+    The httpx error went out of the body uncaught before (production
+    2026-10-12 17:59:20 UTC, acek-cdn: "Exception in ASGI application" with
+    httpx's ReadTimeout)."""
+
+    _URL = "https://ab12.acek-cdn.example/hls/seg-3-v1-a1.ts"
+    _PIECE = 65536  # the first piece goes out before the cut
+
+    async def _play(
+        self, answers: list[httpx.Response], *, head: bool = False
+    ) -> tuple[bytes, list[httpx.Request], list[int], list[dict[str, object]]]:
+        """The segment's body through the given CDN answers, the requests the
+        CDN saw, the bytes reported and the log lines; a cut propagates."""
+        seen: list[httpx.Request] = []
+        sent: list[int] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return answers[len(seen) - 1]
+
+        with structlog.testing.capture_logs() as logs:
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(handle)
+            ) as client:
+                chunks, _ = await stream_hls_segment(
+                    client,
+                    self._URL,
+                    {"Referer": "https://moflix-stream.example/"},
+                    head=head,
+                    on_sent=sent.append,
+                )
+                body = b"".join([chunk async for chunk in chunks])
+        return body, seen, sent, logs
+
+    @pytest.mark.parametrize(
+        "timed_out", [True, False], ids=["read-timeout", "clean-end-short"]
+    )
+    async def test_a_cut_segment_is_resumed_once(self, timed_out: bool) -> None:
+        first = _TimedOutChunks if timed_out else _Chunks
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp2t", "Content-Length": "100000"},
+                stream=first([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 34464]),
+            ),
+        ]
+
+        body, seen, sent, logs = await self._play(answers)
+
+        assert body == b"a" * self._PIECE + b"b" * 34464
+        assert sent == [100000]
+        assert seen[1].headers["Range"] == "bytes=65536-99999"
+        assert seen[1].headers["Referer"] == "https://moflix-stream.example/"
+        assert seen[1].headers["Accept-Encoding"] == "identity"
+        assert [log["event"] for log in logs] == ["hls_proxy_segment_resumed"]
+        assert logs[0]["cdn"] == "acek-cdn"
+        assert logs[0]["at"] == self._PIECE
+        assert logs[0]["how"] == "range"
+
+    async def test_a_cdn_that_ignores_the_range_restarts_the_segment(self) -> None:
+        """The whole segment again (200 to the ``Range``): the bytes the
+        player has are skipped, it gets the body once."""
+        whole = b"a" * self._PIECE + b"b" * 34464
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_TimedOutChunks([whole[: self._PIECE]]),
+            ),
+            httpx.Response(
+                200, headers={"Content-Length": "100000"}, stream=_Chunks([whole])
+            ),
+        ]
+
+        body, seen, sent, logs = await self._play(answers)
+
+        assert body == whole
+        assert sent == [100000]
+        assert len(seen) == 2
+        assert [log["event"] for log in logs] == ["hls_proxy_segment_resumed"]
+        assert logs[0]["how"] == "restart"
+
+    async def test_a_cut_is_logged_once_with_the_error(self) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_TimedOutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(416),
+        ]
+        sent: list[int] = []
+        received = 0
+
+        with structlog.testing.capture_logs() as logs:
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda r: answers.pop(0))
+            ) as client:
+                chunks, _ = await stream_hls_segment(
+                    client, self._URL, {}, on_sent=sent.append
+                )
+                with pytest.raises(SegmentCut):
+                    async for chunk in chunks:
+                        received += len(chunk)
+
+        assert received == self._PIECE
+        assert sent == [self._PIECE]
+        cut = [log for log in logs if log["event"] == "hls_proxy_segment_cut"]
+        assert len(cut) == 1
+        assert cut[0]["cdn"] == "acek-cdn"
+        assert cut[0]["error"] == "ReadTimeout"
+        assert cut[0]["sent"] == self._PIECE
+        assert cut[0]["expected"] == 100000
+        assert cut[0]["resumed"] is False
+
+    async def test_an_encoded_segment_is_restarted_past_its_decoded_bytes(
+        self,
+    ) -> None:
+        """``aiter_bytes()`` decodes: the bytes sent are no offsets of the
+        CDN's encoded answer, so no range; the segment is asked for again
+        from its start and the decoded bytes the player has are skipped."""
+        video = bytes(range(256)) * 400
+        packed = gzip.compress(video)
+        answers = [
+            httpx.Response(
+                200,
+                headers={
+                    "Content-Encoding": "gzip",
+                    "Content-Length": str(len(packed)),
+                },
+                stream=_TimedOutChunks([packed[: len(packed) // 2]]),
+            ),
+            httpx.Response(
+                200,
+                headers={
+                    "Content-Encoding": "gzip",
+                    "Content-Length": str(len(packed)),
+                },
+                stream=_Chunks([packed]),
+            ),
+        ]
+
+        body, seen, sent, logs = await self._play(answers)
+
+        assert body == video
+        assert sent == [len(video)]
+        assert len(seen) == 2
+        assert "Range" not in seen[1].headers
+        assert [log["event"] for log in logs] == ["hls_proxy_segment_resumed"]
+        assert logs[0]["how"] == "restart"
+        assert logs[0]["expected"] is None
+
+    async def test_a_chunked_segment_cut_mid_body_is_restarted(self) -> None:
+        whole = b"a" * self._PIECE + b"b" * 1000
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_TimedOutChunks([whole[: self._PIECE]]),
+            ),
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_Chunks([whole[:1000], whole[1000:]]),
+            ),
+        ]
+
+        body, seen, sent, logs = await self._play(answers)
+
+        assert body == whole
+        assert sent == [len(whole)]
+        assert len(seen) == 2
+        assert "Range" not in seen[1].headers
+        assert seen[1].headers["Referer"] == "https://moflix-stream.example/"
+        assert logs[0]["how"] == "restart"
+
+    async def test_a_restart_cut_again_cuts_the_segment(self) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_TimedOutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_TimedOutChunks([b"a" * self._PIECE * 2]),
+            ),
+        ]
+
+        with structlog.testing.capture_logs() as logs:
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda r: answers.pop(0))
+            ) as client:
+                chunks, _ = await stream_hls_segment(client, self._URL, {})
+                with pytest.raises(SegmentCut):
+                    async for _chunk in chunks:
+                        pass
+
+        cut = [log for log in logs if log["event"] == "hls_proxy_segment_cut"]
+        assert len(cut) == 1
+        assert cut[0]["resumed"] is True
+        assert cut[0]["sent"] == self._PIECE * 2
+
+    async def test_a_restart_shorter_than_the_bytes_sent_cuts_the_segment(
+        self,
+    ) -> None:
+        """The CDN's second answer ends before the bytes the player has: no
+        clean end, the player asks again."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_TimedOutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_Chunks([b"a" * 1000]),
+            ),
+        ]
+
+        with pytest.raises(SegmentCut):
+            await self._play(answers)
+
+    async def test_a_failed_restart_cuts_the_segment(self) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Transfer-Encoding": "chunked"},
+                stream=_TimedOutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(503),
+        ]
+
+        with pytest.raises(SegmentCut):
+            await self._play(answers)
+
+    async def test_a_segment_reads_with_its_own_stall_bound(self) -> None:
+        """The answer, its resume and its restart wait at most
+        ``_SEGMENT_READ_TIMEOUT_S`` for a byte, not the client's timeout."""
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_TimedOutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 34464]),
+            ),
+        ]
+
+        _, seen, _, _ = await self._play(answers)
+
+        assert [r.extensions["timeout"]["read"] for r in seen] == [
+            hls_proxy._SEGMENT_READ_TIMEOUT_S
+        ] * 2
+        assert seen[0].extensions["timeout"]["connect"] == 5.0
+
+    async def test_a_head_request_is_neither_read_nor_resumed(self) -> None:
+        stream = _TimedOutChunks([b"a" * self._PIECE])
+        answers = [
+            httpx.Response(200, headers={"Content-Length": "100000"}, stream=stream)
+        ]
+
+        body, seen, sent, logs = await self._play(answers, head=True)
+
+        assert body == b""
+        assert sent == [0]
+        assert len(seen) == 1
+        assert not stream.read
+        assert logs == []
+
+
+class TestSegmentStall:
+    """A CDN that falls silent mid-body is cut after the segment's own stall
+    bound and resumed, instead of after the client's 30 s (production
+    2026-10-12: 10 fetches ahead ended in ``ReadTimeout``, each 30 s without
+    a byte)."""
+
+    async def test_a_silent_cdn_is_resumed_after_the_stall_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # the bound covers the wait for the headers too: 1 s keeps a loaded
+        # runner's stalled loop from failing the test, and stays far from 30 s
+        monkeypatch.setattr(hls_proxy, "_SEGMENT_READ_TIMEOUT_S", 1.0)
+        whole = bytes(range(256)) * 400
+        ranges: list[str] = []
+        tasks: set[asyncio.Task[object]] = set()
+
+        async def serve(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            tasks.add(task)
+            request = (await reader.readuntil(b"\r\n\r\n")).decode()
+            asked = [
+                line.split(":", 1)[1].strip()
+                for line in request.split("\r\n")
+                if line.lower().startswith("range:")
+            ]
+            if not asked:
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n"
+                    b"Content-Length: %d\r\n\r\n" % len(whole) + whole[:65536]
+                )
+                await writer.drain()
+                await asyncio.sleep(30)  # silent: the connection stays open
+                return
+            ranges.append(asked[0])
+            writer.write(
+                b"HTTP/1.1 206 Partial Content\r\n"
+                b"Content-Range: bytes 65536-%d/%d\r\n"
+                b"Content-Length: %d\r\n\r\n"
+                % (len(whole) - 1, len(whole), len(whole) - 65536)
+                + whole[65536:]
+            )
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(serve, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        started = time.monotonic()
+        try:
+            with structlog.testing.capture_logs() as logs:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    chunks, _ = await stream_hls_segment(
+                        client, f"http://127.0.0.1:{port}/hls/seg-1.ts", {}
+                    )
+                    body = b"".join([chunk async for chunk in chunks])
+        finally:
+            server.close()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        assert body == whole
+        assert ranges == [f"bytes=65536-{len(whole) - 1}"]
+        assert time.monotonic() - started < 5
+        resumed = [log for log in logs if log["event"] == "hls_proxy_segment_resumed"]
+        assert len(resumed) == 1 and resumed[0]["how"] == "range"
+
+
 class _Chunks(httpx.AsyncByteStream):
     """A response body arriving in the given chunks."""
 
@@ -1029,6 +1402,17 @@ class _CutChunks(_Chunks):
         for chunk in self._chunks:
             yield chunk
         raise httpx.ReadError("the CDN went away")
+
+
+class _TimedOutChunks(_Chunks):
+    """A body the CDN stops sending: the given chunks, then a read timeout
+    (production's acek-cdn case)."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.read = True
+        for chunk in self._chunks:
+            yield chunk
+        raise httpx.ReadTimeout("the CDN stopped sending")
 
 
 # ---------------------------------------------------------------------------

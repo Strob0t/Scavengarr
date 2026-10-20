@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.hoster_resolvers.state_store import (
         HosterStateStore,
     )
+    from scavengarr.infrastructure.network_probe import NetworkProbe
     from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
     from scavengarr.infrastructure.plugins.history import PluginHistory
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
@@ -101,6 +102,9 @@ class AppState(State):
     # Graceful shutdown (request tracking + drain)
     graceful_shutdown: GracefulShutdown
 
+    # Readiness beyond the startup: the cache backend and the DNS (readyz)
+    network_probe: NetworkProbe
+
     # Plugin scoring (optional — requires scoring.enabled=True)
     plugin_score_store: PluginScoreStorePort | None
     scoring_scheduler: ScoringScheduler | None
@@ -119,3 +123,9 @@ class AppState(State):
 
     # Adapts the stealth browser's page limit (PageBudget)
     _page_budget_task: asyncio.Task[None]
+
+    # Launches the stealth browser after the app reported ready
+    _browser_warmup_task: asyncio.Task[None]
+
+    # Captures a Filemoon link once the kept captcha pass has gone (PassKeeper)
+    _pass_keeper_task: asyncio.Task[None]

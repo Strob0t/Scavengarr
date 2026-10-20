@@ -1,4 +1,4 @@
-"""SerienStream hoster resolver — validates links on s.to / serienstream.*.
+"""SerienStream hoster resolver — validates links on serienstream.* and serien.*.
 
 SerienStream is a streaming aggregator. URLs follow the pattern:
     https://s.to/serie/stream/show-name

@@ -1,4 +1,5 @@
-"""FireStream (firestream.to / .site) hoster resolver — signed HLS URL.
+"""FireStream (firestream.to / .site) hoster resolver — the signed HLS URL from
+the player's API.
 
 Resolution strategy (port of JD2 ``FirestreamTo``):
 

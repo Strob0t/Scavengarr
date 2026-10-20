@@ -1,13 +1,17 @@
 """Domain entities for Stremio addon support.
 
-Pure value objects — no framework dependencies, no I/O.
+Pure value objects and the rules on them — no framework dependencies, no I/O.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Literal
+
+from scavengarr.domain.plugins.base import SearchResult
 
 StremioContentType = Literal["movie", "series"]
 
@@ -111,6 +115,12 @@ class TitleMatchInfo:
     *animation* says whether the catalog's genres name "Animation";
     ``None`` without a catalog meta, and then a result's category is
     not compared.
+
+    *series_titles* are the request's titles in every language the stream
+    plugins search in (``EpisodeRef.titles``): a series result named only
+    by a shorter form of them is partial (``is_partial_title``), whichever
+    language group's reference scores it; without them the reference's
+    own titles judge it.
     """
 
     title: str
@@ -119,6 +129,7 @@ class TitleMatchInfo:
     content_type: StremioContentType | None = None
     imdb_id: str | None = None
     animation: bool | None = None
+    series_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,10 @@ class SeriesMeta:
     episodes: tuple[EpisodeMeta, ...]
 
 
+# Where an episode reference's absolute number comes from (``EpisodeRef``)
+AbsoluteSource = Literal["kitsu", "position", "unchecked"]
+
+
 @dataclass(frozen=True)
 class EpisodeRef:
     """Which episode a series request means, for a plugin that locates
@@ -155,9 +170,22 @@ class EpisodeRef:
     for that season and episode (``None`` when the list lacks it).
     *absolute* is the episode's number in the series' own count: the
     entry's position among the list's regular seasons (season 1 and up)
-    ordered by season and episode, or the Kitsu episode number of a
-    request that came as a ``kitsu:`` id when it lies near that position
-    or the list lacks the episode; an estimate the title confirms.
+    ordered by season and episode, or the Kitsu number (a ``kitsu:``
+    request's episode, or the one the anime ids give an IMDb request's)
+    when it lies near that position or the list lacks the episode.
+    *source* names where *absolute* comes from: ``"kitsu"`` for the Kitsu
+    number; ``"position"`` for the position of a series no Kitsu entry
+    counts whole (the anime ids know none, or none are wired in), which
+    the sites count by as far as anything knows; ``"unchecked"`` for the
+    position of any other series (the id list not in memory, or a series a
+    Kitsu entry counts whole whose number did not come out), which may lie
+    one off the sites' count (One Piece), so a titled row's own title has
+    to confirm it (``locate``).
+    *titles* are the request's series titles (the title and alternatives
+    of each language the stream plugins search in, as the title matcher's
+    ``TitleMatchInfo.series_titles``): a site's series named only by a
+    shorter form of them is the request's parent, whose rows count another
+    series (``is_partial_title``).
     """
 
     season: int
@@ -165,6 +193,64 @@ class EpisodeRef:
     title: str | None = None
     aired: str | None = None
     absolute: int | None = None
+    source: AbsoluteSource = "position"
+    titles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TitleMatches:
+    """The results that match a reference title (``TitleMatchInfo``).
+
+    *partial* are the series results named only by a shorter form of its
+    titles (``is_partial_title``): "Naruto" for "Naruto: Shippūden". Such a
+    match counts only where its plugin gave no other match: beside "Naruto
+    Shippuden" it is the parent series, alone it may be the site's name for
+    the series. *matching* are the others.
+    """
+
+    matching: list[SearchResult] = field(default_factory=list)
+    partial: list[SearchResult] = field(default_factory=list)
+
+
+# A year names a title's edition ("One Piece (2023)"), no word of it
+_YEAR_WORD_RE = re.compile(r"(?:19|20)\d{2}")
+
+# Sites drop a title's article ("Walking Dead") and write "&" for "and",
+# which the normalising drops: neither shortens the title (code review
+# 2026-10-12, finding 10)
+_FILLER_WORDS = frozenset(
+    {"the", "a", "an", "and", "der", "die", "das", "ein", "eine", "und"}
+)
+
+
+def _title_words(title: str) -> frozenset[str]:
+    return frozenset(
+        w
+        for w in title.split()
+        if w not in _FILLER_WORDS and not _YEAR_WORD_RE.fullmatch(w)
+    )
+
+
+def is_partial_title(titles: Iterable[str], request_titles: Iterable[str]) -> bool:
+    """Whether a series named *titles* matches the request only as a shorter
+    form of its series titles (*request_titles*): none of *titles* holds
+    every word of a request title, and one holds part of a request title's
+    words and no other word. "Naruto" and "Bleach" are partial for "Naruto:
+    Shippūden" and "Bleach: Thousand Year Blood War"; "Naruto Shippuden" is
+    not, nor is aniworld's "Yu-Gi-Oh!" where "Yu-Gi-Oh!" is a request title.
+    One request title suffices, so an original title the site's name shares
+    no word with changes nothing.
+
+    The titles come normalised (lower-case ASCII words separated by spaces,
+    as the title matcher and the episode index normalise them); a year, an
+    article and "and" are no words: "Walking Dead" and "Rick & Morty" name
+    "The Walking Dead" and "Rick and Morty" whole.
+    """
+    wanted = [words for words in map(_title_words, request_titles) if words]
+    named = [words for words in map(_title_words, titles) if words]
+    if any(want <= name for want in wanted for name in named):
+        return False
+    return any(name < want for want in wanted for name in named)
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,7 @@ from starlette.responses import Response
 
 from scavengarr.infrastructure.config import AppConfig
 from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
+from scavengarr.infrastructure.network_probe import NetworkProbe
 from scavengarr.infrastructure.telemetry import CONTENT_TYPE, Telemetry
 from scavengarr.infrastructure.version import APP_VERSION, build_identity
 from scavengarr.interfaces.api.middleware import RateLimitMiddleware
@@ -86,11 +87,18 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.get("/api/v1/readyz")
     async def readyz() -> Response:
-        """Readiness probe — 200 after startup complete, 503 otherwise."""
+        """Readiness probe — 200 after startup complete, 503 before it and
+        at the shutdown, and 503 while the network is lost: the cache
+        backend and the DNS have failed for over 5 min (``NetworkProbe``)."""
         gs: GracefulShutdown = app.state.graceful_shutdown
-        if gs.is_ready:
-            return JSONResponse({"status": "ready"}, status_code=200)
-        return JSONResponse({"status": "not_ready"}, status_code=503)
+        if not gs.is_ready:
+            return JSONResponse({"status": "not_ready"}, status_code=503)
+        probe: NetworkProbe = app.state.network_probe
+        if await probe.lost():
+            return JSONResponse(
+                {"status": "not_ready", "reason": "network"}, status_code=503
+            )
+        return JSONResponse({"status": "ready"}, status_code=200)
 
     @app.middleware("http")
     async def log_requests(

@@ -10,20 +10,33 @@ Resource blocking (images, fonts, CSS, media) keeps navigation fast.
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 import structlog
-from patchright.async_api import Browser, BrowserContext, Page, Request, Route
+from patchright.async_api import Browser, BrowserContext, Frame, Page, Request, Route
 from patchright.async_api import Error as PlaywrightError
 
-from scavengarr.domain.ports.browser_fetcher import BrowserSession, ClickThrough
+from scavengarr.domain.ports.browser_fetcher import (
+    BrowserSession,
+    ClickThrough,
+    Redirect,
+)
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
-from scavengarr.infrastructure.browser.page_gate import PageBusy, PageGate
+from scavengarr.infrastructure.browser.page_gate import (
+    ChallengeMark,
+    Hold,
+    PageBusy,
+    PageGate,
+    ResolutionChallenge,
+    challenge_mark,
+    mark_resolution_passed,
+)
 from scavengarr.infrastructure.browser.turnstile import (
     WIDGET_FORM,
     is_challenge_page,
@@ -31,8 +44,11 @@ from scavengarr.infrastructure.browser.turnstile import (
     read_when_settled,
     solve_cloudflare,
 )
+from scavengarr.infrastructure.captcha.detect import challenge_frame
 
 if TYPE_CHECKING:
+    from patchright.async_api import StorageState
+
     from scavengarr.infrastructure.browser.clearance_store import ClearanceStore
     from scavengarr.infrastructure.browser.shared_browser import SharedBrowserPool
 
@@ -66,7 +82,7 @@ _NOT_MEDIA_RE = re.compile(r"thumbnail|sprite|preview", re.IGNORECASE)
 _CLICK_TIMEOUT_MS = 5_000
 _CLICK_POLL_MS = 300
 # ...and the time a submitted gate gets for its redirect, past the timeout:
-# on a Raspberry Pi behind a VPN the gate's widget took 28 of 30 s and the
+# on the production host behind a VPN the gate's widget took 28 of 30 s and the
 # redirect after its form came too late (2026-10-04)
 _SUBMIT_REDIRECT_S = 10.0
 # Ad layers some sites put over the page (s.to: random class names, laid out
@@ -79,9 +95,37 @@ _TARGET_ONLY_CSS = (
     ":is({targets}), :is({targets}) * {{ pointer-events: auto !important; }}"
 )
 
+# The wait for a player that starts itself, before the first click; a
+# resolver whose player takes that click at once names a shorter one
+# (``autoplay_wait``, row 103)
 _MEDIA_AUTOPLAY_WAIT_S = 3.0
+# A capture with a stream keeps its hosts' state (ClearanceStore), at most
+# once per host in this interval
+_KEEP_INTERVAL_S = 600.0
+# It reads that state from its own page before the page closes (code
+# review 2026-10-12, finding 6), after the stream went out, so the page
+# stays open for the read: at most this long. The read runs after the
+# stream's hand-over (row 107), so the bound holds the page and the
+# browser's lease, not the stream. On the production host reads took 274
+# and 385 ms, and two ran into a bound of 0.5 s, the captcha's new pass
+# lost with them (row 141); in the dev container a read takes 5 to 47 ms,
+# 123 ms with Chromium's CPU throttled sixfold
+_KEEP_BOUND_S = 2.0
+# A frame's read ends sooner, so that a frame that navigates, detaches or
+# dawdles meanwhile (an ad's) costs its own host only (row 97's review)
+_FRAME_READ_S = 1.5
 _MEDIA_CLICK_WAIT_S = 5.0
 _MEDIA_PLAY_CLICKS = 3
+# A page that requested the hoster's own captcha (``challenge_requests``)
+# gets this long after the captcha's latest request before its next click
+# and before the capture ends: the player solves a proof of work between
+# the captcha and its verify and requests the stream after the verify, and
+# a cold Byse capture on the production host used up its clicks before its
+# stream (row 141). There the stream came 8.1 s after the verify (row 103's
+# probe), and in the dev container with Chromium's CPU throttled sixfold
+# the verify came up to 9.9 s after the captcha (11 cold captures): the
+# wait is twice the 8.1 s
+_CAPTCHA_WAIT_S = 16.0
 # Dead-file notices of player pages, matched against the visible text only
 # (player scripts carry such strings as error templates)
 _PLAYER_OFFLINE_TEXT: tuple[str, ...] = (
@@ -97,6 +141,66 @@ _PLAYER_OFFLINE_TEXT: tuple[str, ...] = (
 _VISIBLE_TEXT_JS = (
     "() => document.title + '\\n' + (document.body ? document.body.innerText : '')"
 )
+# The frame's origin's localStorage and IndexedDB as an origin of
+# storage_state() (Playwright's StorageScript format). A database is read
+# whole, and left out when plain JSON cannot hold one of its records (a
+# date, a file, a typed array): a new context cannot always take such a
+# record back (code review 2026-10-12, finding 8), and its page creates a
+# missing database anew rather than meet one with records gone. Null for
+# an opaque origin (a sandboxed frame), which has no storage
+_COLLECT_STATE_JS = """async () => {
+  if (location.origin === "null") return null;
+  const plain = (value, outer = []) => {
+    if (value === null || ["string", "boolean"].includes(typeof value)) return true;
+    if (typeof value === "number") return Number.isFinite(value);
+    if (typeof value !== "object" || outer.includes(value)) return false;
+    const inner = [...outer, value];
+    if (Array.isArray(value)) return value.every((item) => plain(item, inner));
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== null && Object.getPrototypeOf(proto) !== null) return false;
+    return Object.values(value).every((item) => plain(item, inner));
+  };
+  const done = (request) => new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const path = (keyPath) => typeof keyPath === "string" ? {keyPath}
+    : Array.isArray(keyPath) ? {keyPathArray: [...keyPath]} : {};
+  const database = async ({name, version}) => {
+    const db = await done(indexedDB.open(name));
+    try {
+      const names = [...db.objectStoreNames];
+      const tx = names.length ? db.transaction(names, "readonly") : null;
+      const stores = await Promise.all(names.map(async (storeName) => {
+        const store = tx.objectStore(storeName);
+        const [keys, values] = await Promise.all(
+          [done(store.getAllKeys()), done(store.getAll())]);
+        const inline = store.keyPath !== null;
+        if (!values.every((value, i) => plain(value) && (inline || plain(keys[i]))))
+          return null;
+        const records = values.map(
+          (value, i) => inline ? {value} : {key: keys[i], value});
+        const indexes = [...store.indexNames].map((indexName) => {
+          const index = store.index(indexName);
+          return {name: indexName, ...path(index.keyPath),
+                  multiEntry: index.multiEntry, unique: index.unique};
+        });
+        return {name: storeName, autoIncrement: store.autoIncrement,
+                ...path(store.keyPath), records, indexes};
+      }));
+      return stores.includes(null) ? null : {name, version, stores};
+    } finally {
+      db.close();
+    }
+  };
+  const infos = (await indexedDB.databases()).filter((i) => i.name && i.version);
+  return {
+    origin: location.origin,
+    localStorage: Object.keys(localStorage).map(
+      (name) => ({name, value: localStorage.getItem(name)})),
+    indexedDB: (await Promise.all(infos.map(database))).filter(Boolean),
+  };
+}"""
 
 
 @dataclass(frozen=True)
@@ -145,6 +249,70 @@ def _foreign_script(resource_type: str, url: str, frame_urls: Iterable[str]) -> 
     if (urlparse(url).hostname or "").lower() == _CHALLENGE_HOST:
         return False
     return _site(url) not in {_site(frame_url) for frame_url in frame_urls}
+
+
+def _challenge_of(
+    request: Request,
+    named: re.Pattern[str] | None,
+    *,
+    passive_widget: bool = False,
+) -> ResolutionChallenge | None:
+    """The challenge *request* shows: a captcha provider's frame, unless the
+    resolver knows its player's widget does not gate the stream
+    (*passive_widget*), or a request the resolver names as its hoster's own
+    captcha (*named*)."""
+    if (
+        not passive_widget
+        and request.resource_type == "document"
+        and (kind := challenge_frame(request.url))
+    ):
+        return kind
+    if named is not None and named.search(request.url):
+        return "hoster_captcha"
+    return None
+
+
+@dataclass
+class _CaptchaClock:
+    """When a capture's page last requested the hoster's own captcha."""
+
+    last: float | None = None
+
+    def end(self) -> float:
+        """The capture's earliest end while the captcha runs:
+        ``_CAPTCHA_WAIT_S`` after its latest request (``time.monotonic()``),
+        none without one."""
+        return -math.inf if self.last is None else self.last + _CAPTCHA_WAIT_S
+
+
+def _capture_listener(
+    found: asyncio.Future[CapturedMedia],
+    mark: ChallengeMark | None,
+    named: re.Pattern[str] | None,
+    *,
+    passive_widget: bool,
+    captcha: _CaptchaClock,
+) -> Callable[[Request], None]:
+    """A capture's request listener: the first stream request settles
+    *found*, a challenge (``_challenge_of``) marks the hoster resolution's
+    *mark*, and a request of the hoster's own captcha sets *captcha*."""
+
+    def _on_request(request: Request) -> None:
+        kind = _challenge_of(request, named, passive_widget=passive_widget)
+        if kind == "hoster_captcha":
+            captcha.last = time.monotonic()
+        if mark is not None and kind:
+            mark.note(kind)
+        # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
+        # ``…~abc?token=``) by the video element's request type
+        if (
+            not found.done()
+            and not _NOT_MEDIA_RE.search(request.url)
+            and (request.resource_type == "media" or _MEDIA_URL_RE.search(request.url))
+        ):
+            found.set_result(CapturedMedia(request.url, request.headers.get("referer")))
+
+    return _on_request
 
 
 async def _allow_own_player_resources(route: Route) -> None:
@@ -232,24 +400,118 @@ async def _click_point(page: Page, player: str | None) -> tuple[float, float]:
     return size["width"] / 2, size["height"] / 2
 
 
-async def _start_player(
-    page: Page, found: asyncio.Future[CapturedMedia], player: str | None
+async def _stream_within(
+    found: asyncio.Future[CapturedMedia], wait_s: float, captcha: _CaptchaClock
 ) -> CapturedMedia | None:
-    """Wait for autoplay, then click the player (``_click_point``) until it
+    """The stream *found* brings within *wait_s*, or later while the
+    page's captcha runs (``_CaptchaClock.end()``); ``None`` without one.
+
+    A stream *found* holds once the wait ends is kept, whatever the clock
+    says: a late loop runs the wait's timeout and the stream's request in
+    one batch."""
+    end = time.monotonic() + wait_s
+    while (left := max(end, captcha.end()) - time.monotonic()) > 0:
+        try:
+            return await asyncio.wait_for(asyncio.shield(found), left)
+        except TimeoutError:
+            pass  # a captcha request meanwhile moves the end
+    if found.done() and not found.cancelled():
+        return found.result()
+    return None
+
+
+async def _start_player(
+    page: Page,
+    found: asyncio.Future[CapturedMedia],
+    player: str | None,
+    *,
+    autoplay_wait: float | None = None,
+    captcha: _CaptchaClock | None = None,
+) -> CapturedMedia | None:
+    """Wait for autoplay (*autoplay_wait*, ``_MEDIA_AUTOPLAY_WAIT_S``
+    without it), then click the player (``_click_point``) until it
     requests its stream, says the file is gone (some players tell only
-    after the click) or the clicks are used up."""
-    waits = (_MEDIA_AUTOPLAY_WAIT_S, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
+    after the click) or the clicks are used up. While the hoster's own
+    captcha runs (*captcha*), the next click and the end wait for it."""
+    if autoplay_wait is None:
+        autoplay_wait = _MEDIA_AUTOPLAY_WAIT_S
+    if captcha is None:
+        captcha = _CaptchaClock()
+    waits = (autoplay_wait, *(_MEDIA_CLICK_WAIT_S,) * _MEDIA_PLAY_CLICKS)
     for attempt, wait_s in enumerate(waits):
         if attempt:
             await page.mouse.click(*await _click_point(page, player))
-        try:
-            return await asyncio.wait_for(asyncio.shield(found), wait_s)
-        except TimeoutError:
-            pass
+        if (media := await _stream_within(found, wait_s, captcha)) is not None:
+            return media
         if attempt and await _shows_offline_notice(page):
             log.info("stealth_capture_offline", url=page.url, clicks=attempt)
+            # The page's verdict on the link, past any challenge before it
+            mark_resolution_passed()
             return None
     return None
+
+
+async def collect_capture_state(
+    page: Page, hosts: Collection[str]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """The state of *hosts* in the form of ``storage_state()``, read from
+    *page* itself: its context's cookies, and the localStorage and
+    IndexedDB of each origin one of its frames has on one of *hosts*, read
+    in that frame (once per origin). Unlike ``storage_state()`` it visits
+    no other origin: no hidden page outside the page gate, no race with
+    the browser's recycle, no popup lost to it (code review 2026-10-12,
+    finding 6).
+
+    A frame whose read fails or runs past ``_FRAME_READ_S`` costs its own
+    host only: the second value names each host left out, with its error's
+    type, and the state holds none of their origins (row 97's review)."""
+    frames: dict[str, tuple[str, Frame]] = {}
+    for frame in page.frames:
+        parts = urlparse(frame.url)
+        if (host := parts.hostname) is not None and host in hosts:
+            frames.setdefault(f"{parts.scheme}://{parts.netloc}", (host, frame))
+    deadline = asyncio.get_running_loop().time() + _FRAME_READ_S
+    cookies = await page.context.cookies()
+    reads = await asyncio.gather(
+        *(_origin_state(frame, deadline) for _, frame in frames.values()),
+        return_exceptions=True,
+    )
+    read_hosts = [host for host, _ in frames.values()]
+    missed: dict[str, str] = {}
+    for host, read in zip(read_hosts, reads, strict=True):
+        if isinstance(read, BaseException):
+            missed.setdefault(host, type(read).__name__)
+    # As storage_state(): no origin without storage. A host whose entry
+    # would lack an origin the read missed is left out whole: the store
+    # replaces a host's entry
+    kept = [
+        read
+        for host, read in zip(read_hosts, reads, strict=True)
+        if host not in missed
+        and isinstance(read, dict)
+        and (read["localStorage"] or read["indexedDB"])
+    ]
+    return {"cookies": cookies, "origins": kept}, missed
+
+
+async def _origin_state(frame: Frame, deadline: float) -> dict[str, Any] | None:
+    """The storage of *frame*'s origin, read in it until *deadline*."""
+    async with asyncio.timeout_at(deadline):
+        return await frame.evaluate(_COLLECT_STATE_JS)
+
+
+async def _created(browser: Browser, state: StorageState) -> BrowserContext | None:
+    """A context created from *state*; None, logged, when the browser
+    refuses it (a cost of challenges, not of captures)."""
+    try:
+        return await browser.new_context(service_workers="block", storage_state=state)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "capture_state_restore_failed",
+            error=type(exc).__name__,
+            origins=len(state.get("origins") or []),
+        )
+        return None
 
 
 class StealthPool:
@@ -288,6 +550,9 @@ class StealthPool:
         self._context: BrowserContext | None = None
         self._lock = asyncio.Lock()
         self._user_agent: str | None = None
+        # The capture states being kept, and when each host's was last
+        self._keep_tasks: set[asyncio.Task[None]] = set()
+        self._kept: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -314,16 +579,57 @@ class StealthPool:
                 return self._context
 
             self._browser, _ = await self._browser_pool.warmup()
-            self._context = await self._browser.new_context(service_workers="block")
+            self._context = await self._new_context(self._browser)
             self._user_agent = None  # a relaunched browser may be another version
 
             # Block heavy resources on all pages in this context
             await self._context.route("**/*", block_heavy_resources)
-            if self._clearance_store is not None:
-                await self._clearance_store.restore(self._context)
 
             log.info("stealth_pool_started")
             return self._context
+
+    async def warmup(self) -> None:
+        """Launch the browser and create the context, with the kept state, at
+        the app's start, so the first capture does not wait for the launch.
+
+        A failure is logged and leaves the launch to the first capture.
+        """
+        try:
+            await self._ensure_context()
+        except Exception as exc:  # noqa: BLE001  (the first capture launches it)
+            log.warning("browser_warmup_failed", error=type(exc).__name__)
+
+    async def _new_context(self, browser: Browser) -> BrowserContext:
+        """A context started from the kept clearance cookies and capture
+        states (localStorage and IndexedDB can be set only at creation),
+        logged once it exists. A browser that refuses the state gets the
+        cookies alone, none if there are none, and the store drops the kept
+        origins so that later contexts do not fail the same way; one that
+        refuses the cookies too gets none (code review 2026-10-12, finding
+        8)."""
+        store = self._clearance_store
+        creation = None if store is None else await store.creation_state()
+        if store is None or creation is None:
+            return await browser.new_context(service_workers="block")
+        state = creation.state
+        context = await _created(browser, state)
+        if context is None and state.get("origins"):
+            state = creation.cookies_only()
+            context = await _created(browser, state)
+            if context is not None:
+                # The browser took the cookies and refused the origins
+                await store.drop_capture_origins()
+        if context is None:
+            return await browser.new_context(service_workers="block")
+        if creation.hosts and (state.get("cookies") or state.get("origins")):
+            log.info(
+                "capture_state_restored",
+                hosts=creation.hosts,
+                origins=len(state.get("origins") or []),
+            )
+        if creation.clearance_domains:
+            log.info("clearance_restored", domains=creation.clearance_domains)
+        return context
 
     async def _remember(self, page: Page) -> None:
         """Keep the clearance cookies of a page that passed its challenge."""
@@ -335,6 +641,9 @@ class StealthPool:
 
         The browser belongs to :class:`SharedBrowserPool` and is closed there.
         """
+        for task in self._keep_tasks:
+            task.cancel()
+        await asyncio.gather(*self._keep_tasks, return_exceptions=True)
         if self._context is not None:
             try:
                 await self._context.close()
@@ -469,6 +778,9 @@ class StealthPool:
         timeout: float | None = None,
         player: str | None = None,
         own_scripts_only: bool = False,
+        challenge_requests: re.Pattern[str] | None = None,
+        passive_widget: bool = False,
+        autoplay_wait: float | None = None,
     ) -> CapturedMedia | None:
         """Open *url*, start its player and return the stream URL it requests.
 
@@ -483,16 +795,29 @@ class StealthPool:
         *timeout* bounds navigation and the Cloudflare challenge; without
         one the pool's own applies (``stremio.probe_stealth_timeout_seconds``,
         the resolvers' capture). The player clicks after it are bounded by
-        the pool's own waits. *own_scripts_only* aborts the scripts of other
-        sites than the page's and its frames' (``_allow_own_player_resources``):
-        an ad tag that takes the clicks.
+        the pool's own waits; the first comes after *autoplay_wait*, for a
+        player that takes it at once (Vixeo), and without it after the wait
+        for a player that starts itself (``_MEDIA_AUTOPLAY_WAIT_S``).
+        *own_scripts_only* aborts the scripts of other sites than the page's
+        and its frames' (``_allow_own_player_resources``): an ad tag that
+        takes the clicks. A captcha provider's frame and a
+        request that *challenge_requests* matches (the hoster's own captcha)
+        mark the hoster resolution the capture runs in (``challenge_mark``),
+        as an interstitial does; *passive_widget* says the player's widget
+        does not gate its stream, so its frame marks nothing (DoodStream). A
+        page that says the file is gone passes the mark: its verdict on the
+        link, whatever challenge came before. The stream goes out as soon
+        as the player requests it; a page whose hosts' state is due to be
+        kept stays open for its read, in the background (``_keep_state()``).
         """
         if timeout is None:
             timeout = self._timeout_ms / 1000
         timeout_ms = int(timeout * 1000)
+        # Playwright calls the request listener outside this task's context
+        mark = challenge_mark.get()
         async with (
-            self._pages.page("capture", timeout=timeout),
-            self._browser_pool.lease(),
+            self._pages.page("capture", timeout=timeout) as slot,
+            self._browser_pool.lease() as lease,
         ):
             page: Page | None = None
             try:
@@ -500,23 +825,17 @@ class StealthPool:
                 found: asyncio.Future[CapturedMedia] = (
                     asyncio.get_running_loop().create_future()
                 )
-
-                def _on_request(request: Request) -> None:
-                    # Manifests/MP4 by URL; extension-less CDN URLs (DoodStream
-                    # ``…~abc?token=``) by the video element's request type
-                    if (
-                        not found.done()
-                        and not _NOT_MEDIA_RE.search(request.url)
-                        and (
-                            request.resource_type == "media"
-                            or _MEDIA_URL_RE.search(request.url)
-                        )
-                    ):
-                        found.set_result(
-                            CapturedMedia(request.url, request.headers.get("referer"))
-                        )
-
-                page.on("request", _on_request)
+                captcha = _CaptchaClock()
+                page.on(
+                    "request",
+                    _capture_listener(
+                        found,
+                        mark,
+                        challenge_requests,
+                        passive_widget=passive_widget,
+                        captcha=captcha,
+                    ),
+                )
                 page.on("popup", _close_popup)
                 await page.route(
                     "**/*",
@@ -538,9 +857,18 @@ class StealthPool:
                     await self._remember(page)
                     if await _shows_offline_notice(page):
                         log.info("stealth_capture_offline", url=url)
+                        mark_resolution_passed()
                         return None
-                media = await _start_player(page, found, player)
+                media = await _start_player(
+                    page, found, player, autoplay_wait=autoplay_wait, captcha=captcha
+                )
                 log.debug("stealth_capture", url=url, found=media is not None)
+                # A page past a challenge holds a state of its own making
+                fresh = mark is not None and mark.kind is not None
+                if media is not None and self._keep_state(
+                    page, lease, slot, fresh=fresh
+                ):
+                    page = None  # closed after the state's read
                 return media
             except Exception:  # noqa: BLE001
                 log.debug("stealth_capture_error", url=url, exc_info=True)
@@ -548,7 +876,100 @@ class StealthPool:
             finally:
                 await self._close(page)
 
-    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+    def _keep_state(self, page: Page, *holds: Hold, fresh: bool = False) -> bool:
+        """Keep the state of *page*'s host and its frames' hosts, each at
+        most once per ``_KEEP_INTERVAL_S`` unless the page got past a
+        challenge (*fresh*: a new clearance or captcha pass, which a restart
+        and Filemoon's pass keeper read from the store; row 106), after the
+        stream went out: the page and *holds* (the browser's lease, the
+        page's place at the gate) go on to a task that reads the state
+        (``_read_state()``), so the page counts until it closes. False when
+        there is nothing to keep: the caller closes the page."""
+        if self._clearance_store is None:
+            return False
+        now = time.monotonic()
+        hosts = sorted(
+            {
+                host
+                for frame in page.frames
+                if (host := urlparse(frame.url).hostname)
+                and (
+                    fresh
+                    or now - self._kept.get(host, -_KEEP_INTERVAL_S) >= _KEEP_INTERVAL_S
+                )
+            }
+        )
+        if not hosts:
+            return False
+        # Taken now: a stream of these hosts during the read keeps nothing
+        self._kept.update(dict.fromkeys(hosts, now))
+        task = asyncio.create_task(self._read_state(page, hosts, holds))
+        for hold in holds:
+            hold.hand_on()
+        self._keep_tasks.add(task)
+        task.add_done_callback(self._keep_tasks.discard)
+        return True
+
+    async def _read_state(
+        self, page: Page, hosts: list[str], holds: tuple[Hold, ...]
+    ) -> None:
+        """Read *hosts*' state from *page* (``collect_capture_state()``, at
+        most ``_KEEP_BOUND_S``), close the page, end *holds*, and have the
+        store write the state. A host whose read or write failed is tried
+        again at its next stream."""
+        started = time.monotonic()
+        try:
+            async with asyncio.timeout(_KEEP_BOUND_S):
+                state, missed = await collect_capture_state(page, hosts)
+            duration_ms = int((time.monotonic() - started) * 1000)
+        except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001  (costs a challenge after a restart)
+            self._forget(hosts)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            log.warning(
+                "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
+            )
+            return
+        finally:
+            await self._close_read(page, holds)
+        for host, error in sorted(missed.items()):
+            log.warning("capture_state_save_failed", hosts=[host], error=error)
+        self._forget(missed)
+        hosts = [host for host in hosts if host not in missed]
+        if hosts:
+            await self._save_state(hosts, state, duration_ms)
+
+    async def _close_read(self, page: Page, holds: tuple[Hold, ...]) -> None:
+        """Close *page* after its state's read and end *holds*, whatever
+        the close raises (a browser gone meanwhile)."""
+        try:
+            await self._close(page)
+        except Exception:  # noqa: BLE001  (the page went with its browser)
+            log.debug("stealth_page_close_error", exc_info=True)
+        finally:
+            for hold in holds:
+                hold.end()
+
+    async def _save_state(
+        self, hosts: list[str], state: dict[str, Any], duration_ms: int
+    ) -> None:
+        assert self._clearance_store is not None
+        try:
+            await self._clearance_store.keep_capture_state(
+                hosts, state, duration_ms=duration_ms
+            )
+        except Exception as exc:  # noqa: BLE001  (costs a challenge after a restart)
+            self._forget(hosts)
+            log.warning(
+                "capture_state_save_failed", hosts=hosts, error=type(exc).__name__
+            )
+
+    def _forget(self, hosts: Iterable[str]) -> None:
+        """The next stream of *hosts* keeps their state again."""
+        for host in hosts:
+            self._kept.pop(host, None)
+
+    async def resolve_redirect(self, url: str, *, timeout: float) -> Redirect:
         """Return the first off-site URL *url* redirects to.
 
         Implements ``BrowserFetcherPort``. Listens to ``request`` events,
@@ -556,6 +977,12 @@ class StealthPool:
         chain), and records the first navigation that leaves the origin host.
         Navigation waits only for ``commit``; the target may well be dead
         (e.g. a removed link container) — link validation decides that.
+
+        The answer is ``passed`` when the site gave its verdict: a target, a
+        page without a challenge (an error page too: an expired link-out's
+        404), or a challenge that cleared. A navigation that broke, no page
+        in time and a challenge that stayed are not (code review 2026-10-12,
+        finding 14).
         """
         origin = urlparse(url).hostname
         targets: list[str] = []
@@ -569,6 +996,7 @@ class StealthPool:
                 targets.append(request.url)
 
         timeout_ms = int(timeout * 1000)
+        passed = False
         try:
             async with (
                 self._pages.page("plugin", timeout=timeout),
@@ -585,18 +1013,22 @@ class StealthPool:
                         timeout_ms=timeout_ms,
                         done=lambda: bool(targets),
                     ):
-                        return None
+                        # An error page without a challenge: the site's verdict
+                        return Redirect(None, passed=True)
                     # A challenge page redirects once solved; the listener sees it
                     if not targets and await is_challenge_page(page):
-                        await solve_cloudflare(page, timeout_ms=timeout_ms)
+                        passed = await solve_cloudflare(page, timeout_ms=timeout_ms)
+                    else:
+                        passed = True
                 except Exception:  # noqa: BLE001
                     log.debug("stealth_redirect_error", url=url, exc_info=True)
                 finally:
                     await self._close(page)
         except PageBusy:
             log.info("stealth_page_busy", url=url)
-            return None
-        return targets[0] if targets else None
+            return Redirect(None, passed=False)
+        target = targets[0] if targets else None
+        return Redirect(target, passed=passed or target is not None)
 
     async def click_through(
         self, page_url: str, selector: str, *, timeout: float

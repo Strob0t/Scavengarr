@@ -24,6 +24,7 @@ from scavengarr.domain.ports.browser_fetcher import (
     BrowserFetcherPort,
     BrowserSession,
     ClickThrough,
+    Redirect,
 )
 
 log = structlog.get_logger(__name__)
@@ -110,15 +111,19 @@ class SolverFetcher:
             return None
         return _unwrap_pre(body)
 
-    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+    async def resolve_redirect(self, url: str, *, timeout: float) -> Redirect:
+        """The solution's URL when it left *url*'s host; a solution at all
+        means the solver got past the site's challenge (``passed``)."""
         solution = await self._solve(url, timeout)
-        target = solution.get("url") if solution else None
+        if solution is None:
+            return Redirect(None, passed=False)
+        target = solution.get("url")
         if not isinstance(target, str) or urlsplit(target).netloc in (
             "",
             urlsplit(url).netloc,
         ):
-            return None
-        return target
+            return Redirect(None, passed=True)
+        return Redirect(target, passed=True)
 
     async def click_through(
         self, page_url: str, selector: str, *, timeout: float
@@ -148,12 +153,15 @@ class ChainedBrowserFetcher:
         fetcher = self._served.get(urlsplit(url).hostname or "")
         return await fetcher.session(url) if fetcher is not None else None
 
-    async def resolve_redirect(self, url: str, *, timeout: float) -> str | None:
+    async def resolve_redirect(self, url: str, *, timeout: float) -> Redirect:
+        """The first target; passed when any fetcher got past the site."""
+        passed = False
         for fetcher in self._fetchers:
-            target = await fetcher.resolve_redirect(url, timeout=timeout)
-            if target is not None:
-                return target
-        return None
+            redirect = await fetcher.resolve_redirect(url, timeout=timeout)
+            if redirect.target is not None:
+                return redirect
+            passed = passed or redirect.passed
+        return Redirect(None, passed=passed)
 
     async def click_through(
         self, page_url: str, selector: str, *, timeout: float

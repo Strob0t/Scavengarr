@@ -31,7 +31,7 @@ from scavengarr.infrastructure.common.asyncio_network import AsyncioNetworkBacke
 log = structlog.get_logger(__name__)
 
 # How long a lookup answers checks and connections (a CDN's addresses may
-# change; the gluetun resolver caches as well)
+# change; a VPN container's resolver caches as well)
 _DNS_CACHE_TTL_S = 60.0
 _DNS_CACHE_MAX = 4096
 # Happy Eyeballs (RFC 8305): the next address starts when the previous one

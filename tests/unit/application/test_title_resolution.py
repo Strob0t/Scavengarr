@@ -20,6 +20,7 @@ from scavengarr.domain.entities.stremio import (
     EpisodeRef,
     SeriesMeta,
     StremioStreamRequest,
+    TitleMatches,
     TitleMatchInfo,
 )
 from scavengarr.domain.plugins.base import SearchResult
@@ -367,7 +368,7 @@ class TestWorkerThread:
 
         def _filter(results: list[SearchResult], *_args: object, **_kw: object):
             seen.update(structlog.contextvars.get_contextvars())
-            return results
+            return TitleMatches(matching=results)
 
         titles = TitleResolver(
             tmdb=AsyncMock(),
@@ -440,12 +441,27 @@ class TestSeriesIdentity:
             content_type="series",
             imdb_id="tt0388629",
             animation=True,
+            series_titles=("One Piece DE", "One Piece"),
         )
         assert infos["en"] is not None
         assert infos["en"].title == "One Piece"
         assert infos["en"].animation is True
         # One catalog lookup, shared by the languages
         series_meta.lookup.assert_awaited_once_with("series", "tt0388629")
+
+    @pytest.mark.asyncio
+    async def test_every_info_carries_the_series_titles(self) -> None:
+        """Each language's title and alternatives: every language group's
+        reference judges a site's name by the titles ``EpisodeRef.titles``
+        holds (code review 2026-10-12, finding 11)."""
+        titles, _ = _resolver((_meta(("Animation",)), "found"))
+
+        infos, _record = await titles.title_infos(_series(), ["de", "en"])
+
+        assert {lang: info and info.series_titles for lang, info in infos.items()} == {
+            "de": ("One Piece DE", "One Piece"),
+            "en": ("One Piece DE", "One Piece"),
+        }
 
     @pytest.mark.asyncio
     async def test_a_live_action_series(self) -> None:
@@ -485,7 +501,9 @@ class TestSeriesIdentity:
         infos, meta = await titles.title_infos(_series("tmdb:37854"), ["de"])
 
         assert meta is None
-        assert infos["de"] == TitleMatchInfo(title="Some Show", content_type="series")
+        assert infos["de"] == TitleMatchInfo(
+            title="Some Show", content_type="series", series_titles=("Some Show",)
+        )
         series_meta.lookup.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -542,8 +560,32 @@ class TestEpisodeRef:
         ref = TitleResolver.episode_ref(_series(), _one_piece())
 
         assert ref == EpisodeRef(
-            season=5, episode=2, title=_LABOON, aired="2001-03-21", absolute=62
+            season=5,
+            episode=2,
+            title=_LABOON,
+            aired="2001-03-21",
+            absolute=62,
+            source="unchecked",
         )
+
+    def test_a_position_where_no_kitsu_entry_counts_the_series_whole(self) -> None:
+        # The anime ids know no such entry (Duel Monsters): the sites count
+        # as the catalog does, as far as anything knows
+        ref = TitleResolver.episode_ref(_series(), _one_piece(), position_trusted=True)
+
+        assert ref is not None
+        assert (ref.absolute, ref.source) == (62, "position")
+
+    def test_a_position_while_the_kitsu_number_is_unknown_is_unchecked(
+        self,
+    ) -> None:
+        """Code review of 2026-10-12, finding 1: the id list not in memory
+        (a start, the hour after a failed download) or the episode not
+        mapped yet; on a long runner the position may be one off."""
+        ref = TitleResolver.episode_ref(_series(), _one_piece())
+
+        assert ref is not None
+        assert (ref.absolute, ref.source) == (62, "unchecked")
 
     def test_the_order_of_the_list_does_not_count(self) -> None:
         meta = _one_piece()
@@ -562,7 +604,9 @@ class TestEpisodeRef:
         # off at times (One Piece: 1089 where the list says 1088)
         ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=given)
 
-        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=given)
+        assert ref == EpisodeRef(
+            5, 2, _LABOON, "2001-03-21", absolute=given, source="kitsu"
+        )
 
     @pytest.mark.parametrize("given", [2, 56, 68, 1089])
     def test_a_season_entrys_number_gives_way_to_the_position(self, given: int) -> None:
@@ -570,7 +614,10 @@ class TestEpisodeRef:
         # the fifth season is no absolute number
         ref = TitleResolver.episode_ref(_series(), _one_piece(), absolute=given)
 
-        assert ref == EpisodeRef(5, 2, _LABOON, "2001-03-21", absolute=62)
+        # The number that gave way says nothing about the position's
+        assert ref == EpisodeRef(
+            5, 2, _LABOON, "2001-03-21", absolute=62, source="unchecked"
+        )
 
     def test_a_special_has_no_absolute_number(self) -> None:
         request = make_request(
@@ -599,7 +646,32 @@ class TestEpisodeRef:
 
         ref = TitleResolver.episode_ref(request, _one_piece(), absolute=1090)
 
-        assert ref == EpisodeRef(22, 90, None, None, absolute=1090)
+        assert ref == EpisodeRef(22, 90, None, None, absolute=1090, source="kitsu")
+
+    def test_the_reference_carries_the_requests_titles(self) -> None:
+        """A plugin tells a parent series by them (``is_partial_title``)."""
+        ref = TitleResolver.episode_ref(
+            _series(), _one_piece(), titles=("One Piece", "One Piece DE")
+        )
+
+        assert ref is not None
+        assert ref.titles == ("One Piece", "One Piece DE")
+
+    def test_the_series_titles_of_the_languages(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(
+                title="Naruto: Shippūden", alt_titles=["Naruto: Shippuden"]
+            ),
+            "en": TitleMatchInfo(title="Naruto Shippūden"),
+            "fr": None,
+        }
+
+        assert TitleResolver.series_titles(infos, ["de", "en", "fr"]) == (
+            "Naruto: Shippūden",
+            "Naruto: Shippuden",
+            "Naruto Shippūden",
+        )
+        assert TitleResolver.series_titles(infos, ["fr"]) == ()
 
     def test_without_a_record(self) -> None:
         assert TitleResolver.episode_ref(_series(), None) is None

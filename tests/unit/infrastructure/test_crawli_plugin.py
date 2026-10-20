@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "crawli.py"
 
@@ -316,6 +317,21 @@ class TestCrawliPlugin:
         assert results[0].category == 2000
 
     @pytest.mark.asyncio
+    @respx.mock
+    async def test_a_search_page_that_times_out_is_a_timeout(self) -> None:
+        """A slow site is a timeout in the plugin record, not a search
+        without results."""
+        respx.get("https://crawli.net/all/Batman/").mock(
+            side_effect=httpx.ReadTimeout("slow")
+        )
+        p = _make_plugin()
+        p._domain_verified = True
+        p._client = httpx.AsyncClient()
+
+        with pytest.raises(TimeoutError):
+            await p.search("Batman")
+
+    @pytest.mark.asyncio
     async def test_search_uses_film_category_path(self) -> None:
         p = _make_plugin()
         p._domain_verified = True
@@ -431,16 +447,23 @@ class TestCrawliPlugin:
         assert "Batman+Begins+2005" in call_url
 
     @pytest.mark.asyncio
-    async def test_search_fetch_failure_returns_empty(self) -> None:
+    async def test_a_later_page_that_fails_keeps_the_first(self) -> None:
+        """Only the first page raises: a failed later page ends the
+        pagination with the rows found so far."""
         p = _make_plugin()
         p._domain_verified = True
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(_SEARCH_PAGE_HTML),
+                httpx.TimeoutException("timeout"),
+            ]
+        )
         p._client = mock_client
 
-        results = await p.search("Batman")
-        assert results == []
+        results = await p.search("Batman", category=2000)
+        assert len(results) == 3
 
     @pytest.mark.asyncio
     async def test_search_result_has_published_date(self) -> None:

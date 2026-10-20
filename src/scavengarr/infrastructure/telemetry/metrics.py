@@ -3,7 +3,7 @@
 Every stage has a duration histogram ``scavengarr_<stage>_seconds`` by its
 labels and an outcome counter ``scavengarr_<stage>_total`` by its labels and
 outcome: a histogram per outcome would multiply the series. The buckets
-follow the deadlines (``docs/features/observability.md``). With tracing on,
+follow the deadlines (``docs/reference/metrics.md``). With tracing on,
 a stage is also a span (``tracing.py``).
 """
 
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from prometheus_client import (
     CollectorRegistry,
     Counter,
+    Gauge,
     GCCollector,
     Histogram,
     Info,
@@ -84,6 +85,20 @@ _STAGES: dict[StageName, _StageSpec] = {
         (0.5, 1.0, 2.0, 4.0, 7.0, 15.0),
         "Hoster resolutions",
         span_label="resolver",
+    ),
+    # A capture the bound cut after a challenge runs on for at most 20 s
+    "hoster_challenge_completion": _StageSpec(
+        ("resolver",),
+        (1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 20.0),
+        "Background completions of challenged hoster captures",
+        span_label="resolver",
+    ),
+    # Filemoon's pass keeper resolves a link once its captcha pass has gone:
+    # the resolve bound, and the wait for a page before it
+    "hoster_pass_keep": _StageSpec(
+        (),
+        (1.0, 2.0, 4.0, 7.0, 10.0, 15.0, 20.0, 30.0),
+        "Captures of Filemoon's captcha pass keeper",
     ),
     # A span per segment would bury the requests in the traces
     "hls_proxy": _StageSpec(
@@ -203,7 +218,7 @@ class Telemetry:
             )
             for name, spec in _STAGES.items()
         }
-        self._values: dict[ValueName, Counter | Histogram] = {
+        self._values: dict[ValueName, Counter | Gauge | Histogram] = {
             "stremio_streams": Histogram(
                 "scavengarr_stremio_streams",
                 "Streams per Stremio answer",
@@ -220,6 +235,13 @@ class Telemetry:
                 "scavengarr_hls_proxy_bytes",
                 "Bytes the HLS proxy sent",
                 ("kind",),
+                registry=self.registry,
+            ),
+            # The readiness probe's checks at its last run (NetworkProbe)
+            "network_ok": Gauge(
+                "scavengarr_network_ok",
+                "1 when the readiness probe's check answered at its last run, else 0",
+                ("check",),
                 registry=self.registry,
             ),
         }
@@ -254,6 +276,8 @@ class Telemetry:
         child = metric.labels(**labels) if labels else metric
         if isinstance(child, Histogram):
             child.observe(value)
+        elif isinstance(child, Gauge):
+            child.set(value)
         else:
             child.inc(value)
 
@@ -353,7 +377,7 @@ class Telemetry:
 
 
 def _samples(
-    metric: Counter | Histogram, suffix: str
+    metric: Counter | Gauge | Histogram, suffix: str
 ) -> Iterator[tuple[dict[str, str], float]]:
     """The labels and values of *metric*'s samples named ``…<suffix>``."""
     for family in metric.collect():

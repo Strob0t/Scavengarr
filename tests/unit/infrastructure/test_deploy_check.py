@@ -157,7 +157,7 @@ class TestStreams:
             _mod.Answer(_mod.MOVIE_ID, 200, [_stream("x")], 20.0, "m"),
         ]
         records = [
-            {"event": "http_request", "request_id": "r0", "path": "/x"},
+            {"event": "http_request", "request_id": "r0", "duration_ms": 2900.0},
             {
                 "event": "stremio_episode_ref",
                 "request_id": "r0",
@@ -165,19 +165,21 @@ class TestStreams:
                 "episode": 2,
                 "absolute": 1089,
             },
-            {"event": "http_request", "request_id": "m", "path": "/y"},
+            {"event": "http_request", "request_id": "m", "duration_ms": 19500.0},
         ]
 
         checks = _mod.stream_checks(answers, records, deadline_s=60)
 
         assert [c.status for c in checks] == ["pass"] * 4
         assert checks[0].detail == (
-            "1 streams, all S05E02; logged; placed S05E02 abs 1089, 3.0 s"
+            "1 streams, all S05E02; logged; placed S05E02 abs 1089;"
+            " client 3.0 s, server 2.9 s"
         )
         assert checks[1].detail == (
-            "1 streams, all S22E04; not in the log; no placement record (DEBUG), 4.0 s"
+            "1 streams, all S22E04; not in the log; no placement record (DEBUG);"
+            " client 4.0 s"
         )
-        assert checks[3].detail == "1 streams in 20.0 s; logged"
+        assert checks[3].detail == "1 streams; logged; client 20.0 s, server 19.5 s"
 
     def test_a_stream_of_another_episode_fails(self) -> None:
         answers = _anime_answers(
@@ -209,7 +211,7 @@ class TestStreams:
 
         assert (check.status, check.detail) == (
             "fail",
-            "0 streams, none S05E02 (first: none); not in the log, 1.0 s",
+            "0 streams, none S05E02 (first: none); not in the log; client 1.0 s",
         )
 
     @pytest.mark.parametrize(
@@ -242,8 +244,72 @@ class TestStreams:
         checks = _mod.stream_checks(answers, [], deadline_s=60)
 
         assert [c.status for c in checks] == ["fail", "fail"]
-        assert checks[0].detail == "no streams, 5.0 s"
-        assert checks[1].detail == "1 streams but 61.0 s over the 60 s deadline"
+        assert checks[0].detail == "no streams; client 5.0 s"
+        assert checks[1].detail == (
+            "1 streams but 61.0 s over the 60 s deadline; client 61.0 s"
+        )
+
+
+class TestClientTime:
+    """Where an answer's time goes: the client's times to the headers and to
+    the body's end beside the server's ``duration_ms``; more than 5 s on the
+    way warns."""
+
+    @staticmethod
+    def _movie(seconds: float, headers: float | None = None) -> list[Any]:
+        return [
+            _mod.Answer(
+                _mod.MOVIE_ID,
+                200,
+                [_stream("x")],
+                seconds,
+                "m",
+                headers_seconds=headers,
+            )
+        ]
+
+    @staticmethod
+    def _served(duration_ms: float) -> list[dict[str, Any]]:
+        return [
+            {"event": "http_request", "request_id": "m", "duration_ms": duration_ms}
+        ]
+
+    def test_no_gap_passes_with_both_times(self) -> None:
+        check = _mod.stream_checks(
+            self._movie(4.2, headers=4.1), self._served(3900.0), deadline_s=60
+        )[0]
+
+        assert (check.status, check.detail) == (
+            "pass",
+            "1 streams; logged; client 4.1 s to headers, 4.2 s to the end,"
+            " server 3.9 s",
+        )
+
+    def test_a_gap_warns_and_names_both_times(self) -> None:
+        check = _mod.stream_checks(
+            self._movie(27.4, headers=27.3), self._served(400.0), deadline_s=60
+        )[0]
+
+        assert (check.status, check.detail) == (
+            "warn",
+            "1 streams; logged; client 27.3 s to headers, 27.4 s to the end,"
+            " server 0.4 s (27.0 s more on the way)",
+        )
+
+    def test_a_gap_of_5_s_still_passes(self) -> None:
+        check = _mod.stream_checks(
+            self._movie(6.0), self._served(1000.0), deadline_s=60
+        )[0]
+
+        assert check.status == "pass"
+
+    def test_a_failed_check_stays_failed_with_a_gap(self) -> None:
+        check = _mod.stream_checks(
+            self._movie(70.0), self._served(400.0), deadline_s=60
+        )[0]
+
+        assert check.status == "fail"
+        assert check.detail.endswith("server 0.4 s (69.6 s more on the way)")
 
 
 class TestRender:
@@ -266,3 +332,34 @@ class TestRender:
 
         assert _mod.render(checks).endswith("PASS: 1 checks, 0 failed, 0 warnings")
         assert not _mod.failed(checks)
+
+
+class TestNetwork:
+    """Check 7: the readiness probe's gauge (row 125)."""
+
+    _METRICS = (
+        "# HELP scavengarr_network_ok Whether the network probe's check answered\n"
+        "# TYPE scavengarr_network_ok gauge\n"
+        'scavengarr_network_ok{check="cache"} 1.0\n'
+        'scavengarr_network_ok{check="dns"} 1.0\n'
+    )
+
+    def test_both_checks_answering_pass(self) -> None:
+        check = _mod.network_check(self._METRICS)
+
+        assert (check.name, check.status) == ("network", "pass")
+
+    def test_a_check_that_failed_fails_and_is_named(self) -> None:
+        check = _mod.network_check(self._METRICS.replace('"dns"} 1.0', '"dns"} 0.0'))
+
+        assert check.status == "fail"
+        assert "dns" in check.detail
+        assert "cache" not in check.detail
+
+    def test_without_a_probe_yet_it_warns(self) -> None:
+        check = _mod.network_check('scavengarr_build_info{version="0.3.0"} 1.0\n')
+
+        assert check.status == "warn"
+
+    def test_metrics_that_did_not_answer_fail(self) -> None:
+        assert _mod.network_check(None).status == "fail"

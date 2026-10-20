@@ -1,9 +1,8 @@
 """Title matching per plugin: the queries sent, the raw titles, the verdicts.
 
-``poetry run python -P scripts/probes/title_match.py [--json FILE]
+``poetry run python scripts/probes/title_match.py [--json FILE]
 [--plugins a,b] ID [ID ...]`` (ids as Stremio paths: ``movie/tt0133093``,
-``series/tt5753856:1:1``; ``-P``: the sibling probe ``redis.py`` would shadow
-the package; ``xvfb-run -a`` without a display: the browser fallback runs
+``series/tt5753856:1:1``; ``xvfb-run -a`` without a display: the browser fallback runs
 headful) starts the app's composition (plugins, browser fallback, title
 lookup) and runs every stream plugin's search directly, once per query its
 language group gets (``application/stremio/queries.py``), with the request's
@@ -11,9 +10,11 @@ category, season and episode, under the plugin timeout and the runner's
 plugin concurrency. Every raw result gets the title matcher's score against
 the group's reference (``score_title``, the configured weights), its
 verdict at the configured threshold and the rule that decided it (``year``,
-``imdb``, ``category``, else the text score); the reference line names the
-IMDb id and the kind (animation or not) the catalog gave it. The episode
-filter is not applied.
+``imdb``, ``category``, else the text score; ``partial`` for a series result
+named only by a shorter form of the reference's titles, which counts only
+where the plugin kept no other result, as in the app); the reference line
+names the IMDb id and the kind (animation or not) the catalog gave it. The
+episode filter is not applied.
 
 Mirror groups are not collapsed: every member is asked. Read-only: it
 searches the sites and writes nothing but a temporary cache.
@@ -79,7 +80,7 @@ class Hit:
     release_name: str | None
     score: float
     kept: bool
-    reason: str  # the rule that decided: score, year, imdb, category
+    reason: str  # the rule that decided: score, year, imdb, category, partial
 
 
 @dataclass
@@ -117,16 +118,26 @@ def verdicts(
     hits = []
     for r in results:
         verdict = score_title(r, ref, **weights)
+        kept = verdict.score >= threshold
         hits.append(
             Hit(
                 r.title,
                 r.release_name,
                 round(verdict.score, 3),
-                verdict.score >= threshold,
-                verdict.reason,
+                kept,
+                "partial" if kept and verdict.partial else verdict.reason,
             )
         )
     return sorted(hits, key=lambda h: -h.score)
+
+
+def drop_partial(hits: list[Hit]) -> None:
+    """A plugin's partial matches count only without another of its kept
+    results (the app's ``SearchProgress``)."""
+    if any(hit.kept and hit.reason != "partial" for hit in hits):
+        for hit in hits:
+            if hit.reason == "partial":
+                hit.kept = False
 
 
 def render(sid: str, runs: list[PluginRun], threshold: float) -> str:
@@ -205,12 +216,14 @@ async def probe(state: AppState, sid: str, only: set[str] | None) -> list[Plugin
         set(state.plugins.get_by_provides("stream"))
         | set(state.plugins.get_by_provides("both"))
     )
+    # The app's titles: every stream plugin's language, whichever it asks
+    languages = titles.languages(names)
     if only:
         names = [n for n in names if n in only]
     slots = asyncio.Semaphore(config.max_concurrent_plugins)
     search_max_results.set(config.max_results_per_plugin)
     req, category = parse_id(sid)
-    infos, _meta = await titles.title_infos(req, titles.languages(names))
+    infos, _meta = await titles.title_infos(req, languages)
 
     async def one_plugin(
         name: str, langs: list[str], queries: list[str], ref: TitleMatchInfo
@@ -231,6 +244,7 @@ async def probe(state: AppState, sid: str, only: set[str] | None) -> list[Plugin
                     continue
             run.queries[query] = len(results)
             run.hits += verdicts(results, ref, config.title_match_threshold, weights)
+        drop_partial(run.hits)
         return run
 
     tasks = []

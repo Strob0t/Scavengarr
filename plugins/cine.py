@@ -60,12 +60,23 @@ class CinePlugin(HttpxPluginBase):
     provides = "download"
     _domains = _DOMAINS
 
-    async def _post_api(self, path: str, data: dict, context: str) -> dict | None:
+    async def _post_api(
+        self, path: str, data: dict, context: str, *, raising: bool = False
+    ) -> dict | None:
         """POST to a ``/request/*`` endpoint; the JSON body if its ``status``
         is true, else ``None`` (errors, non-JSON pages such as DDoS-Guard
-        checks and ``status: false`` are logged by the base helpers)."""
+        checks and ``status: false`` are logged by the base helpers).
+
+        *raising* is the search's first page: a failure of the site raises,
+        so the plugin record counts it (``_safe_fetch()``'s raising mode; one
+        domain, no other to fail over to).
+        """
         resp = await self._safe_fetch(
-            f"{self.base_url}{path}", method="POST", data=data, context=context
+            f"{self.base_url}{path}",
+            method="POST",
+            data=data,
+            context=context,
+            raising=raising,
         )
         if resp is None:
             return None
@@ -92,6 +103,7 @@ class CinePlugin(HttpxPluginBase):
                     "count": str(_PER_PAGE),
                 },
                 context="search",
+                raising=page == 1,
             )
             if data is None:
                 break

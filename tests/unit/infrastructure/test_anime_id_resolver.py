@@ -456,6 +456,27 @@ class TestKitsuEpisode:
         assert isinstance(outcome, asyncio.CancelledError)
 
 
+class TestWholeSeriesEntry:
+    """Whether a Kitsu entry counts an IMDb series whole, from its start:
+    without one, the catalog's position is the sites' count as far as
+    anything knows (code review of 2026-10-12, finding 1)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("whole_series", "answer"),
+        [([12], True), ([], False), (None, None)],
+        ids=["one-piece", "none", "list-not-in-memory"],
+    )
+    async def test_the_list_answers(
+        self, whole_series: list[int] | None, answer: bool | None
+    ) -> None:
+        resolver, addon, lists = _numbering(whole_series, {})
+
+        assert await resolver.has_whole_series_entry("tt0388629") is answer
+        lists.whole_series.assert_called_once_with("tt0388629")
+        addon.cached.assert_not_awaited()
+
+
 class TestNothingMaps:
     @pytest.mark.asyncio
     async def test_neither_source_gives_none_and_logs(self) -> None:

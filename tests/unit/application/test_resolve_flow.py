@@ -346,10 +346,12 @@ class TestResolvePhase:
                 await asyncio.sleep(10)
             return resolved(url)
 
+        # 1 s, not less: as a worker's first test under xdist the search alone
+        # took longer than 0.2 s while the other workers collected
         uc = resolving_use_case(
             [dict(_SLOW), dict(_FAST)],
             _resolve,
-            config=make_config(stream_deadline_seconds=0.2),
+            config=make_config(stream_deadline_seconds=1.0),
         )
 
         loop = asyncio.get_running_loop()
@@ -598,14 +600,10 @@ class TestAnswerPolicy:
         # fixed 0.3 s: on a busy machine (a full parallel run) the fast
         # resolution took longer than that
         slow_may_answer = asyncio.Event()
-
-        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await slow_may_answer.wait()
-            return [hit("https://dood.to/e/slow")]
-
-        slow = fake_site([])
-        slow.isolated_search = AsyncMock(side_effect=_slow)
-        sites = {"fast": fake_site([hit("https://voe.sx/e/fast")]), "slow": slow}
+        sites = {
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "slow": fake_site([hit("https://dood.to/e/slow")], gate=slow_may_answer),
+        }
         uc = answering_use_case(sites, memory_cache(), resolutions)
         request = asyncio.create_task(
             uc.execute(make_request(), base_url="http://localhost:8080")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import queue
@@ -175,3 +176,68 @@ class TestRequestLoggers:
     def test_other_loggers_follow_the_app(self) -> None:
         assert setup._logger_level("scavengarr.plugins", "INFO") == "INFO"
         assert setup._logger_level("httpx_extra", "INFO") == "INFO"
+
+
+def _cancelled_record(message: str) -> logging.LogRecord:
+    """Uvicorn's ASGI error log for a task cancelled with *message*."""
+    try:
+        raise asyncio.CancelledError(message)
+    except asyncio.CancelledError:
+        exc_info = sys.exc_info()
+    return logging.LogRecord(
+        "uvicorn.error",
+        logging.ERROR,
+        __file__,
+        1,
+        "Exception in ASGI application\n",
+        None,
+        exc_info,
+    )
+
+
+class TestShutdownBound:
+    """A request the shutdown bound cancels (an open playback) is no error:
+    Uvicorn's cancel line is a warning, the cancelled task's traceback goes."""
+
+    def test_the_cancelled_task_is_not_logged(self) -> None:
+        record = _cancelled_record("Task cancelled, timeout graceful shutdown exceeded")
+
+        assert not setup._ShutdownBoundFilter().filter(record)
+
+    @pytest.mark.parametrize("message", ["", "client went away"])
+    def test_another_cancel_stays_an_error(self, message: str) -> None:
+        record = _cancelled_record(message)
+
+        assert setup._ShutdownBoundFilter().filter(record)
+        assert record.levelno == logging.ERROR
+
+    def test_another_exception_stays_an_error(self) -> None:
+        record = _exception_record()
+
+        assert setup._ShutdownBoundFilter().filter(record)
+        assert record.levelno == logging.ERROR
+
+    def test_the_cancel_line_is_a_warning(self) -> None:
+        record = logging.LogRecord(
+            "uvicorn.error",
+            logging.ERROR,
+            __file__,
+            1,
+            "Cancel %s running task(s), timeout graceful shutdown exceeded",
+            (1,),
+            None,
+        )
+
+        assert setup._ShutdownBoundFilter().filter(record)
+        assert (record.levelno, record.levelname) == (logging.WARNING, "WARNING")
+
+    def test_the_filter_is_installed_once(self) -> None:
+        logger = logging.getLogger("test.shutdown_bound")
+
+        setup._guard_shutdown_bound(logger)
+        # Configured twice (tests, a reload): still one filter
+        setup._guard_shutdown_bound(logger)
+
+        assert (
+            sum(isinstance(f, setup._ShutdownBoundFilter) for f in logger.filters) == 1
+        )

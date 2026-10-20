@@ -113,15 +113,23 @@ class NoxPlugin(HttpxPluginBase):
         return self._safe_parse_json(resp, context=context)
 
     async def _search_media(self, query: str) -> list[dict[str, Any]]:
-        """Collect media entries for *query* across search pages."""
+        """Collect media entries for *query* across search pages.
+
+        A failure of the site on the first page raises (a timeout, no domain
+        answering), so the plugin record counts it; a later page that fails
+        ends the pagination.
+        """
         media: list[dict[str, Any]] = []
         page, total_pages = 1, 1
         while page <= min(total_pages, _MAX_SEARCH_PAGES):
-            data = await self._get_json(
-                f"{self.base_url}/api/search",
-                context="search",
-                params={"q": query, "page": str(page)},
-            )
+            params = {"q": query, "page": str(page)}
+            if page == 1:
+                body = await self._fetch_search_page("/api/search", params=params)
+                data = self._parse_json_text(body, context="search")
+            else:
+                data = await self._get_json(
+                    f"{self.base_url}/api/search", context="search", params=params
+                )
             if not isinstance(data, dict):
                 break
             items = data.get("items")
