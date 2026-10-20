@@ -13,6 +13,7 @@
   - `docs/current/observability.md`: the outcomes;
   - `CHANGELOG.md`.
 - [ ] 1.10 Production after the deploy: Filemoon's and Dropload's outcomes over a day, recorded in `docs/plans/challenge-reactions.md` against its baseline.
+  - First reading, 9ee49115, the container's first 8 h: no request of the maintainer, so no request's capture to judge. Filemoon's 15 streams were the pass keeper's captures and its 10 lookups came from the restored resolver cache; Dropload had one lookup from the cache, and its breaker came back open from the kept state with its probe due. A day of the maintainer's use on one container is still to read.
 
 ## 2. Row 90: the background completion (R2)
 
@@ -68,4 +69,4 @@
   - the pass keeper's `_BOUND_S` 45 s.
 - [x] 5.4 Live proof (the dev container, CPU throttled sixfold, one Byse link): 8 of 8 cold captures streamed after one click, their verify 0.5 to 9.7 s after the captcha and their stream 0.7 to 1.1 s after the verify; the restored ones streamed without a click in 2.8 to 3.8 s.
 - [x] 5.5 Docs: `docs/current/browser-and-challenges.md`, `docs/current/hoster-resolvers.md`, `docs/plans/challenge-reactions.md`, `docs/how-to/operations.md`, `CHANGELOG.md`, this change's spec.
-- [ ] 5.6 Production after the deploy: the pass keeper's next cycles keep their pass (`hoster_pass_keep stream=True`), read from production's log after the maintainer's use.
+- [x] 5.6 Production after the deploy: the pass keeper's next cycles keep their pass (`hoster_pass_keep stream=True`), read from production's log after the maintainer's use. 9ee49115, the container's first 8 h: 16 of 16 captures kept their pass, one every 30.3 to 30.8 min, in 8.1 to 31.5 s (on 2ca40548 the one capture used up its clicks after 29 s). The demand came from the post-deploy check's lookups, since the maintainer sent no request in the 8 h; the first Filemoon request after a quiet stretch is row 106's live proof.
