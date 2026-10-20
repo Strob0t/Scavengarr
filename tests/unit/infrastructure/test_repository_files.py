@@ -48,21 +48,32 @@ def test_compose_trusts_a_reverse_proxy_on_private_networks() -> None:
     assert "8.8.8.8" not in trusted
 
 
+def _dependabot_updates() -> list[dict[str, Any]]:
+    return yaml.safe_load((_ROOT / ".github" / "dependabot.yml").read_text())["updates"]
+
+
 def test_dependabot_opens_its_pull_requests_against_staging() -> None:
     """`main` takes merges from `staging` only (AGENTS.md §1): an update PR
     against `main` would bypass `staging`, so every ecosystem names it."""
-    config = yaml.safe_load((_ROOT / ".github" / "dependabot.yml").read_text())
-
     targets = {
         update["package-ecosystem"]: update.get("target-branch")
-        for update in config["updates"]
+        for update in _dependabot_updates()
     }
 
     assert targets == {
         "pip": "staging",
         "github-actions": "staging",
         "docker": "staging",
+        "pre-commit": "staging",
     }
+
+
+def test_dependabot_waits_a_week_after_a_release() -> None:
+    """A release pulled again within days never reaches `staging`. A security
+    alert shows at once; its fix comes with the weekly update after the
+    cooldown, or by hand."""
+    for update in _dependabot_updates():
+        assert update.get("cooldown") == {"default-days": 7}, update
 
 
 def _workflow(name: str) -> dict[Any, Any]:

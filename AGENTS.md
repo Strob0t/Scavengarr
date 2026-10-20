@@ -120,7 +120,7 @@ Invariants:
 
 - Source of truth: `pyproject.toml`. For package APIs, read the installed source in `.venv` or the official docs.
 - Prefer stdlib, then established libraries, then custom code. No internal mini-frameworks. New dependencies need explicit justification. A commit that adds, removes or replaces a dependency updates its line in `docs/reference/tech-stack.md` (purpose, reason, the alternatives not used), which `tests/unit/infrastructure/test_tech_stack_doc.py` checks against `pyproject.toml`.
-- Dependabot (`.github/dependabot.yml`) opens weekly update PRs for Poetry, GitHub Actions and the base images of `Dockerfile.prod` against `staging`; they are merged into `staging` after a green CI run, and a major update gets a look at the package's changelog first. Dependabot reads the file from the default branch `main`, so a change to it takes effect with the release that carries it.
+- Dependabot (`.github/dependabot.yml`) opens weekly update PRs for Poetry, GitHub Actions, pre-commit's hooks and the base images of `Dockerfile.prod` against `staging`, 7 days after a release; they are merged into `staging` after a green CI run, and a major update gets a look at the package's changelog first. Dependabot reads the file from the default branch `main`, so a change to it takes effect with the release that carries it.
 
 ---
 

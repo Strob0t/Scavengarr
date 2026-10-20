@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: Dependabot Waits a Week and Updates pre-commit's Hooks
+
+- Every entry of `.github/dependabot.yml` has `cooldown: default-days: 7`: an update comes 7 days after its release, so a release pulled again within days never reaches `staging`. A security alert shows at once; its fix comes with the weekly update after the cooldown, or by hand.
+- A `pre-commit` entry updates the hook revs of `.pre-commit-config.yaml` against `staging`, like the other three.
+- `tests/unit/infrastructure/test_repository_files.py` checks both, and AGENTS.md (§4) says so. Dependabot reads its file from `main`, so this takes effect with the next release.
+
 ### Added: CI Ends in One Required Check and Runs Weekly
 
 - `.github/workflows/ci.yml` ends in the job `CI passed`, which needs both Python legs and fails unless both passed. It runs after a failed or cancelled leg too (`if: always()`), as a required check that is skipped counts as passed. `main`'s ruleset requires this one name, so the matrix can change without the ruleset.
