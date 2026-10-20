@@ -2,7 +2,7 @@
 
 > **Purpose:** Setting up and working in the dev container: git access, the tools it installs, checks in a worktree, the editor, the Claude Code hooks and the production diagnostics.
 > **Status:** how-to
-> **As of:** d3fefa79
+> **As of:** b102c25c
 
 ## Goal
 

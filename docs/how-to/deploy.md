@@ -2,7 +2,7 @@
 
 > **Purpose:** Running the container image: tags, Compose profiles, Redis, a VPN container, a reverse proxy, the build identity.
 > **Status:** how-to
-> **As of:** 501da5f2
+> **As of:** 867eed7a
 
 ## Goal
 

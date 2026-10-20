@@ -2,7 +2,7 @@
 
 > **Purpose:** Every dependency with its purpose and the reason for it, the tools beside the Python packages and the alternatives not used.
 > **Status:** reference
-> **As of:** 501da5f2
+> **As of:** 867eed7a
 
 Every dependency in `pyproject.toml` with what it does here and why it is the one, the tools beside the Python packages, and the alternatives deliberately not used.
 The versions live in `pyproject.toml` and `poetry.lock` only.
