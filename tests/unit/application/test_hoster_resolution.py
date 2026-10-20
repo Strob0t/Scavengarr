@@ -12,6 +12,8 @@ from scavengarr.application.stremio.resolution import HosterResolution
 from scavengarr.domain.entities.stremio import RankedStream, ResolvedStream
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 
+from ..waiting import eventually
+
 _VOE = RankedStream(url="https://voe.sx/e/best", hoster="voe")
 _VOE_2 = RankedStream(url="https://voe.sx/e/second", hoster="voe")
 _DOOD = RankedStream(url="https://dood.to/e/one", hoster="doodstream")
@@ -72,8 +74,7 @@ def _resolution(
 
 
 async def _settle(resolution: HosterResolution) -> None:
-    while resolution.pending():
-        await asyncio.sleep(0.005)
+    await eventually(lambda: not resolution.pending())
 
 
 def _urls(resolution: HosterResolution) -> dict[str, str]:
@@ -184,14 +185,17 @@ class TestBounds:
         the answer, which waited for it all the same, and it held a slot
         (code review, 2026-10-06). New results only push streams down."""
 
+        started = asyncio.Event()
+
         async def resolve(url: str, hoster: str) -> ResolvedStream | None:
             if url == _DOOD.url:
+                started.set()
                 await asyncio.sleep(10)
             return _video(url)
 
         resolution, _ = _resolution(resolve, concurrency=1, limit=1)
         resolution.update([_DOOD])
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(started.wait(), 1)
 
         resolution.update([_VOE, _DOOD])
         await asyncio.wait_for(_settle(resolution), 1)
@@ -240,7 +244,7 @@ class TestProgress:
         resolver = _Resolver(delay=10)
         resolution, _ = _resolution(resolver)
         resolution.update([_VOE, _DOOD])
-        await asyncio.sleep(0.01)
+        await eventually(lambda: resolver.running == 2)
 
         await resolution.aclose()
 
