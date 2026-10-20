@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: pre-commit Runs the Venv's ruff
+
+- pre-commit's ruff hooks are `local` hooks that run the venv's ruff through `scripts/venv_tool.sh`, with the entries and file types of `ruff-pre-commit`'s own hooks (`--force-exclude`, `types_or`, `require_serial`), the three in their order. `pyproject.toml`'s pin is the only one: Dependabot's Poetry group updates it, and the rule to bump the `ruff-pre-commit` rev with it is gone.
+- `scripts/venv_tool.sh <tool>` is `scripts/basedpyright.sh` generalised to any tool of the venv (the active one, the project's `.venv`, in a worktree the main checkout's), and the basedpyright hook runs through it too. `tests/unit/infrastructure/test_repository_files.py` keeps it executable; AGENTS.md (§9), `docs/how-to/dev-container.md`, `docs/reference/tech-stack.md` and `openspec/project.md` say so.
+
 ### Added: Dependabot's Green Minor and Patch Updates Merge Themselves
 
 - `.github/workflows/dependabot-merge.yml` runs after every CI run of a `dependabot/` branch. For a green `pull_request` run of `dependabot[bot]` from this repository it takes the open Dependabot pull request against `staging` whose head commit the run tested, and merges it at that commit (`gh pr merge --merge --match-head-commit`) when every `update-type:` line of the commit message names a minor or patch update, at least one. Then it starts CI and the image on `staging`, as a merge with `GITHUB_TOKEN` starts no push workflow.

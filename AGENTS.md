@@ -186,7 +186,7 @@ How to set it up and work in it, with the details behind each rule: [`docs/how-t
 - **Skills**: every installed skill costs context in every session, so a skill is added deliberately and recorded in `docs/agents/skills.md`.
 - **Checks in a worktree**: run `scripts/worktree_venv.sh` once; everything outside pytest that imports the package runs with `PYTHONPATH=src`, else it runs the main checkout's code and a live proof proves nothing.
 - **Line endings and executable bits**: text files are LF, and directly run scripts are stored as 100755 (`tests/unit/infrastructure/test_repository_files.py`).
-- **Editor and formatter**: extensions come from Open VSX only, type checking is basedpyright in `standard` mode, and ruff in `pyproject.toml` is pinned to the `rev` of `ruff-pre-commit` (bump both together).
+- **Editor and formatter**: extensions come from Open VSX only, type checking is basedpyright in `standard` mode, and pre-commit runs the venv's ruff (`scripts/venv_tool.sh`), pinned in `pyproject.toml` only.
 - **Claude Code hooks and skills**: `.claude/hooks/`, `.claude/skills/` and `.claude/plugins/` are versioned, the rest of `.claude/` is not; run `bash -n` on a changed hook, since a syntax error blocks every Bash command.
 - **Production diagnostics**: production is read only through `scripts/prodctl.py`, whose output is masked; probes must not change state, and rebuilds and restarts stay with the user (`docs/how-to/operations.md`).
 - **Code intelligence**: the `basedpyright-lsp` plugin of `.claude/plugins/` and Serena give type diagnostics, definitions and references (`docs/agents/mcp-servers.md`).

@@ -2,7 +2,7 @@
 
 > **Purpose:** Every dependency with its purpose and the reason for it, the tools beside the Python packages and the alternatives not used.
 > **Status:** reference
-> **As of:** cf8d62a9
+> **As of:** d3fefa79
 
 Every dependency in `pyproject.toml` with what it does here and why it is the one, the tools beside the Python packages, and the alternatives deliberately not used.
 The versions live in `pyproject.toml` and `poetry.lock` only.
@@ -82,8 +82,8 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 | `pytest-xdist` | Spreads the suite over worker processes (`pytest -n auto`, at most 8), handing them out in chunks of at most eight tests (`--maxschedchunk=8`). | The suite takes about a third of its serial time; the chunk size ends the workers together, where the default `load` mode left one running alone for 6 to 10 s (16.3 s instead of 24.4 s); the comment above `addopts` in `pyproject.toml` has the times. |
 | `pytest-cov` | Coverage reports on demand (`pytest --cov=scavengarr`); no check runs it. | The pytest plugin of coverage.py. |
 | `respx` | Mocks httpx at its transport, so plugin and resolver tests get recorded answers without a network. | It is made for httpx, and resolver tests must use it ([AGENTS.md](../../AGENTS.md#6-testing-tdd-mandatory)). |
-| `ruff` | Lint (`E`, `F`, `W`, `C90`, `I`) and format, in pre-commit and in the edit hook. | One fast tool for what flake8, isort and black do, pinned to the `rev` of `ruff-pre-commit` so that both run the same version. |
-| `basedpyright` | Type checks in `standard` mode, in pre-commit (`scripts/basedpyright.sh`) and in the editor. | The editor and the hook apply the same rules, and it is on Open VSX, where Pylance is not. |
+| `ruff` | Lint (`E`, `F`, `W`, `C90`, `I`) and format, in pre-commit (`scripts/venv_tool.sh`) and in the edit hook. | One fast tool for what flake8, isort and black do; both run the venv's, so this pin is the only one. |
+| `basedpyright` | Type checks in `standard` mode, in pre-commit (`scripts/venv_tool.sh`) and in the editor. | The editor and the hook apply the same rules, and it is on Open VSX, where Pylance is not. |
 | `pre-commit` | Runs ruff, basedpyright and the file hygiene hooks before every commit and in CI (`.pre-commit-config.yaml`). | One file defines the checks for the developer and for CI. |
 
 ## Beside the Python packages
@@ -115,5 +115,6 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 | Pydantic models in the domain | `@dataclass` entities and value objects | The domain stays free of frameworks and I/O ([decision 0001](../target/decisions/0001-dependency-rule.md)). |
 | `mypy`, Pylance | basedpyright | Pylance is not on Open VSX, and one checker in `standard` mode serves the editor and pre-commit alike. |
 | `black`, `isort`, `flake8` | ruff | One tool does the work of the three at one pinned version. |
+| `ruff-pre-commit` | Local pre-commit hooks that run the venv's ruff | Its hook installs a ruff of its own, a second pin that had to be bumped together with `pyproject.toml`'s, or the edit hook and pre-commit formatted differently. |
 | OpenTelemetry metrics | prometheus-client | They would need Prometheus' OTLP receiver, which has no authentication, or a collector. |
 | The OpenTelemetry instrumentation of FastAPI and httpx | The core's own stages (`TelemetryPort`) | Their spans carry each request's URL, and the stream URLs hold tokens; the core's spans carry neither URLs nor titles. |

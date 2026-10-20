@@ -55,7 +55,7 @@ In short:
 - **Branches**: develop on `staging`; `main` is production and only updated via PR on explicit request (see `AGENTS.md` section 1)
 - **Commit messages**: Conventional Commits (`<type>(<scope>): <subject>`), not enforced by tooling
   - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
-- **Pre-commit hooks** (`.pre-commit-config.yaml`): `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `ruff-check` (import sorting), `ruff-check --fix`, `ruff-format` — **never skip** (`--no-verify`)
+- **Pre-commit hooks** (`.pre-commit-config.yaml`): `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `mixed-line-ending`, then the venv's tools through `scripts/venv_tool.sh`: `ruff-check` (import sorting), `ruff-check --fix`, `ruff-format` and `basedpyright` — **never skip** (`--no-verify`)
 - **Quality gates** (must pass before every commit):
   - ✅ `poetry run pre-commit run --all-files`
   - ✅ `poetry run pytest -n auto` (parallel; live tests excluded by default)
