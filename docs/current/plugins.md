@@ -137,6 +137,7 @@ The browser's solve runs on when the request that started it ends, so the next r
 There is no generic stage engine: each plugin runs its stages inside `search()`.
 A typical search fetches the result pages, keeps the relevant hits, fetches their detail pages in parallel and builds one result per detail page.
 A JSON API that answers with links needs one stage; a site with redirect or embed pages needs more.
+The mediathek plugin needs one: its API answers with the broadcasters' own files, which need no hoster page ([The mediathek plugin](#the-mediathek-plugin)).
 Link validation runs after the plugin, outside it.
 
 ```mermaid
@@ -212,10 +213,26 @@ The request's `EpisodeRef` (`domain/entities/stremio.py`) carries the episode's 
 No matching row means no result for that series, never a page built from the request's numbers.
 The plugin keeps the request's `season` and `episode` in the result's metadata and adds `site_season`, `site_episode` and `episode_located_by` (`number`, `neighbour`, `title` or `fuzzy_title`).
 aniworld locates every series this way, sto its anime results; sto's other series keep the request's numbers.
+The mediathek plugin locates its episodes without season pages: an entry that states its numbers matches by them only, an entry without numbers by the reference's episode title (`normalize_title()`), else by the reference's air date against the broadcast day (`episode_located_by` `date`); without a reference only stated numbers match.
 
 On s.to an episode is a `tr.episode-row`: `th.episode-number-cell` holds the number within the season, `td.episode-title-cell` holds `strong.episode-title-ger` (the German title) and `span.episode-title-eng` (the English title).
 For an anime the English span carries the absolute number (`Episode 062`) in place of a title.
 aniworld's rows show it as `[Episode NNN]` at the end of the English title.
+
+### The mediathek plugin
+
+`plugins/mediathek.py` searches the public broadcasters' mediatheken (ARD with its regional broadcasters, ZDF, arte, 3sat, KiKA, phoenix, ORF, SRF and more) through the search API of MediathekViewWeb (`mediathekviewweb.de`), which indexes MediathekView's programme list.
+One GET `/api/query?query=<JSON>` matches every word of the query inside an entry's title or topic and answers newest first, 1000 entries per page; the plugin asks for entries of at least 299 s and reads up to 3 pages.
+The first page raises like every httpx plugin's search page, a later one stays lenient.
+Each entry is one broadcast with the broadcaster's own files: a result links the HD file, else the normal one, under the hoster `mediathek`, which the `mediathek` resolver checks ([hoster resolvers](hoster-resolvers.md)).
+`relevant_hits()` keeps the entries whose film title or series name the query names, since the API also finds its words inside other titles, and a repeat drops: one result per channel, title, numbers, episode title and language.
+
+- **Versions**: the versions for accessibility (audio description, sign language, plain language) and the subtitled twin of a German version drop. "(OmU)" is `German Sub`, "(Englisch)" `English`, "(Originalversion)" `Original` (`parse_language()` reads it as `ov`), every other entry `German`. Of arte's channels only `ARTE.DE` stays, named `ARTE`.
+- **Categories**: an entry without numbers is a film or documentary (2000) when arte sent it, its topic is a collection ("Spielfilme", "Dokumentationen"), its title ends in a genre ("– Fernsehfilm"), or its title is its topic; every other entry is an episode (5000) of the series its topic names. The plugin serves 2000 and 5000.
+- **Numbers**: "(S03/E05)", "(Staffel 3, Folge 5)" or a part "(5/8)" in the title; a part or a lone "Folge 5" counts in the season the title or the topic names ("Staffel 3"), else in the first.
+- **Quality** comes from the file name: a height marker, ZDF's and arte's version codes, else 720p for an MP4 of the HD field; an unknown height stays out of the release name.
+- **Release name**: the title, the numbers and the episode's title, then the channel, the broadcast day and the quality, as in `Title (2022) (ZDF, dd.mm.yy, 1080p)` or `Series S03E05 Episode (ZDF, dd.mm.yy, 1080p)`. The day is written `dd.mm.yy`, which guessit reads as a date, not as the film's year, and `BR` is written "Bayerischer Rundfunk", which guessit does not read as Brazilian Portuguese.
+- **Metadata**: `channel`, the `year` the title or the description names (films), and the stated `season` and `episode`.
 
 ### Link-outs and the sto gate
 
@@ -302,6 +319,7 @@ Both are described in [Observability](observability.md).
 - A site that changes its markup returns nothing until its parser is fixed; the live smoke tests (`poetry run pytest -m live`) find such plugins.
 - The Playwright plugins have no raising mode for their search page: only their domain check raises `PluginUnreachableError` when no domain answers, and a search page that fails afterwards gives `[]`, which the plugin record counts as a search without results. In the httpx plugins only detail pages and later result pages stay lenient: `_fetch_text()` and `_safe_fetch()` turn their timeout, transport error or answer from 400 up into `None` with the line `<plugin>_timeout`, `_fetch_error` or `_http_error` ([Failures of the site](#failures-of-the-site)). The live smoke skips such an empty run and names the line (`tests/live/smoke_outcome.py`).
 - The confidence of a score is computed when a probe updates it, so it reflects the sample count, not the age of the samples.
+- The mediathek plugin reads the newest 3000 entries of a query, so a title broadcast more often loses its oldest broadcasts, and it finds a film only while a broadcaster's mediathek keeps it. An episode whose reference title differs from the broadcaster's (a prefix such as "Investigator - 02 - ") is placed by its premiere day only, and a series the broadcaster numbers by year ("S2026/E28") reads as that year, which the title match refuses for an older series.
 - A site that binds its clearance to the browser costs a browser page for every request for 30 minutes.
 
 ## Target

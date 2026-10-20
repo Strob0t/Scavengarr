@@ -96,7 +96,7 @@ src/scavengarr/
   infrastructure/   # adapters: plugins base classes, hoster resolvers, link validation,
                     # cache, Torznab presenter, config, logging, scoring
   interfaces/       # FastAPI routers, CLI, composition root (dependency wiring)
-plugins/            # one Python file per site (42 plugins)
+plugins/            # one Python file per site (43 plugins)
 scripts/            # maintenance scripts (e.g. plugin list generator)
 tests/              # unit, integration, E2E, live tests and benchmarks
 docs/               # docs index, current, target (decision records), how-to, reference (generated lists), plans

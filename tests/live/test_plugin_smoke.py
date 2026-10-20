@@ -53,6 +53,8 @@ HTTPX_PLUGINS: list[tuple[str, str]] = [
     ("kinoger", "Iron Man"),
     ("kinoking", "Iron Man"),
     ("kinox", "Iron Man"),
+    # The mediatheken keep films for weeks only; Tatort is always there
+    ("mediathek", "Tatort"),
     ("megakino", "Iron Man"),
     ("megakino_to", "Iron Man"),
     ("moflix", "Iron Man"),

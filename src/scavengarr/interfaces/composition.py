@@ -59,6 +59,7 @@ from scavengarr.infrastructure.hoster_resolvers.generic_ddl import (
 from scavengarr.infrastructure.hoster_resolvers.gofile import GoFileResolver
 from scavengarr.infrastructure.hoster_resolvers.gxplayer import GxplayerResolver
 from scavengarr.infrastructure.hoster_resolvers.mediafire import MediafireResolver
+from scavengarr.infrastructure.hoster_resolvers.mediathek import MediathekResolver
 from scavengarr.infrastructure.hoster_resolvers.mixdrop import MixdropResolver
 from scavengarr.infrastructure.hoster_resolvers.pass_keeper import PassKeeper
 from scavengarr.infrastructure.hoster_resolvers.playmate import PlaymateResolver
@@ -411,6 +412,8 @@ def build_hoster_resolvers(
         # DDL resolvers (custom — non-XFS)
         MediafireResolver(http_client=http_client),
         GoFileResolver(http_client=http_client),
+        # The public broadcasters' own files (the mediathek plugin)
+        MediathekResolver(http_client=http_client),
         # DDL resolvers (consolidated, one per GenericDDLConfig)
         *create_all_ddl_resolvers(http_client=http_client),
         # XFS resolvers (consolidated, one per XFSConfig)

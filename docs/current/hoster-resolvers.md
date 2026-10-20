@@ -24,6 +24,7 @@ A resolver answers in one of three ways:
 - A video-extracting resolver returns the direct `.mp4` or `.m3u8` URL with its playback headers.
 - A validate-only resolver checks the page and returns the link itself, which the Stremio addon drops, since it is no video (`is_direct_video_url()` in `application/stremio/stream_builder.py`).
 - A direct-download resolver checks the file and returns its canonical URL with `StreamQuality.UNKNOWN`, for the Torznab search's link validation.
+- The `mediathek` resolver checks a public broadcaster's own file (the mediathek plugin's links) with `verify_video_url()` and returns it as it is, without headers: KiKA serves its files as `application/octet-stream`, which the content-type probe would refuse, and a geo-blocked file (ORF, SRF abroad) answers 403. It claims the ARD CDN (`ard-mcdn`) by name and the broadcasters' hosts on Akamai and their own hosts by their full names, since `akamaihd.net` and `akamaized.net` serve other hosters too; a playlist of theirs goes to the content-type probe like every playlist (step 3 below).
 
 `build_hoster_resolvers()` in `interfaces/composition.py` creates them, the individual resolvers first, then one `GenericDDLResolver` per `GenericDDLConfig` and one `XFSResolver` per `XFSConfig`.
 

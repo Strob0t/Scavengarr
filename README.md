@@ -74,7 +74,7 @@ flowchart LR
 1. **Title lookup.** A Stremio request carries an IMDb, TMDB or Kitsu id (an anime catalog's Kitsu id is translated to its IMDb id first). Scavengarr looks up the title and year in every language its plugins search in (TMDB, or IMDb/Wikidata without a TMDB key), and for an episode its title, air date and number, so the plugins that read a site's season pages find the episode the way the site numbers it.
 2. **Plugin search.** All matching plugins search in parallel. Each plugin runs its own multi-stage scrape (search page → detail pages → links); the answer goes out at its budget with what is known, a plugin still searching then finishes in the background for the next request, and sites that keep failing are skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
-4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 62 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
+4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 63 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
 5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
 
 ---
@@ -104,8 +104,9 @@ flowchart LR
 
 ### Sources and hosters
 
-- 42 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/reference/plugins.md)
-- 62 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- 43 plugins for streaming, direct-download and anime sites, mostly German-language — see the [plugin list](docs/reference/plugins.md)
+- 63 hoster resolvers (streaming hosters, direct-download hosters, XFS-based hosters)
+- The public broadcasters' mediatheken (German, Austrian and Swiss): films, documentaries and series episodes from the broadcasters' own files, without a hoster
 - Two engines: `httpx` for static pages and APIs, a real browser (Patchright/Playwright) for sites that need JavaScript
 - Mirror fallback: plugins try alternative domains when the primary one is down, and follow a site's own published list of its addresses
 - Multi-language search: titles are looked up in each plugin's language
@@ -261,7 +262,7 @@ Every setting can also come from the environment: a section's key as `SCAVENGARR
 
 ## Supported sources
 
-Scavengarr ships 42 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab) and anime sites, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
+Scavengarr ships 43 plugins: streaming sites (used by the Stremio addon), direct-download sites (served via Torznab), anime sites and the public broadcasters' mediatheken, most of them German-language. Six of them use the browser engine, the rest plain HTTP.
 
 The complete, generated list with domains, content type, engine and languages is in **[docs/reference/plugins.md](docs/reference/plugins.md)**. Sites change often. In Stremio searches, a plugin that keeps failing is skipped by the circuit breaker, and a site that does not answer by the health check, until it is back; Torznab requests still reach it.
 

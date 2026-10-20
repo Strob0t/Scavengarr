@@ -9,7 +9,7 @@ How the registry dispatches a link to a resolver and judges its answer: [Hoster 
 *Bound* names what the CDN binds a video URL to: `address` sends the file through the file proxy, header names make `/play` resolve the link per player.
 *Check* marks a resolver whose streams the playback check reads with `stremio.verify_streams` off too.
 
-62 resolvers: 27 individual ones, 10 generic DDL hosters and 25 XFS hosters.
+63 resolvers: 28 individual ones, 10 generic DDL hosters and 25 XFS hosters.
 
 ## Individual resolvers
 
@@ -24,6 +24,7 @@ How the registry dispatches a link to a resolver and judges its answer: [Hoster 
 | `gofile` | [`gofile.py`](../../src/scavengarr/infrastructure/hoster_resolvers/gofile.py) | Validates DDL links via the GoFile API. |  |  |  |
 | `gxplayer` | [`gxplayer.py`](../../src/scavengarr/infrastructure/hoster_resolvers/gxplayer.py) | The HLS master built from the watch page. |  |  |  |
 | `mediafire` | [`mediafire.py`](../../src/scavengarr/infrastructure/hoster_resolvers/mediafire.py) | Validates DDL links via the public file API. |  |  |  |
+| `mediathek` | [`mediathek.py`](../../src/scavengarr/infrastructure/hoster_resolvers/mediathek.py) | Answers the public broadcasters' own MP4 and HLS files. |  |  |  |
 | `mixdrop` | [`mixdrop.py`](../../src/scavengarr/infrastructure/hoster_resolvers/mixdrop.py) | The MP4 behind the embed player. |  | `address` |  |
 | `playmate` | [`playmate.py`](../../src/scavengarr/infrastructure/hoster_resolvers/playmate.py) | The HLS master from the JSON API. |  |  |  |
 | `rapidgator` | [`rapidgator.py`](../../src/scavengarr/infrastructure/hoster_resolvers/rapidgator.py) | Validates DDL links via website scraping. |  |  |  |
@@ -123,6 +124,7 @@ The second-level names each resolver takes, its name included, and the full host
 - `katfile`: `katfile`
 - `lulustream`: `cdn1`, `lulu`, `lulustream`, `luluvdo`, `luluvdoo`, `luluvid`
 - `mediafire`: `mediafire`
+- `mediathek`: `ard-mcdn`, `mediathek`; hosts `apasfiis.sf.apa.at`, `arteconcert-a.akamaihd.net`, `arteptweb-a.akamaihd.net`, `avdlswr-a.akamaihd.net`, `avod.ard.de`, `brevent.akamaized.net`, `cdn-storage.br.de`, `ctv-videos.daserste.de`, `event11cloudhls.akamaized.net`, `funk-02.akamaized.net`, `funk-02dd.akamaized.net`, `hrardmediathek-a.akamaihd.net`, `kikaeventhls.akamaized.net`, `mcdn.ndr.de`, `mdrevent3wwhls.akamaized.net`, `mdrevent5wwhls.akamaized.net`, `media.tagesschau.de`, `mediandr-a.akamaihd.net`, `ndrevent.akamaized.net`, `ndrspezial.akamaized.net`, `nrodl.zdf.de`, `nrodlzdf-a.akamaihd.net`, `odgeomdr-a.akamaihd.net`, `odmdr-a.akamaihd.net`, `ondemand.unified.mdr.de`, `pd-videos.daserste.de`, `pdodswr-a.akamaihd.net`, `pdvideosdaserste-a.akamaihd.net`, `rbbmediapmdp-a.akamaihd.net`, `rbbvod-rwrtr.akamaized.net`, `rbprogressivedl-a.akamaihd.net`, `rodl.zdf.de`, `rodlzdf-a.akamaihd.net`, `sportschau-dd.akamaized.net`, `srde.akamaized.net`, `srf-vod-amd.akamaized.net`, `srfs.akamaized.net`, `srstorage01-a.akamaihd.net`, `swrvod-rwrtr.akamaized.net`, `tv-download.dw.com`, `tvdlzdf-a.akamaihd.net`, `tvdownloaddw-a.akamaihd.net`, `wdrevent2.akamaized.net`, `wdrmedien-a.akamaihd.net`, `wdrvod-rwrtr.akamaized.net`
 - `mixdrop`: `m1xdrop`, `mdbekjwqa`, `mdfx9dc8n`, `mdy48tn97`, `mdzsmutpcvykb`, `miiiixdrop`, `miiixdrop`, `miixdrop`, `mixdrop`, `mixdrop23`, `mixdrp`, `mxdrop`
 - `mp4upload`: `mp4upload`
 - `nitroflare`: `nitro`, `nitroflare`

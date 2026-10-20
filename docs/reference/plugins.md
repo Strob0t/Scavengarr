@@ -13,7 +13,7 @@ Every plugin is a Python file in [`plugins/`](../../plugins) and can be added to
 *Mirrors* counts the extra domains tried when the primary one is unreachable.
 How the plugins work: [Plugins](../current/plugins.md).
 
-42 plugins: 19 with streams (used by the Stremio addon), 23 with direct downloads.
+43 plugins: 20 with streams (used by the Stremio addon), 23 with direct downloads.
 
 | Plugin | Website | Mirrors | Content | Engine | Languages |
 |---|---|---|---|---|---|
@@ -41,6 +41,7 @@ How the plugins work: [Plugins](../current/plugins.md).
 | `kinoger` | kinoger.com | 1 | Streams | httpx | de |
 | `kinoking` | kinoking.cc | 0 | Streams | httpx | de |
 | `kinox` | www22.kinox.to | 8 | Streams | httpx | de |
+| `mediathek` | mediathekviewweb.de | 0 | Streams | httpx | de |
 | `megakino` | megakino1.biz | 3 | Streams | httpx | de |
 | `megakino_to` | megakino.org | 1 | Streams | httpx | de |
 | `moflix` | moflix-stream.xyz | 1 | Streams | httpx | de |
