@@ -14,23 +14,35 @@ from scavengarr.infrastructure.cache.diskcache_adapter import DiskcacheAdapter
 
 
 class _Overlap:
-    """Wraps a cache method and records how many calls ran at once."""
+    """Wraps a cache method and records how many calls ran at once.
 
-    def __init__(self, method: Any) -> None:
+    Each call stays inside for 10 ms, a window for another to come in;
+    with *meet* it stays until *meet* calls are inside (at most 2 s), so
+    calls that may run in parallel overlap however late a thread starts.
+    """
+
+    def __init__(self, method: Any, *, meet: int | None = None) -> None:
         self._method = method
-        self._lock = threading.Lock()
+        self._meet = meet
+        self._inside = threading.Condition()
         self._running = 0
         self.peak = 0
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        with self._lock:
+        with self._inside:
             self._running += 1
             self.peak = max(self.peak, self._running)
+            self._inside.notify_all()
         try:
-            time.sleep(0.01)
+            meet = self._meet
+            if meet is None:
+                time.sleep(0.01)
+            else:
+                with self._inside:
+                    self._inside.wait_for(lambda: self.peak >= meet, timeout=2)
             return self._method(*args, **kwargs)
         finally:
-            with self._lock:
+            with self._inside:
                 self._running -= 1
 
 
@@ -54,7 +66,7 @@ class TestWrites:
         async with DiskcacheAdapter(directory=tmp_path) as cache:
             await cache.set("k", 1)
             assert cache._cache is not None
-            overlap = _Overlap(cache._cache.get)
+            overlap = _Overlap(cache._cache.get, meet=2)
             cache._cache.get = overlap  # type: ignore[method-assign]
 
             assert await asyncio.gather(*(cache.get("k") for _ in range(4))) == [1] * 4

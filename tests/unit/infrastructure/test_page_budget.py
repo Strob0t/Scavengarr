@@ -11,6 +11,8 @@ from scavengarr.infrastructure.browser.page_budget import PageBudget
 from scavengarr.infrastructure.browser.page_gate import PageGate
 from scavengarr.infrastructure.resource_detector import ResourceUsage
 
+from ..waiting import eventually
+
 _MOD = "scavengarr.infrastructure.browser.page_budget"
 _MB = 1024**2
 
@@ -190,7 +192,7 @@ class TestRun:
 
         with patch(f"{_MOD}._TICK_S", 0.01):
             task = asyncio.create_task(budget.run_forever())
-            await asyncio.sleep(0.05)
+            await eventually(lambda: sampler.sample.call_count >= 2 and gate.limit == 1)
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task

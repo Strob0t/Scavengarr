@@ -8,6 +8,7 @@ import ipaddress
 import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from typing import cast
 
 import httpcore
 import httpx
@@ -22,6 +23,8 @@ from scavengarr.infrastructure.common.private_address_guard import (
     GuardedNetworkBackend,
     PrivateAddressGuard,
 )
+
+from ..waiting import eventually
 
 _OK = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
 _TIMEOUT = b"HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n"
@@ -91,6 +94,14 @@ def _client(ssl_context: ssl.SSLContext | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, timeout=2)
 
 
+async def _idle_connection_retired(client: httpx.AsyncClient) -> None:
+    """Wait until the client's idle connection shows what the server did
+    (its close, data it sent unasked): httpcore's own check before reuse,
+    or the pool dropped it already when the answer ended."""
+    pool = cast(httpx.AsyncHTTPTransport, client._transport)._pool
+    await eventually(lambda: all(conn.has_expired() for conn in pool.connections))
+
+
 async def _answer_every_request(
     reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 ) -> None:
@@ -156,7 +167,7 @@ class TestPlainTcp:
         server, port = await serve(_answer_once)
         async with _client() as client:
             assert (await client.get(f"http://127.0.0.1:{port}/")).text == "hello"
-            await asyncio.sleep(0.1)
+            await _idle_connection_retired(client)
             assert (await client.get(f"http://127.0.0.1:{port}/")).text == "hello"
         assert server.connections == 2
 
@@ -165,7 +176,7 @@ class TestPlainTcp:
         server, port = await serve(_answer_then_time_out)
         async with _client() as client:
             assert (await client.get(f"http://127.0.0.1:{port}/")).text == "hello"
-            await asyncio.sleep(0.1)
+            await _idle_connection_retired(client)
             assert (await client.get(f"http://127.0.0.1:{port}/")).status_code == 200
         assert server.connections == 2
 
@@ -246,7 +257,7 @@ class TestTls:
         server, port = await serve(_answer_once, server_ctx)
         async with _client(client_ctx) as client:
             assert (await client.get(f"https://127.0.0.1:{port}/")).text == "hello"
-            await asyncio.sleep(0.1)
+            await _idle_connection_retired(client)
             assert (await client.get(f"https://127.0.0.1:{port}/")).text == "hello"
         assert server.connections == 2
 

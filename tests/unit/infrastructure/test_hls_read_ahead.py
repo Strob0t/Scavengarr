@@ -18,6 +18,8 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
 )
 from scavengarr.infrastructure.telemetry import Telemetry
 
+from ..waiting import eventually
+
 _CDN = "https://cdn.test/v/"
 _PLAYLIST = f"{_CDN}720p.m3u8?t=abc"
 _SEGMENTS = [f"{_CDN}seg-{i}.ts?t=abc" for i in range(1, 7)]
@@ -609,7 +611,8 @@ class TestBounds:
             await _segment(client, read_ahead, _SEGMENTS[0])
             cdn.block.clear()
             tasks = list(read_ahead._playbacks[_PLAYLIST].ahead.values())
-            await asyncio.sleep(0.01)
+            # Each fetch ahead is at the CDN, waiting for its answer
+            await eventually(lambda: len(cdn.requests) == 1 + len(tasks))
             await read_ahead.aclose()
             await asyncio.gather(*tasks, return_exceptions=True)
 

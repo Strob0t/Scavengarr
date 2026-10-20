@@ -21,6 +21,8 @@ from scavengarr.infrastructure.plugins import health_monitor
 from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
 from scavengarr.infrastructure.scoring.health_prober import HealthProber
 
+from ..waiting import eventually
+
 _UP = "https://up.test/"
 _SITE = "https://site.test/"
 
@@ -339,8 +341,7 @@ class TestSchedule:
                 client, {"up": ["up.test"], "site": ["site.test"]}, clock=time.monotonic
             )
             task = asyncio.create_task(monitor.run_forever())
-            while site.call_count < 3:
-                await asyncio.sleep(0.01)
+            await eventually(lambda: site.call_count >= 3)
 
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

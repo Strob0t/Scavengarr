@@ -34,6 +34,8 @@ from scavengarr.infrastructure.hoster_resolvers.registry import (
 )
 from scavengarr.infrastructure.telemetry import Telemetry
 
+from ..waiting import eventually
+
 
 class TestExtractDomain:
     def test_standard_domain(self) -> None:
@@ -1137,7 +1139,7 @@ class TestCircuitBreaker:
         breaker = await self._half_open(registry)
 
         await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
-        await asyncio.sleep(0.15)
+        await eventually(lambda: registry.cached("https://doodstream.com/e/a")[0])
 
         assert breaker.is_closed("doodstream")
         # The probe's stream is cached for the next request
@@ -1179,7 +1181,8 @@ class TestCircuitBreaker:
         breaker = await self._half_open(registry)
 
         await _cut(registry.resolve("https://doodstream.com/e/a"), after=0.02)
-        await asyncio.sleep(0.15)
+        # The probe's failure reopens the breaker with a cooldown of its own
+        await eventually(lambda: "doodstream" in breaker._cooldowns)
 
         assert breaker.state("doodstream") == "open"
         assert breaker._cooldowns["doodstream"] == pytest.approx(0.04)
@@ -1949,9 +1952,10 @@ class TestChallenge:
         clock["t"] += 60
 
         again = asyncio.ensure_future(registry.resolve(self._url("a")))
-        await asyncio.sleep(0.05)
+        await eventually(lambda: self._outcome(telemetry, "joined") == 1)
         streamed.set()
-        await asyncio.sleep(0.05)
+        # A second capture of the link would wait for gone and never answer
+        await eventually(again.done)
         gone.set()
         stream = await again
 
@@ -1979,17 +1983,21 @@ class TestChallenge:
     async def test_a_joined_lookup_waits_its_own_bound(self) -> None:
         """The pass keeper's lookup of a link whose capture runs on waits for
         it as long as its own bound."""
+        streamed = asyncio.Event()
 
         async def _resolve(url: str) -> ResolvedStream | None:
             mark_resolution_challenge("hoster_captcha")
-            await asyncio.sleep(0.3)
+            await streamed.wait()
             return ResolvedStream(video_url=self._MP4)
 
-        registry, resolver, _ = self._registry(_resolve)
+        registry, resolver, telemetry = self._registry(_resolve)
         assert await registry.resolve(self._url("a")) is None
 
         assert await registry.resolve(self._url("a")) is None
-        stream = await registry.resolve(self._url("a"), bound=1)
+        lookup = asyncio.ensure_future(registry.resolve(self._url("a"), bound=1))
+        await eventually(lambda: self._outcome(telemetry, "joined") == 2)
+        streamed.set()
+        stream = await lookup
 
         assert stream is not None and stream.video_url == self._MP4
         assert resolver.resolve.await_count == 1
@@ -2280,7 +2288,9 @@ class TestChallenge:
         gate = PageGate(limit=1)
         registry, _, telemetry = self._registry(self._capture(gate, after=10))
         await registry.resolve(self._url("a"))
-        await asyncio.sleep(0.01)
+        # One turn of the loop runs the completion's first step, which the
+        # cut scheduled before it answered
+        await asyncio.sleep(0)
 
         await registry.aclose()
 
