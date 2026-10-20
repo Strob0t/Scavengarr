@@ -64,6 +64,15 @@ _MAX_UNRESOLVED = 1000
 # Streaming playlists, which plugins sometimes hand out directly. Not file
 # suffixes: hoster pages end in the file name (streamtape /v/<id>/x.mp4)
 _PLAYLIST_SUFFIXES = (".m3u8", ".mpd")
+# The content types an HLS playlist comes with: the registered one, RFC 8216's
+# audio/mpegurl, and the older x- ones (SRF's and funk's CDNs send
+# application/x-mpegURL)
+_HLS_CONTENT_TYPES = (
+    "application/vnd.apple.mpegurl",
+    "application/x-mpegurl",
+    "audio/mpegurl",
+    "audio/x-mpegurl",
+)
 
 # A capture the resolve bound cut after a challenge runs on for this long
 # (_complete): with production's bound of 10 s, 30 s of work in all, past the
@@ -1121,7 +1130,7 @@ class HosterResolverRegistry:
         """Probe URL via HEAD request to check if it's directly playable.
 
         Returns a ResolvedStream if the URL answers (below 400) with a video
-        type (video/*, application/vnd.apple.mpegurl): a CDN that types its
+        type (video/*, an HLS type of ``_HLS_CONTENT_TYPES``): a CDN that types its
         error page by the path made a refusal a stream, cached for an hour
         (code review, 2026-10-06).
         """
@@ -1149,7 +1158,7 @@ class HosterResolverRegistry:
                     video_url=str(resp.url), quality=StreamQuality.UNKNOWN
                 )
 
-            if "application/vnd.apple.mpegurl" in content_type:
+            if any(hls in content_type for hls in _HLS_CONTENT_TYPES):
                 log.info(
                     "hoster_probe_hls",
                     hoster=hoster_name,

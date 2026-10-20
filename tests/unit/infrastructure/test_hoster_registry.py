@@ -210,10 +210,19 @@ class TestHosterResolverRegistry:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_probe_detects_hls(self) -> None:
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "application/vnd.apple.mpegurl; charset=utf-8",
+            # SRF's and funk's CDNs; RFC 8216's audio/mpegurl and its x- form
+            "application/x-mpegURL",
+            "audio/mpegurl",
+            "audio/x-mpegurl",
+        ],
+    )
+    async def test_probe_detects_hls(self, content_type: str) -> None:
         respx.head("https://cdn.example.com/master.m3u8").respond(
-            200,
-            headers={"content-type": "application/vnd.apple.mpegurl; charset=utf-8"},
+            200, headers={"content-type": content_type}
         )
         async with httpx.AsyncClient() as client:
             registry = HosterResolverRegistry(http_client=client)

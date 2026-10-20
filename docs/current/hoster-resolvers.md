@@ -37,7 +37,7 @@ A resolver answers in one of three ways:
 4. Otherwise it takes the resolver for the URL: a full host name a resolver claims (`supported_hosts`) first, then the second-level domain as a resolver's `name`, then as one of its aliases (`supported_domains`).
 5. Without one it follows the URL's redirects with a `HEAD` request and dispatches the final URL again.
 6. Without one still it takes the resolver of the plugin's hoster hint, which covers rotating mirror domains.
-7. Without any resolver it probes the URL's content type: a `HEAD` answer below 400 with a `video/*` or `application/vnd.apple.mpegurl` type becomes a stream of the resolver `direct`.
+7. Without any resolver it probes the URL's content type: a `HEAD` answer below 400 with a `video/*` type or an HLS type becomes a stream of the resolver `direct`. The HLS types (`_HLS_CONTENT_TYPES`) are `application/vnd.apple.mpegurl`, RFC 8216's `audio/mpegurl`, and the older `application/x-mpegurl` and `audio/x-mpegurl`; SRF's and funk's CDNs send `application/x-mpegURL`.
 
 `extract_domain()` (`infrastructure/hoster_resolvers/_domain.py`) gives the second-level domain: `voe` for `https://www.voe.sx/e/abc`.
 A link that reaches the probe for want of a resolver logs `hoster_without_resolver` with its hoster name, never its URL, and is counted per hoster (`unresolved_hosts()`, at most 1,000 names).

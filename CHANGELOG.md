@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: The Content-Type Probe Takes Every HLS Playlist Type
+
+- The probe for a URL without a resolver, and for every `.m3u8` or `.mpd` playlist, took `video/*` and `application/vnd.apple.mpegurl` only, so a playlist sent as `application/x-mpegURL` (SRF's and funk's CDNs send that type) or as RFC 8216's `audio/mpegurl` did not resolve. `_HLS_CONTENT_TYPES` adds `application/x-mpegurl`, `audio/mpegurl` and `audio/x-mpegurl`, compared lower-cased.
+- `tests/unit/infrastructure/test_hoster_registry.py` probes each of the 4 types; `docs/current/hoster-resolvers.md` (Dispatch, step 7) lists them.
+
 ### Fixed: A Plugin With a Dataclass Loads
 
 - `load_python_plugin()` ran a plugin file as a module `sys.modules` did not know, so a plugin with a dataclass and string annotations (`from __future__ import annotations`) failed to load with `AttributeError: 'NoneType' object has no attribute '__dict__'`: `dataclasses` looks the module up by its name for them. The loader enters the module (`scavengarr_dynamic_plugin_<file stem>`) before it runs the file and takes it out again when the file fails, so a broken plugin leaves no half-built module behind.
