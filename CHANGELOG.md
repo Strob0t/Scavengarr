@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.5.0 - 2026-10-20
+
+Challenges and captchas: a capture that meets a challenge is an outcome of its own, with a cooldown instead of the circuit breaker, and finishes in the background, so the next request finds its stream; a capture hoster's browser state outlives restarts, the browser starts with the app, Filemoon's captcha pass is kept alive while it is in demand, and a capture that met the hoster's captcha waits for it. Playback: the HLS proxy resumes a segment the CDN cuts or stalls and keeps its read-ahead across a pause. Content: the public broadcasters' mediatheken, an original version with its own language, a sub-series no longer gets its parent series' episodes (aniworld, sto), and a Torznab search over several kinds answers every kind. Operations: readiness notices a lost network and the image's healthcheck asks it, the graceful shutdown is bounded at 5 s, and the post-deploy check shows where an answer's time goes. Also the documentation rebuilt around one index, a document contract and decision records, a test of the dependency rule, a live smoke entry for every plugin, and Dependabot's pull requests against `staging`.
 
 ### Fixed: The Search Probe Counts a Claimed Host as Supported
 
