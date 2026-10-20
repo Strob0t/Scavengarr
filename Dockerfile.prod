@@ -7,7 +7,7 @@
 # The image bundles the plugins (-v ./plugins:/app/plugins replaces them)
 
 # ── Stage 1: Install Python deps ─────────────────────────────────────────────
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 
 RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.in-project true
@@ -20,7 +20,7 @@ COPY src/ src/
 RUN poetry install --only main --no-interaction
 
 # ── Stage 2: Install Patchright Chromium ─────────────────────────────────────
-FROM python:3.14-slim AS browsers
+FROM python:3.15-slim AS browsers
 
 COPY --from=builder /app /app
 WORKDIR /app
@@ -46,7 +46,7 @@ RUN apt-get update && \
 # source either way). The time: SCAVENGARR_BUILT or the clock. A stage of
 # its own keeps the git files out of the runtime image. A rebuild of the
 # same commit without arguments reuses this stage's cache, time included.
-FROM python:3.14-slim AS buildinfo
+FROM python:3.15-slim AS buildinfo
 
 ARG SCAVENGARR_COMMIT=
 ARG SCAVENGARR_BUILT=
@@ -55,7 +55,7 @@ COPY docker/build_info.py pyproject.toml .git* ./
 RUN python build_info.py --git /ctx --out /build_info.json
 
 # ── Stage 4: Production runtime ──────────────────────────────────────────────
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # Runtime deps for Playwright Chromium
 RUN apt-get update && \
