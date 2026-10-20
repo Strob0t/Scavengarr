@@ -2,7 +2,7 @@
 
 > **Purpose:** Every dependency with its purpose and the reason for it, the tools beside the Python packages and the alternatives not used.
 > **Status:** reference
-> **As of:** 587aa704
+> **As of:** cf8d62a9
 
 Every dependency in `pyproject.toml` with what it does here and why it is the one, the tools beside the Python packages, and the alternatives deliberately not used.
 The versions live in `pyproject.toml` and `poetry.lock` only.
@@ -79,7 +79,7 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 |---|---|---|
 | `pytest` | The test runner with the markers `integration`, `live` and `benchmark`; `addopts` leaves out the live tests and the benchmarks. | Fixtures and parametrization, which the suite is built on. |
 | `pytest-asyncio` | Runs every `async def` test on an event loop (`asyncio_mode = "auto"`). | An async test needs no marker of its own. |
-| `pytest-xdist` | Spreads the suite over worker processes (`pytest -n auto`, at most 8). | The suite takes about a third of its serial time; the comment above `addopts` in `pyproject.toml` has the times. |
+| `pytest-xdist` | Spreads the suite over worker processes (`pytest -n auto`, at most 8), handing them out in chunks of at most eight tests (`--maxschedchunk=8`). | The suite takes about a third of its serial time; the chunk size ends the workers together, where the default `load` mode left one running alone for 6 to 10 s (16.3 s instead of 24.4 s); the comment above `addopts` in `pyproject.toml` has the times. |
 | `pytest-cov` | Coverage reports on demand (`pytest --cov=scavengarr`); no check runs it. | The pytest plugin of coverage.py. |
 | `respx` | Mocks httpx at its transport, so plugin and resolver tests get recorded answers without a network. | It is made for httpx, and resolver tests must use it ([AGENTS.md](../../AGENTS.md#6-testing-tdd-mandatory)). |
 | `ruff` | Lint (`E`, `F`, `W`, `C90`, `I`) and format, in pre-commit and in the edit hook. | One fast tool for what flake8, isort and black do, pinned to the `rev` of `ruff-pre-commit` so that both run the same version. |

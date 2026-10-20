@@ -57,7 +57,11 @@ markers = [
 ]
 # Full runs use `pytest -n auto` (pytest-xdist); more than 8 workers only adds start-up
 # time (16 workers: 20 s, 8: 15 s, serial: 47 s). Single files stay serial (~1 s).
-addopts = "-q --tb=short --ignore=tests/benchmark -m \"not live\" --maxprocesses=8"
+# `--maxschedchunk=8`: the `load` mode handed a worker long runs of tests at once, so
+# one ran on alone for 6 to 10 s after the other seven finished (24.4 s; the tests
+# sum to 67 s). Chunks of at most eight end the workers together: 16.3 s (`--dist
+# loadfile` 22.1 s, `--dist worksteal` 18.7 s). Without `-n` the option does nothing.
+addopts = "-q --tb=short --ignore=tests/benchmark -m \"not live\" --maxprocesses=8 --maxschedchunk=8"
 filterwarnings = [
     "ignore:Stealth has already been applied:UserWarning",
 ]
