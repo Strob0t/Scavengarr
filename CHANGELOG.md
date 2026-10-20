@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Security: certifi's CA Bundle Drops the Compromised emSign Root
+
+- certifi before 2026.10.18 carries the root `emSign ECC Root CA - G3`, below which eight intermediate CAs have compromised keys: whoever holds one and sits on the path can pass a certificate for any host (GHSA-6q48-6c7w-9gw2, Dependabot's critical alert). certifi comes in only through httpx and httpcore, and every httpx client of the app verifies TLS against its bundle.
+- `poetry.lock` moves certifi from 2026.7.22 to 2026.10.19 (2026.10.18 removed every emSign root, 2026.10.19 restored the unaffected ones); its bundle names `emSign ECC Root CA - G3` 0 times, against 3 before. No code changes. The production image installs `poetry.lock`, so it carries the fix with its next rebuild.
+
 ### Added: A Release Page per Tag
 
 - `.github/workflows/release.yml` runs on every pushed `v*` tag with write access to contents only: it prints the notes with `scripts/release_notes.py <tag>` and creates the release with `gh release create --notes-file --verify-tag`, beside the image that `image.yml` publishes for the tag.
