@@ -37,6 +37,9 @@ from scavengarr.infrastructure.stremio.stream_converter import convert_search_re
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 
+# Re-exported for the use case's tests: the suite's one eventually()
+from ..waiting import eventually as eventually
+
 
 def make_config(**overrides: object) -> StremioConfig:
     defaults = {
@@ -279,13 +282,6 @@ def cached_use_case(
         telemetry=telemetry,
         pool=pool,
     )
-
-
-async def eventually(check: Callable[[], bool], timeout: float = 2.0) -> None:
-    end = time.monotonic() + timeout
-    while not check():
-        assert time.monotonic() < end, "condition not met in time"
-        await asyncio.sleep(0.01)
 
 
 def cached_links(cache: AsyncMock) -> list[str]:
