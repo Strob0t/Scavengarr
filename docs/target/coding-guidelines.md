@@ -1,10 +1,10 @@
 # Coding guidelines
 
-> **Purpose:** The rules the code follows for the event loop, shared resources, concurrency, scraping, browser pages, caching, retries and logging.
+> **Purpose:** The rules the code follows for the event loop, shared resources, concurrency, scraping, browser pages, caching, retries and logging, and how its tests wait.
 > **Status:** target
 > **As of:** d8f375bc
 
-The performance and robustness rules the code of `src/` and `plugins/` follows, beside the typing and style rules of `AGENTS.md` (section 5).
+The performance and robustness rules the code of `src/` and `plugins/` follows, and how its tests wait, beside the typing and style rules of `AGENTS.md` (section 5).
 
 ## Rule
 
@@ -64,6 +64,12 @@ The performance and robustness rules the code of `src/` and `plugins/` follows, 
 - One logging pipeline is configured at startup, and every request ends with one `http_request` line with its `request_id` and masked query values (`log_requests` in `src/scavengarr/interfaces/app.py`).
 - Inner loops must count and log a summary, not a line per item.
 - The core must record its steps through `TelemetryPort.stage()`, never plugins or resolvers, with label values from fixed sets ([Observability](../current/observability.md)).
+
+### Tests
+
+- A test waits for a condition, never for the clock: `eventually()` of `tests/unit/waiting.py`, an event, or a gate on the fake. A fixed sleep is too short on a loaded runner or longer than the work needs.
+- A sleep stays only where the delay is the subject (a fake's delay, a deadline or a timeout under test), with a margin a loaded CI runner keeps.
+- Work a process does once happens before the timed part: guessit compiles its rules on its first call, so the application tests configure it first (`tests/unit/application/conftest.py`).
 
 ### Changes
 
