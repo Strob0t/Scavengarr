@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Dependabot's Green Minor and Patch Updates Merge Themselves
+
+- `.github/workflows/dependabot-merge.yml` runs after every CI run of a `dependabot/` branch. For a green `pull_request` run of `dependabot[bot]` from this repository it takes the open Dependabot pull request against `staging` whose head commit the run tested, and merges it at that commit (`gh pr merge --merge --match-head-commit`) when every `update-type:` line of the commit message names a minor or patch update, at least one. Then it starts CI and the image on `staging`, as a merge with `GITHUB_TOKEN` starts no push workflow.
+- A major update, an update without a type, a base image (its next Python is a runtime change no CI leg builds) and an action wait for the maintainer: `GITHUB_TOKEN` may not change a workflow file, a merge included.
+- GitHub runs the workflow from `main` with write access to contents, pull requests and actions, so it checks out nothing, uses no action and reads the event's values through `env:` only. `tests/unit/infrastructure/test_repository_files.py` runs its script with a fake `gh` (a merge; a major update, no type, a base image, an action and a newer head stay open) and checks its trigger and permissions; AGENTS.md (§4) and `openspec/project.md` say so. It takes effect with the next release.
+
 ### Changed: Dependabot Waits a Week and Updates pre-commit's Hooks
 
 - Every entry of `.github/dependabot.yml` has `cooldown: default-days: 7`: an update comes 7 days after its release, so a release pulled again within days never reaches `staging`. A security alert shows at once; its fix comes with the weekly update after the cooldown, or by hand.

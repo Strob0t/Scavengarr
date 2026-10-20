@@ -1,0 +1,66 @@
+# AGENTS.md §4's merge rule: after a green CI run of a Dependabot pull request
+# against staging, a minor or patch update merges; a major update, an update
+# without a type, a base image (its next Python is a runtime change no CI leg
+# builds) and an action (GITHUB_TOKEN may not change a workflow file, a merge
+# included) wait for the maintainer. GitHub runs this file from main with
+# write access, so it checks out nothing and its script reads event values
+# through env: only.
+name: Dependabot merge
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: ["dependabot/**"]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  merge:
+    name: merge a green minor or patch update
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Merge into staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # The pull request whose head this CI run tested; a newer head
+          # waits for its own run
+          pr=$(gh pr list --author app/dependabot --base staging --state open \
+              --json number,headRefName,headRefOid \
+            | jq -c --arg sha "$HEAD_SHA" 'first(.[] | select(.headRefOid == $sha))')
+          if [[ -z $pr ]]; then
+            echo "No open Dependabot pull request against staging has this head"
+            exit 0
+          fi
+          number=$(jq -r .number <<< "$pr")
+          case $(jq -r .headRefName <<< "$pr") in
+            dependabot/docker/* | dependabot/github_actions/*)
+              echo "#$number updates a base image or an action: the maintainer merges it"
+              exit 0
+              ;;
+          esac
+          # One update-type line per dependency in Dependabot's commit message
+          types=$(gh api "repos/{owner}/{repo}/commits/$HEAD_SHA" \
+            | jq -r .commit.message \
+            | sed -nE 's/^[[:space:]]*update-type:[[:space:]]*//p')
+          if [[ -z $types ]] || grep -qvxE 'version-update:semver-(minor|patch)' <<< "$types"; then
+            echo "#$number has a major update or one without a type: the maintainer merges it"
+            exit 0
+          fi
+          gh pr merge "$number" --merge --match-head-commit "$HEAD_SHA"
+          # A merge with GITHUB_TOKEN starts no push workflow; a dispatch does
+          gh workflow run ci.yml --ref staging
+          gh workflow run image.yml --ref staging
