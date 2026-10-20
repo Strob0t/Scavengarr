@@ -222,6 +222,7 @@ Next: [connect Prowlarr](connect-prowlarr.md) or add the Stremio addon ([Stremio
 | The Docker log fills the disk. | Docker's `json-file` driver keeps every record without a bound; set a rotation as below. |
 
 The healthcheck asks `/api/v1/readyz`, which answers 503 once the cache backend's ping and the DNS resolution of a public name have both failed for longer than 5 min ([Readiness](../current/observability.md#readiness)); the third failed check in a row, 30 s apart, marks the container unhealthy, and Docker restarts nothing by itself.
+A `healthcheck:` of the service in your Compose file replaces the image's: let it ask `/api/v1/readyz` too, since `/api/v1/healthz` answers over loopback whatever fails outside, and the deploy check's network row warns while nothing asks readiness ([Check a deploy](operations.md#5-check-a-deploy)).
 With the diskcache backend the cache check needs no network, so a container without a network keeps reporting healthy there.
 The app logs such an outage once where it can (`network_lost` and `network_recovered` for the readiness probe; `redis_unavailable` and `redis_recovered` for Redis; `query_pool_unavailable` when the scoring scheduler cannot reach IMDb), and a log rotation keeps the rest bounded:
 
