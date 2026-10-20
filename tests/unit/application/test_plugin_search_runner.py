@@ -266,8 +266,10 @@ class TestCircuitBreakerAndTimeout:
         plugin = _plugin([])
         plugin.search = AsyncMock(side_effect=_search_by_category)
         breaker = PluginCircuitBreaker(failure_threshold=1)
+        # The series answer's episode filter (a worker thread) runs inside
+        # the timeout as well: 0.05 s failed with 50 ms added to thread starts
         runner = _runner(
-            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.2
         )
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
 
@@ -291,8 +293,10 @@ class TestCircuitBreakerAndTimeout:
         plugin = _plugin([])
         plugin.search = AsyncMock(side_effect=_search)
         breaker = PluginCircuitBreaker(failure_threshold=2)
+        # Room for the empty answer's episode filter, a worker thread inside
+        # the timeout (0.05 s failed with 50 ms added to thread starts)
         runner = _runner(
-            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.05
+            _registry({"a": plugin}), circuit_breaker=breaker, plugin_timeout=0.2
         )
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
 
@@ -978,10 +982,13 @@ class TestOnResults:
     resolves links while slower plugins still search."""
 
     async def test_a_fast_plugins_results_come_before_a_slow_one_ends(self) -> None:
+        """The slow plugin ends once the fast one's results are out: a runner
+        holding them back until every plugin ends never gets there."""
+        fast_out = asyncio.Event()
         slow_done = asyncio.Event()
 
         async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(fast_out.wait(), 1)
             slow_done.set()
             return [_sr("https://b/1")]
 
@@ -992,6 +999,7 @@ class TestOnResults:
 
         async def _on_results(results: list[SearchResult]) -> None:
             reported.append(([r.download_link for r in results], slow_done.is_set()))
+            fast_out.set()
 
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
         async with pool.request() as budget:
