@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 from structlog.testing import capture_logs
@@ -584,7 +585,7 @@ class TestVerifyDomain:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "example.com" in plugin.base_url
+        assert urlparse(plugin.base_url).hostname == "example.com"
 
     @pytest.mark.asyncio
     async def test_fallback_to_second_domain(self) -> None:
@@ -604,7 +605,7 @@ class TestVerifyDomain:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "fallback.com" in plugin.base_url
+        assert urlparse(plugin.base_url).hostname == "fallback.com"
 
     @pytest.mark.asyncio
     async def test_all_domains_fail(self) -> None:

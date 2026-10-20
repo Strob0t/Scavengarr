@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -173,7 +174,7 @@ class TestVerifyDomain:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "example.com" in plugin.base_url
+        assert urlparse(plugin.base_url).hostname == "example.com"
 
     @pytest.mark.asyncio
     async def test_fallback_to_second_domain(self) -> None:
@@ -188,7 +189,7 @@ class TestVerifyDomain:
         await plugin._verify_domain()
 
         assert plugin._domain_verified is True
-        assert "fallback.com" in plugin.base_url
+        assert urlparse(plugin.base_url).hostname == "fallback.com"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -480,7 +481,7 @@ class TestSafeFetchChallenge:
         assert events["test-plugin_challenge"]["challenge"] == "cloudflare_page"
         assert events["test-plugin_challenge"]["host"] == "example.com"
         assert "test-plugin_http_error" not in events
-        assert "example.com" in HttpxPluginBase._cf_blocked_until
+        assert HttpxPluginBase._cf_blocked_until.keys() == {"example.com"}
 
     @respx.mock
     async def test_the_memo_sends_fetch_text_to_the_browser(

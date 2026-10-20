@@ -4,6 +4,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Changed: Tests Check a URL's Host Exactly
+
+- 37 test lines checked a URL by substring (`"host" in url`), which CodeQL's default setup reports as `py/incomplete-url-substring-sanitization`: none was a gap in the code, but a lookalike host (`d0000d.com.evil.test`) passed them, and they buried a real finding. Each is now an exact check: the parsed host (`urlparse(url).hostname == ...`), `request.url.host == ...` in the fake transports' handlers, a prefix ending in the host's slash, and for a domain list, a hoster list or the Cloudflare block map the exact members or keys instead of `in`.
+- In 13 files of `tests/unit/infrastructure/` (ddlspot, boerse, mygully, serienjunkies, warezomen, scnsrc, crawli, sto, megakino_to, the IMDb fallback, the doodstream resolver and both plugin bases); no code changes. A lookalike host now fails the checks it slipped through before (tried in the ddlspot parser, the doodstream pass URL, sto's search results and the IMDb fallback's Wikidata route).
+
 ## v0.5.0 - 2026-10-20
 
 Challenges and captchas: a capture that meets a challenge is an outcome of its own, with a cooldown instead of the circuit breaker, and finishes in the background, so the next request finds its stream; a capture hoster's browser state outlives restarts, the browser starts with the app, Filemoon's captcha pass is kept alive while it is in demand, and a capture that met the hoster's captcha waits for it. Playback: the HLS proxy resumes a segment the CDN cuts or stalls and keeps its read-ahead across a pause. Content: the public broadcasters' mediatheken, an original version with its own language, a sub-series no longer gets its parent series' episodes (aniworld, sto), and a Torznab search over several kinds answers every kind. Operations: readiness notices a lost network and the image's healthcheck asks it, the graceful shutdown is bounded at 5 s, and the post-deploy check shows where an answer's time goes. Also the documentation rebuilt around one index, a document contract and decision records, a test of the dependency rule, a live smoke entry for every plugin, and Dependabot's pull requests against `staging`.

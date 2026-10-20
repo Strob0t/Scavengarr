@@ -369,7 +369,7 @@ class TestSearchSeriesParser:
         parser.feed(_SEARCH_HTML)
 
         for r in parser.results:
-            assert r["url"].startswith("https://serienstream.to")
+            assert r["url"].startswith("https://serienstream.to/")
 
 
 # ---------------------------------------------------------------------------

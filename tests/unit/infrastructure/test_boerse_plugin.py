@@ -10,6 +10,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -260,7 +261,7 @@ class TestSearch:
 
         assert len(results) == 2
         assert results[0].title == "SpongeBob S01"
-        assert "keeplinks.org" in results[0].download_link
+        assert urlparse(results[0].download_link).hostname == "www.keeplinks.org"
         assert len(results[0].download_links) == 2
         # the session (login + Cloudflare clearance) reaches the search context
         context.add_cookies.assert_awaited_with(_SESSION_COOKIES)
@@ -446,7 +447,7 @@ class TestPostLinkParser:
         parser.feed(html)
 
         assert len(parser.links) == 1
-        assert "keeplinks.org" in parser.links[0]["link"]
+        assert urlparse(parser.links[0]["link"]).hostname == "www.keeplinks.org"
 
     def test_look_alike_container_hosts_skipped(self) -> None:
         """A host that only ends like a container's is none (notfilecrypt.cc)."""

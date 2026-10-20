@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -300,7 +301,7 @@ class TestDoodStreamResolver:
         assert result is not None
         # Check that pass_md5 was called with redirected domain
         pass_call_url = client.get.call_args_list[1][0][0]
-        assert "d0000d.com" in pass_call_url
+        assert urlparse(pass_call_url).hostname == "d0000d.com"
 
     @pytest.mark.asyncio
     async def test_validate_captcha_response(self) -> None:
