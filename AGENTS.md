@@ -73,7 +73,7 @@ Rules:
 1. Bump the version in `pyproject.toml` (PATCH +1 unless MINOR/MAJOR is warranted). It is the only place: the app, the Stremio manifest, Torznab caps and the default User-Agent read it through `infrastructure/version.py` (package metadata; `poetry install` refreshes it in the dev venv).
 2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
 3. Commit & push to `staging`.
-4. `gh pr create --base main --head staging --title "..." --body "..."`; `gh pr merge --merge` after `gh pr checks <n> --watch --required`. When the merge waits for the maintainer, push the release commit to `release/vX.Y.Z` and open the PR from there instead, so that later pushes to `staging` stay out of the release; delete the branch after the merge.
+4. `gh pr create --base main --head staging --title "..." --body "..."`; `gh pr merge --merge` after `gh pr checks <n> --watch`. When the merge waits for the maintainer, push the release commit to `release/vX.Y.Z` and open the PR from there instead, so that later pushes to `staging` stay out of the release; delete the branch after the merge.
 5. Tag the release on the merge commit: `git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z`; `image.yml` publishes `vX.Y.Z` and `latest`, `release.yml` the release page.
 6. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
 
