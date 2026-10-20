@@ -268,18 +268,22 @@ class HdSourcePlugin(HttpxPluginBase):
     _max_concurrent = 3
 
     async def _search_page(self, query: str, page: int = 1) -> tuple[list[dict], int]:
-        """Fetch one search results page and return (results, last_page)."""
+        """Fetch one search results page and return (results, last_page).
+
+        A failure of the site on the first page raises (a timeout, the site
+        not answering), so the plugin record counts it; a later page that
+        fails ends the pagination.
+        """
         encoded = quote_plus(query)
+        context = f"search_page_{page}"
         if page > 1:
-            url = f"{self.base_url}/page/{page}/?s={encoded}"
+            html = await self._fetch_text(
+                f"{self.base_url}/page/{page}/?s={encoded}", context=context
+            )
         else:
-            url = f"{self.base_url}/?s={encoded}"
-
-        resp = await self._safe_fetch(url, context=f"search_page_{page}")
-        if resp is None:
+            html = await self._fetch_search_page(f"/?s={encoded}", context=context)
+        if html is None:
             return [], 1
-
-        html = resp.text
 
         parser = await parse_page(_SearchPageParser(), html)
 

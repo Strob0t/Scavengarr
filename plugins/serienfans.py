@@ -219,11 +219,13 @@ class SerienfansPlugin(HttpxPluginBase):
     # ------------------------------------------------------------------
 
     async def _search_api(self, query: str) -> list[dict[str, str | int]]:
-        """Execute JSON search API and return series entries."""
-        body = await self._fetch_text(
-            f"{self.base_url}/api/v2/search",
-            params={"q": query, "ql": "DE"},
-            context="search",
+        """Execute JSON search API and return series entries.
+
+        A failure of the site raises (a timeout, no domain answering), so the
+        plugin record counts it.
+        """
+        body = await self._fetch_search_page(
+            "/api/v2/search", params={"q": query, "ql": "DE"}
         )
         data = self._parse_json_text(body, "search")
         if data is None:

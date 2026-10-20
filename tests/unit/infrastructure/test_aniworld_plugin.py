@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 from structlog.testing import capture_logs
 
 from scavengarr.domain.entities.stremio import EpisodeRef
@@ -517,16 +518,17 @@ class TestSearch:
         assert results == []
         assert not [e for e in logs if e["event"] == "aniworld_invalid_json"]
 
-    async def test_search_ajax_error_returns_empty(self) -> None:
+    async def test_a_refused_search_is_unreachable(self) -> None:
         plugin = _make_plugin()
         plugin._domain_verified = True
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        mock_client.head = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         plugin._client = mock_client
 
-        results = await plugin.search("naruto")
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("naruto")
 
 
 # ---------------------------------------------------------------------------
@@ -921,3 +923,18 @@ class TestLocatesEpisodes:
         assert len(results) == 1
         assert results[0].metadata["site_episode"] == 1
         assert "/anime/stream/one-piece/staffel-1" in paths
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.post("https://aniworld.to/ajax/search").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("naruto")

@@ -198,19 +198,24 @@ class CrawliPlugin(HttpxPluginBase):
     ) -> tuple[list[dict[str, str]], int]:
         """Fetch one search results page.
 
-        Returns ``(results, max_page_number)``.
+        Returns ``(results, max_page_number)``. A failure of the site on the
+        first page raises (a timeout, no domain answering), so the plugin
+        record counts it; a later page that fails ends the pagination.
         """
         encoded_query = quote_plus(query)
         if page_num > 1:
-            url = f"{self.base_url}/{category_path}/{encoded_query}/p-{page_num}/"
+            html = await self._fetch_text(
+                f"{self.base_url}/{category_path}/{encoded_query}/p-{page_num}/",
+                context="search_page",
+            )
         else:
-            url = f"{self.base_url}/{category_path}/{encoded_query}/"
-
-        resp = await self._safe_fetch(url, context="search_page")
-        if resp is None:
+            html = await self._fetch_search_page(
+                f"/{category_path}/{encoded_query}/", context="search_page"
+            )
+        if html is None:
             return [], 1
 
-        parser = await parse_page(_SearchResultParser(), _decode_page(resp.text))
+        parser = await parse_page(_SearchResultParser(), _decode_page(html))
 
         self._log.info(
             "crawli_search_page",

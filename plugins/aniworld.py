@@ -18,6 +18,7 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from urllib.parse import urljoin
 
@@ -191,20 +192,26 @@ class AniworldPlugin(HttpxPluginBase):
     async def _ajax_search(self, query: str) -> list[dict[str, str]]:
         """Search via POST /ajax/search endpoint.
 
-        Returns JSON array of {title, description, link} dicts.
+        Returns JSON array of {title, description, link} dicts. A failure of
+        the site raises (a timeout, no domain answering), so the plugin record
+        counts it.
         """
-        resp = await self._safe_fetch(
-            f"{self.base_url}/ajax/search",
+        body = await self._fetch_search_page(
+            "/ajax/search",
             method="POST",
             context="ajax_search",
             data={"keyword": query},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
-        if resp is None or not resp.text.strip():
+        if body is None or not body.strip():
             # A search without hits is answered with an empty body
             return []
 
-        data = self._safe_parse_json(resp, context="ajax_search")
+        try:
+            data = json.loads(body)
+        except ValueError:
+            self._log.warning("aniworld_invalid_json", context="ajax_search")
+            return []
         if not isinstance(data, list):
             return []
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
 from scavengarr.domain.plugins.base import PluginUnreachableError
 
@@ -586,15 +587,18 @@ class TestKinogerPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self) -> None:
+    async def test_a_search_no_domain_serves_is_unreachable(self) -> None:
+        """The search page and the domain check both get no answer: a
+        failure in the plugin record, not a search without results."""
         plug = _make_plugin()
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+        refused = httpx.ConnectError("connection failed")
+        mock_client.get = AsyncMock(side_effect=refused)
+        mock_client.head = AsyncMock(side_effect=refused)
 
         plug._client = mock_client
-        results = await plug.search("test")
-
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plug.search("test")
 
     @pytest.mark.asyncio
     async def test_detail_page_error_skips_result(self) -> None:
@@ -838,3 +842,18 @@ class TestLooseMatches:
         scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
         assert scraped[0] == "https://site.example/dark"
         assert len(scraped) == 1  # "Dark 0" … are other titles
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://kinoger.com/index.php").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

@@ -6,9 +6,11 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.plugins import data_api
 
@@ -467,3 +469,20 @@ class TestDomainFallback:
         results = await p.search("Iron Man")
         assert p.base_url == "https://megakino.to"
         assert len(results) == 1
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://megakino.org/data/browse/").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = mod.MegakinoToPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

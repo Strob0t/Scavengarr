@@ -48,7 +48,13 @@ class EinschaltenPlugin(HttpxPluginBase):
     _domains = _DOMAINS
 
     async def _api_search(self, query: str) -> list[dict]:
-        """Search the API and return all unique results across pages."""
+        """Search the API and return all unique results across pages.
+
+        A failure of the site on the first page raises (a timeout, the site
+        not answering), so the plugin record counts it; a later page that
+        fails ends the pagination (``_safe_fetch()``'s raising mode; one
+        domain, no other to fail over to).
+        """
         all_results: list[dict] = []
         seen_ids: set[int] = set()
 
@@ -58,6 +64,7 @@ class EinschaltenPlugin(HttpxPluginBase):
                 method="POST",
                 json={"query": query, "page": page},
                 context="search",
+                raising=page == 1,
             )
             if resp is None:
                 break

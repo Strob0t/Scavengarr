@@ -563,14 +563,20 @@ class TestPluginSearch:
         assert url.params["page"] == "1"
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self, plugin, mock_client):
+    async def test_a_refused_search_is_unreachable(self, plugin, mock_client):
         mock_client.get = AsyncMock(
             side_effect=httpx.ConnectError("Connection refused")
         )
 
-        results = await plugin.search("batman")
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
 
-        assert results == []
+    @pytest.mark.asyncio
+    async def test_a_search_that_times_out_is_a_timeout(self, plugin, mock_client):
+        mock_client.get = AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+
+        with pytest.raises(TimeoutError):
+            await plugin.search("batman")
 
     @pytest.mark.asyncio
     async def test_detail_failure_still_returns_result(self, plugin, mock_client):

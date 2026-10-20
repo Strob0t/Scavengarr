@@ -452,6 +452,10 @@ class MegakinoPlugin(HttpxPluginBase):
             POST /index.php?do=search
             Form data: do=search, subaction=search, story={query},
                         search_start={N}, result_from={offset}
+
+        A failure of the site on the first page raises (a timeout, no domain
+        answering), so the plugin record counts it; a later page that fails
+        ends the pagination.
         """
         form_data: dict[str, str] = {
             "do": "search",
@@ -462,16 +466,22 @@ class MegakinoPlugin(HttpxPluginBase):
             "result_from": str(max(1, (page - 1) * _RESULTS_PER_PAGE + 1)),
         }
 
-        resp = await self._safe_fetch(
-            f"{self.base_url}/index.php?do=search",
-            method="POST",
-            context="search",
-            data=form_data,
-        )
-        if resp is None:
+        if page <= 1:
+            html = await self._fetch_search_page(
+                "/index.php?do=search", method="POST", data=form_data
+            )
+        else:
+            resp = await self._safe_fetch(
+                f"{self.base_url}/index.php?do=search",
+                method="POST",
+                context="search",
+                data=form_data,
+            )
+            html = resp.text if resp is not None else None
+        if html is None:
             return []
 
-        parser = await parse_page(_SearchResultParser(self.base_url), resp.text)
+        parser = await parse_page(_SearchResultParser(self.base_url), html)
 
         self._log.info(
             "megakino_search_page",

@@ -5,8 +5,11 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
+import httpx
 import pytest
+import respx
 
 from scavengarr.infrastructure.plugins import data_api
 
@@ -115,3 +118,20 @@ class TestSharedApiBehaviour:
         assert sr is not None
         assert sr.metadata["imdb_id"] == "tt0371746"
         assert sr.metadata["movie4k_id"] == "abc"
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://movie4k.sx/data/browse/").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = mod.Movie4kPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

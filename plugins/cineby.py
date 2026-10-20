@@ -164,6 +164,7 @@ class CinebyPlugin(HttpxPluginBase):
             resp = await self._safe_fetch(
                 f"{endpoint}?query={quote_plus(query)}&language=en&page={page_num}",
                 context=f"cineby_search_page_{page_num}",
+                raising=page_num == 1,
             )
             if resp is None:
                 break

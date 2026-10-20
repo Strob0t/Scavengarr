@@ -938,18 +938,21 @@ class TestSearch:
         mock_client.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_search_network_failure(self) -> None:
+    async def test_a_search_no_domain_serves_is_unreachable(self) -> None:
+        """The search page and the domain check both get no answer: a
+        failure in the plugin record, not a search without results."""
         plugin = _make_plugin()
         plugin._domain_verified = True
         plugin.base_url = "https://s.to"
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        refused = httpx.ConnectError("refused")
+        mock_client.get = AsyncMock(side_effect=refused)
+        mock_client.head = AsyncMock(side_effect=refused)
         plugin._client = mock_client
 
-        results = await plugin.search("test")
-
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("test")
 
 
 # ---------------------------------------------------------------------------
@@ -1393,3 +1396,18 @@ class TestLocatesEpisodes:
 
         assert len([r for r in results if r.category == 5070]) == 1
         assert not any(path.endswith(("/staffel-1", "/staffel-2")) for path in paths)
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://serienstream.to/suche").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

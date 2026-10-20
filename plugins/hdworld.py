@@ -154,10 +154,14 @@ class HdWorldPlugin(HttpxPluginBase):
         if wp_categories:
             params["categories"] = wp_categories
 
+        # The first page raises on a failure of the site, so the plugin
+        # record counts it; the page count is a response header, so it takes
+        # _safe_fetch()'s raising mode (one domain: no other to fail over to)
         resp = await self._safe_fetch(
             f"{self.base_url}/wp-json/wp/v2/posts",
             context="posts",
             params=params,
+            raising=page == 1,
         )
         if resp is None:
             return [], 0

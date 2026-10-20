@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Every httpx Plugin's Search Page Raises on a Failure of the Site
+
+- The 36 httpx plugins fetch the first page of their search in the raising mode, so the plugin record counts a slow or unreachable site as a timeout or an unreachable search, not as a search without results; before, only jjs and kinox did. Later result pages, detail pages and listings without a query stay lenient.
+- `_fetch_search_page()` takes a POST too (`method="POST"` with `data=` or `json_body=`, and `headers=`), with the GET's outcomes and its one failover to the domain the domain check finds: aniworld, megakino, nima4k and the XenForo forums' search post through it, and the XenForo login page raises like a search page.
+- `_safe_fetch(raising=True)` is the raising mode for a response: a read timeout raises `TimeoutError`, a transport error, a connect timeout or a 5xx without a challenge `PluginUnreachableError`, a challenge or a 4xx answers `None`. Sites with one domain whose answer the plugin reads as a response (cine, cineby, einschalten, haschcon, hdworld, movieblog) use it on their first page; its exceptions go through the same `_request_failed()` as `_fetch_text()`'s.
+- Each changed plugin's tests have a search page that times out (`TimeoutError`), and the tests that expected `[]` after a refused or failing search expect `PluginUnreachableError`; `docs/current/plugins.md`, the new-plugin guide and the glossary name the POST and the response helper.
+
 ### Removed: The Docs Archive; History Is Read from Git
 
 - `docs/archive/` is gone (the 25 closed plans, the 3 refactor records, the old backlog and its index). `docs/README.md` has a History section instead: `git log --oneline -- <path>` for a document's commits, `git log --diff-filter=D --name-only --oneline -- docs` for the deleted ones, and `git show <commit>^:<path>` for a deleted document's text.

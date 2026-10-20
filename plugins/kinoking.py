@@ -230,11 +230,16 @@ class KinokingPlugin(HttpxPluginBase):
     _timeout = 30.0
 
     async def _search_page(self, query: str, page: int) -> list[dict[str, str]]:
-        html = await self._fetch_text(
-            f"{self.base_url}/index.php",
-            params={"search": query, "page": str(page)},
-            context="search",
-        )
+        """One search page's cards. A failure of the site on the first page
+        raises (a timeout, the site not answering), so the plugin record
+        counts it; a later page that fails ends the pagination."""
+        params = {"search": query, "page": str(page)}
+        if page > 1:
+            html = await self._fetch_text(
+                f"{self.base_url}/index.php", params=params, context="search"
+            )
+        else:
+            html = await self._fetch_search_page("/index.php", params=params)
         if html is None:
             return []
         parser = await parse_page(_SearchCardParser(), html)

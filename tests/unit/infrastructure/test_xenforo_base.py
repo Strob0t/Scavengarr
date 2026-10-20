@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import respx
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
 from scavengarr.infrastructure.plugins import xenforo
 from scavengarr.infrastructure.plugins.xenforo import XenForoPluginBase
 
@@ -379,13 +381,15 @@ class TestLogin:
             await plugin._login()
 
     async def test_login_page_unreachable(self) -> None:
+        """The login page is the search's first request: a forum that does
+        not answer is unreachable, not a login without a token."""
         site = _Site([""])
         site.client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
         plugin = _plugin(site, logged_in=False)
 
         with (
             patch.dict(os.environ, _CREDENTIALS),
-            pytest.raises(RuntimeError, match="_xfToken"),
+            pytest.raises(PluginUnreachableError),
         ):
             await plugin._login()
 
@@ -550,3 +554,44 @@ class TestCleanup:
         assert plugin._client is None
         assert plugin._logged_in is False
         assert plugin._csrf_token == ""
+
+
+class TestSearchFailure:
+    """A failure of the forum stays one in the plugin record: the login page
+    and the search POST are the search's first requests, in the raising mode
+    of ``_fetch_search_page()``."""
+
+    @respx.mock
+    async def test_a_login_page_that_times_out_is_a_timeout(self) -> None:
+        respx.get("https://forum.example/login/").mock(
+            side_effect=httpx.ReadTimeout("slow")
+        )
+        plugin = _Forum()
+        plugin._client = httpx.AsyncClient()
+
+        with patch.dict(os.environ, _CREDENTIALS), pytest.raises(TimeoutError):
+            await plugin.search("test")
+
+    @respx.mock
+    async def test_a_search_that_times_out_is_a_timeout(self) -> None:
+        respx.post("https://forum.example/search/search").mock(
+            side_effect=httpx.ReadTimeout("slow")
+        )
+        plugin = _Forum()
+        plugin._client = httpx.AsyncClient()
+        plugin._logged_in = True
+        plugin._csrf_token = "old,token"
+
+        with pytest.raises(TimeoutError):
+            await plugin.search("test")
+
+    @respx.mock
+    async def test_a_search_answering_503_is_unreachable(self) -> None:
+        respx.post("https://forum.example/search/search").respond(503)
+        plugin = _Forum()
+        plugin._client = httpx.AsyncClient()
+        plugin._logged_in = True
+        plugin._csrf_token = "old,token"
+
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("test")

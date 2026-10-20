@@ -325,14 +325,20 @@ class StoPlugin(HttpxPluginBase):
         query: str,
         page_num: int = 1,
     ) -> list[dict[str, str]]:
-        """Fetch one search page and return parsed series entries."""
+        """Fetch one search page and return parsed series entries.
+
+        A failure of the site on the first page raises (a timeout, no domain
+        answering), so the plugin record counts it; a later page that fails
+        ends the pagination.
+        """
         params = {"term": query}
         if page_num > 1:
             params["page"] = str(page_num)
-
-        html = await self._fetch_text(
-            f"{self.base_url}/suche", params=params, context="search"
-        )
+            html = await self._fetch_text(
+                f"{self.base_url}/suche", params=params, context="search"
+            )
+        else:
+            html = await self._fetch_search_page("/suche", params=params)
         if html is None:
             return []
 

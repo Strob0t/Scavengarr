@@ -12,6 +12,8 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.domain.plugins.base import PluginUnreachableError
+
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "hdfilme.py"
 
 
@@ -497,11 +499,13 @@ class TestHdfilmePlugin:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_search_handles_http_error(self) -> None:
+    async def test_a_refused_search_is_unreachable(self) -> None:
+        """A site that does not answer is a failure in the plugin record."""
         plug = _make_plugin()
         respx.get(url__startswith=_BASE).mock(side_effect=httpx.ConnectError("down"))
 
-        assert await plug.search("test") == []
+        with pytest.raises(PluginUnreachableError):
+            await plug.search("test")
         await plug.cleanup()
 
     @respx.mock
@@ -667,3 +671,16 @@ class TestLooseMatches:
         scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
         assert scraped[0] == "https://site.example/dark"
         assert len(scraped) == 1  # "Dark 0" … are other titles
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://hdfilme.cafe/").mock(side_effect=httpx.ReadTimeout("slow"))
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

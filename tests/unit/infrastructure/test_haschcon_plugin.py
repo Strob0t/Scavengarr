@@ -6,10 +6,14 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "haschcon.py"
 
@@ -451,14 +455,13 @@ class TestPluginSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self, plugin, mock_client):
+    async def test_a_refused_search_is_unreachable(self, plugin, mock_client):
         mock_client.get = AsyncMock(
             side_effect=httpx.ConnectError("Connection refused"),
         )
 
-        results = await plugin.search("test")
-
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("test")
 
     @pytest.mark.asyncio
     async def test_player_failure_uses_source_url(self, plugin, mock_client):
@@ -550,3 +553,20 @@ class TestCleanup:
         p = haschcon_mod.HaschconPlugin()
 
         await p.cleanup()  # Should not raise
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    haschcon_mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://haschcon.com/wp-json/wp/v2/aiovg_videos").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = haschcon_mod.HaschconPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("fliege")

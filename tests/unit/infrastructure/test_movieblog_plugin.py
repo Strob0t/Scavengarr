@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "movieblog.py"
 
@@ -872,3 +873,16 @@ class TestMovieblogPlugin:
         titles = {r.title for r in results}
         assert "Result A" in titles
         assert "Result B" in titles
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://movieblog.to/").mock(side_effect=httpx.ReadTimeout("slow"))
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

@@ -6,10 +6,14 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "hdworld.py"
 
@@ -425,13 +429,13 @@ class TestHdWorldSearch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self, hdworld_mod: object) -> None:
+    async def test_a_refused_search_is_unreachable(self, hdworld_mod: object) -> None:
         plugin = hdworld_mod.HdWorldPlugin()
         plugin._client = AsyncMock(spec=httpx.AsyncClient)
         plugin._client.get = AsyncMock(side_effect=httpx.ConnectError("failed"))
 
-        results = await plugin.search("test")
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("test")
 
     @pytest.mark.asyncio
     async def test_category_filtering_movies(self, hdworld_mod: object) -> None:
@@ -581,3 +585,20 @@ class TestHdWorldCleanup:
     async def test_cleanup_no_client(self, hdworld_mod: object) -> None:
         plugin = hdworld_mod.HdWorldPlugin()
         await plugin.cleanup()  # should not raise
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    hdworld_mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://hd-world.cc/wp-json/wp/v2/posts").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = hdworld_mod.HdWorldPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

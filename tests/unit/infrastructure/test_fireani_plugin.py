@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import respx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "fireani.py"
 
@@ -608,8 +611,8 @@ class TestSearchIntegration:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_api_error(self) -> None:
-        """Search API returning error status is handled gracefully."""
+    async def test_a_search_page_answering_500_is_unreachable(self) -> None:
+        """Search API returning error status is a failure in the plugin record."""
         plug = _make_plugin()
         mock_client = _route_client(
             search_resp={"error": "Internal Server Error", "status": 500},
@@ -617,12 +620,12 @@ class TestSearchIntegration:
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
-        results = await plug.search("Naruto")
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plug.search("Naruto")
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self) -> None:
-        """HTTP error during search is handled gracefully."""
+    async def test_a_refused_search_page_is_unreachable(self) -> None:
+        """HTTP error during search is a failure in the plugin record."""
         plug = _make_plugin()
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
@@ -631,8 +634,8 @@ class TestSearchIntegration:
         mock_client.aclose = AsyncMock()
         plug._client = mock_client
 
-        results = await plug.search("Naruto")
-        assert results == []
+        with pytest.raises(PluginUnreachableError):
+            await plug.search("Naruto")
 
     @pytest.mark.asyncio
     async def test_search_proxy_only_episodes_skipped(self) -> None:
@@ -1119,3 +1122,16 @@ class TestDescriptionFormatting:
         assert result is not None
         assert "(2024)" in result.description
         assert "2024 - 2024" not in result.description
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://fireani.me/search").mock(side_effect=httpx.ReadTimeout("slow"))
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("Naruto")

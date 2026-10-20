@@ -6,11 +6,14 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 import respx
+
+from scavengarr.domain.plugins.base import PluginUnreachableError
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "moflix.py"
 
@@ -478,11 +481,12 @@ class TestPluginSearch:
         assert await plugin.search("xyznonexistent") == []
 
     @respx.mock
-    async def test_search_api_error(self, plugin):
+    async def test_a_search_api_answering_500_is_unreachable(self, plugin):
         respx.get(f"{_BASE}/").respond(200, headers=_SESSION_COOKIES)
         respx.get(url__startswith=f"{_BASE}/api/v1/search/").respond(500)
 
-        assert await plugin.search("batman") == []
+        with pytest.raises(PluginUnreachableError):
+            await plugin.search("batman")
 
     @respx.mock
     async def test_detail_failure_gives_no_result(self, plugin):
@@ -610,3 +614,20 @@ class TestDomainVerification:
 class TestCleanup:
     async def test_cleanup_without_client(self, moflix_mod):
         await moflix_mod.MoflixPlugin().cleanup()  # Should not raise
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout(
+    moflix_mod: ModuleType,
+) -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get(url__startswith="https://moflix-stream.xyz/api/v1/search/").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = moflix_mod.MoflixPlugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

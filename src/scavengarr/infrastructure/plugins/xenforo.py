@@ -238,10 +238,10 @@ class XenForoPluginBase(HttpxPluginBase):
             return
         username, password = self._credentials()
 
-        page = await self._safe_fetch(f"{self.base_url}/login/", context="login")
-        token_parser = await parse_page(
-            _LoginTokenParser(), page.text if page is not None else ""
-        )
+        # The search's first request: a failure of the site raises, so the
+        # plugin record counts it instead of a login that found no token
+        page = await self._fetch_search_page("/login/", context="login")
+        token_parser = await parse_page(_LoginTokenParser(), page or "")
         if not token_parser.token:
             raise RuntimeError("Could not extract _xfToken from login page")
 
@@ -298,17 +298,13 @@ class XenForoPluginBase(HttpxPluginBase):
         if nodes:
             data["c[nodes][]"] = [str(node) for node in nodes]
 
-        resp = await self._safe_fetch(
-            f"{self.base_url}/search/search",
-            method="POST",
-            context="search",
-            data=data,
-        )
+        # A failure of the site raises, so the plugin record counts it
+        html = await self._fetch_search_page("/search/search", method="POST", data=data)
         # Expired CSRF token: XenForo rejects the POST (400/403);
         # expired session: it answers as for a guest
-        if resp is None or _LOGGED_OUT_MARKER in resp.text:
+        if html is None or _LOGGED_OUT_MARKER in html:
             raise _SessionExpiredError
-        rows, next_url = await self._parse_results(resp.text)
+        rows, next_url = await self._parse_results(html)
         self._log.info(f"{self.name}_search_page", query=query, results=len(rows))
         return rows, next_url
 

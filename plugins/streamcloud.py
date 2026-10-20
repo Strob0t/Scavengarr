@@ -264,9 +264,9 @@ class StreamcloudPlugin(HttpxPluginBase):
                 "subaction": "search",
                 "story": query,
             }
-            html = await self._fetch_text(
-                self.base_url, params=params, context="search"
-            )
+            # The first page raises on a failure of the site, so the plugin
+            # record counts it; a later page that fails ends the pagination
+            html = await self._fetch_search_page("/", params=params)
         else:
             form_data = {
                 "do": "search",

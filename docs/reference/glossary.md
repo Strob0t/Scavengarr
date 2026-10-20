@@ -2,7 +2,7 @@
 
 > **Purpose:** The terms of this codebase in one sentence each, with the document that holds them.
 > **Status:** reference
-> **As of:** 9ab93345
+> **As of:** 7a6eb282
 
 One line per term: what it means in Scavengarr, and where its full description lives.
 The documents use these terms in this sense; the fixed terms of the [documentation rules](../README.md#documentation-rules) are among them.
@@ -15,7 +15,7 @@ The documents use these terms in this sense; the fixed terms of the [documentati
 | Category | The Torznab category a plugin labels a result with from the site's own data, while `served_category()` and `filter_by_category()` answer a request with the categories the site tells apart. | [Plugins](../current/plugins.md#categories-and-relevance) |
 | Mirror group | Sites that front one database share a `mirror_group`: a Stremio request asks one member, and Torznab keeps each member as an indexer of its own. | [Plugin domains](../current/plugin-domains.md#mirror-groups), [decision 0013](../target/decisions/0013-mirror-groups.md) |
 | Domain check | `_verify_domain()`, the first step of a plugin's search, picks the one of the plugin's `_domains` that serves the site. | [Plugin domains](../current/plugin-domains.md#the-domain-check) |
-| Raising mode | `_fetch_text(raising=True)`, through `_fetch_search_page()`: a failure of the site on the first search page raises `TimeoutError` or `PluginUnreachableError` instead of answering `None`, so the plugin history does not count it as a search without results. | [Plugins](../current/plugins.md#failures-of-the-site) |
+| Raising mode | `_fetch_text(raising=True)` and `_safe_fetch(raising=True)`, through `_fetch_search_page()` (a GET or a POST): a failure of the site on the first search page raises `TimeoutError` or `PluginUnreachableError` instead of answering `None`, so the plugin history does not count it as a search without results. | [Plugins](../current/plugins.md#failures-of-the-site) |
 | Plugin score | A stream plugin's weighted health and search quality from background probes (`final_score`), by which a Stremio request picks its plugins. | [Plugins](../current/plugins.md#scores-and-probes) |
 | Plugin history | `PluginHistory`, the long-term record of each plugin's searches, results, timeouts, challenges and site checks per UTC day, which is the evidence for keeping or retiring a plugin. | [Observability](../current/observability.md#the-plugin-record) |
 | Episode reference | The `EpisodeRef` a Stremio series request hands to the plugins that locate episodes: the request's season and episode, the episode's English title and air date, and an absolute number with its source. | [Stremio addon](../current/stremio-addon.md#the-episode-reference) |

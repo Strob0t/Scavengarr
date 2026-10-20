@@ -477,6 +477,17 @@ class TestPluginSearch:
         assert results == []
 
     @respx.mock
+    async def test_a_search_page_that_times_out_is_a_timeout(self) -> None:
+        """A slow site is a timeout in the plugin record, not a search
+        without results."""
+        plugin = _make_plugin()
+        respx.get("https://byte.to/").mock(side_effect=httpx.ReadTimeout("slow"))
+
+        with pytest.raises(TimeoutError):
+            await plugin.search("batman")
+        await plugin.cleanup()
+
+    @respx.mock
     async def test_search_with_category(self) -> None:
         plugin = _make_plugin()
         search = _mock_site("<html><body></body></html>")

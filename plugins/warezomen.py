@@ -152,17 +152,20 @@ class WarezomenPlugin(HttpxPluginBase):
         """Fetch one search results page.
 
         Returns ``(results, next_page_url)``.  *next_page_url* is empty
-        when there is no further page.
+        when there is no further page. A failure of the site on the first page
+        raises (a timeout, no domain answering), so the plugin record counts
+        it; a later page that fails ends the pagination.
         """
         if page_url is None:
-            slug = _slugify(query)
-            page_url = f"{self.base_url}/download/{slug}/"
-
-        resp = await self._safe_fetch(page_url, context="search_page")
-        if resp is None:
+            html = await self._fetch_search_page(
+                f"/download/{_slugify(query)}/", context="search_page"
+            )
+        else:
+            html = await self._fetch_text(page_url, context="search_page")
+        if html is None:
             return [], ""
 
-        parser = await parse_page(_SearchResultParser(), resp.text)
+        parser = await parse_page(_SearchResultParser(), html)
 
         next_url = ""
         if parser.next_page_url:

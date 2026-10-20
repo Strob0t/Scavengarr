@@ -321,10 +321,9 @@ class FilmoPlugin(HttpxPluginBase):
             return []
 
         await self._verify_domain()
-        html = await self._fetch_text(
-            f"{self.base_url}/search?q={quote_plus(query)}",
-            context="search",
-            headers=_HEADERS,
+        # A failure of the site raises, so the plugin record counts it
+        html = await self._fetch_search_page(
+            f"/search?q={quote_plus(query)}", headers=_HEADERS
         )
         if html is None:
             return []

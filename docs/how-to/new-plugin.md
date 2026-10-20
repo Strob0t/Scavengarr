@@ -2,7 +2,7 @@
 
 > **Purpose:** Writing a new plugin, from the site analysis to the regenerated plugin list.
 > **Status:** how-to
-> **As of:** e238c723
+> **As of:** 7a6eb282
 
 ## Goal
 
@@ -26,7 +26,7 @@ Prefer targeted `browser_evaluate` or `browser_find` calls over full snapshots.
 
 ### 2. Choose the base class
 
-- `HttpxPluginBase` for server-rendered HTML and JSON APIs, a Cloudflare challenge included: fetch such a site's pages with `_fetch_text()`, which passes the challenge in the browser and goes on with its session, and the first search page with `_fetch_search_page()`, which raises on a failure of the site.
+- `HttpxPluginBase` for server-rendered HTML and JSON APIs, a Cloudflare challenge included: fetch such a site's pages with `_fetch_text()`, which passes the challenge in the browser and goes on with its session, and the first search page with `_fetch_search_page()` (a GET, or a form with `method="POST"` and `data=`), which raises on a failure of the site.
 - `PlaywrightPluginBase` for sites that need JavaScript, DDoS-Guard or a login in the browser.
 - A shared base where the site runs a backend that already has one (`DataApiPluginBase`, `XenForoPluginBase`): the plugin then sets only `name`, `provides`, `_domains` and what the base asks for.
 

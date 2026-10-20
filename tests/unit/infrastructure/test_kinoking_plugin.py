@@ -492,3 +492,18 @@ class TestCleanup:
 
         mock_client.aclose.assert_awaited_once()
         assert plug._client is None
+
+
+@respx.mock
+async def test_a_search_page_that_times_out_is_a_timeout() -> None:
+    """A slow site is a timeout in the plugin record, not a search without
+    results."""
+    respx.get("https://kinoking.cc/index.php").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    plugin = _make_plugin()
+    plugin._client = httpx.AsyncClient()
+    plugin._domain_verified = True
+
+    with pytest.raises(TimeoutError):
+        await plugin.search("batman")

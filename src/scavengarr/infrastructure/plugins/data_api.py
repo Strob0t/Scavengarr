@@ -195,33 +195,36 @@ class DataApiPluginBase(HttpxPluginBase):
     ) -> tuple[list[dict], int]:
         """Fetch one page of browse results.
 
-        Returns (movies, total_items).
+        Returns (movies, total_items). A failure of the site on the first page
+        raises (a timeout, no domain answering), so the plugin record counts
+        it; a later page that fails ends the pagination.
         """
-        resp = await self._safe_fetch(
-            f"{self.base_url}/data/browse/",
-            context="browse",
-            params={
-                "lang": LANG_DE,
-                "keyword": keyword,
-                "year": "",
-                "networks": "",
-                "rating": "",
-                "votes": "",
-                "genre": "",
-                "country": "",
-                "cast": "",
-                "directors": "",
-                "type": type_filter,
-                "order_by": "",
-                "page": page,
-                "limit": PAGE_SIZE,
-            },
-        )
-        if resp is None:
-            return [], 0
-
-        data = self._safe_parse_json(resp, context="browse")
-        if not isinstance(data, dict):
+        params = {
+            "lang": LANG_DE,
+            "keyword": keyword,
+            "year": "",
+            "networks": "",
+            "rating": "",
+            "votes": "",
+            "genre": "",
+            "country": "",
+            "cast": "",
+            "directors": "",
+            "type": type_filter,
+            "order_by": "",
+            "page": str(page),
+            "limit": str(PAGE_SIZE),
+        }
+        if page == 1:
+            body = await self._fetch_search_page(
+                "/data/browse/", params=params, context="browse"
+            )
+        else:
+            body = await self._fetch_text(
+                f"{self.base_url}/data/browse/", params=params, context="browse"
+            )
+        data = self._parse_json_text(body, context="browse")
+        if data is None:
             return [], 0
 
         movies = data.get("movies", [])

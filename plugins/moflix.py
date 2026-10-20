@@ -110,11 +110,18 @@ class MoflixPlugin(HttpxPluginBase):
         return self._parse_json_text(body, context="api")
 
     async def _api_search(self, query: str) -> list[dict]:
-        """Search the API and return raw result dicts."""
+        """Search the API and return raw result dicts.
+
+        A failure of the site raises (a timeout, no domain answering), so the
+        plugin record counts it.
+        """
         encoded = quote(query, safe="")
         path = f"/api/v1/search/{encoded}?query={encoded}&limit={_SEARCH_LIMIT}"
 
-        data = await self._api_fetch(path)
+        body = await self._fetch_search_page(
+            path, context="api", headers=self._api_headers()
+        )
+        data = self._parse_json_text(body, context="api")
         if not data:
             return []
 

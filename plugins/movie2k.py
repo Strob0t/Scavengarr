@@ -397,10 +397,12 @@ class Movie2kPlugin(HttpxPluginBase):
         self,
         query: str,
     ) -> list[dict[str, str]]:
-        """Fetch search results page (no pagination on search)."""
-        html = await self._fetch_text(
-            f"{self.base_url}/search", params={"q": query}, context="search"
-        )
+        """Fetch search results page (no pagination on search).
+
+        A failure of the site raises (a timeout, no domain answering), so the
+        plugin record counts it.
+        """
+        html = await self._fetch_search_page("/search", params={"q": query})
         if html is None:
             return []
 
