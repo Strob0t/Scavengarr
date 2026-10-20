@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr runs one headful Chromium for the work plain HTTP cannot do: the Playwright plugins, the plugin pages behind Cloudflare, the hoster captures and the link-outs.
 > **Status:** current
-> **As of:** 9d2fc4c7
+> **As of:** 8fd107a8
 
 ## Purpose
 
@@ -52,7 +52,7 @@ Some players create the stream URL only while they run, behind a challenge of th
 1. It opens the embed page and solves a Cloudflare challenge when one shows.
 2. It waits 3 s for a player that starts itself (`_MEDIA_AUTOPLAY_WAIT_S`), or the resolver's shorter wait for a player that takes its first click at once (`autoplay_wait`).
 3. It clicks the player up to 3 times, 5 s apart.
-4. It returns the first request for a `.m3u8`, `.mpd`, `.mp4` or `master.txt` URL, or the video element's request for a CDN URL without an extension.
+4. It returns the first request for a `.m3u8`, `.mpd`, `.mp4` or `master.txt` URL, or the video element's request for a CDN URL without an extension. A stream request that arrives with the end of a wait is kept, even when the event loop ran the wait's timeout late (`_stream_within()`).
 
 A page that requested the hoster's own captcha (`challenge_requests`, Filemoon's `captcha` and `captcha/verify`) gets 16 s after the captcha's latest request before its next click and before the capture ends (`_CAPTCHA_WAIT_S`):
 

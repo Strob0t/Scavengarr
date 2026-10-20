@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Capture Keeps a Stream That Arrives with the End of Its Wait
+
+- `_stream_within()` asked the clock before it looked at the stream: when a late event loop ran the wait's timeout and the stream's request in one batch, the capture saw its end passed and gave `None` with the stream in hand, so it clicked again or, after its last click, missed the stream. It now returns the stream it holds once its wait ends.
+- A deterministic test covers a stream already in hand at the end of the wait, and the captcha test's verify comes later (0.6 s, the captcha's wait 0.8 s, the stream at 1.0 s), so a stall of the loop up to 0.6 s still passes; its tighter timings failed once on a loaded CI runner.
+
 ### Fixed: Every httpx Plugin's Search Page Raises on a Failure of the Site
 
 - The 36 httpx plugins fetch the first page of their search in the raising mode, so the plugin record counts a slow or unreachable site as a timeout or an unreachable search, not as a search without results; before, only jjs and kinox did. Later result pages, detail pages and listings without a query stay lenient.

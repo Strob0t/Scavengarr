@@ -1400,14 +1400,15 @@ class TestStealthPoolCaptureWaitsForItsCaptcha:
     async def test_each_captcha_request_moves_the_end(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The verify comes after the proof of work: the stream 0.3 s after
-        it, past the captcha's own wait of 0.4 s."""
+        """The verify comes after the proof of work: the stream 0.4 s after
+        it, past the captcha's own wait of 0.8 s and before the verify's
+        end; a stall of the loop up to the verify's 0.6 s still passes."""
         from scavengarr.infrastructure.browser import stealth_pool as mod
 
-        monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 0.4)
+        monkeypatch.setattr(mod, "_CAPTCHA_WAIT_S", 0.8)
         page = self._page(
             first_click=[self._CAPTCHA],
-            later=((0.3, self._VERIFY), (0.6, self._STREAM)),
+            later=((0.6, self._VERIFY), (1.0, self._STREAM)),
         )
 
         media = await self._capture(page)
@@ -1415,6 +1416,33 @@ class TestStealthPoolCaptureWaitsForItsCaptcha:
         assert media is not None
         assert media.url == self._STREAM
         page.mouse.click.assert_awaited_once()
+
+    async def test_a_stream_that_arrives_with_the_end_of_the_wait_is_kept(
+        self,
+    ) -> None:
+        """A late loop runs the wait's timeout and the stream's request in
+        one batch: the end has passed, the stream is in hand."""
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        found: asyncio.Future[mod.CapturedMedia] = (
+            asyncio.get_running_loop().create_future()
+        )
+        found.set_result(mod.CapturedMedia(self._STREAM, None))
+
+        media = await mod._stream_within(found, 0, mod._CaptchaClock())
+
+        assert media is not None
+        assert media.url == self._STREAM
+
+    async def test_a_cancelled_stream_ends_the_wait_without_one(self) -> None:
+        from scavengarr.infrastructure.browser import stealth_pool as mod
+
+        found: asyncio.Future[mod.CapturedMedia] = (
+            asyncio.get_running_loop().create_future()
+        )
+        found.cancel()
+
+        assert await mod._stream_within(found, 0, mod._CaptchaClock()) is None
 
     async def test_a_captcha_gone_quiet_ends_the_capture_after_its_wait(
         self, monkeypatch: pytest.MonkeyPatch

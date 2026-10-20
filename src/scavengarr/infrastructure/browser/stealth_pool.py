@@ -404,13 +404,19 @@ async def _stream_within(
     found: asyncio.Future[CapturedMedia], wait_s: float, captcha: _CaptchaClock
 ) -> CapturedMedia | None:
     """The stream *found* brings within *wait_s*, or later while the
-    page's captcha runs (``_CaptchaClock.end()``); ``None`` without one."""
+    page's captcha runs (``_CaptchaClock.end()``); ``None`` without one.
+
+    A stream *found* holds once the wait ends is kept, whatever the clock
+    says: a late loop runs the wait's timeout and the stream's request in
+    one batch."""
     end = time.monotonic() + wait_s
     while (left := max(end, captcha.end()) - time.monotonic()) > 0:
         try:
             return await asyncio.wait_for(asyncio.shield(found), left)
         except TimeoutError:
             pass  # a captcha request meanwhile moves the end
+    if found.done() and not found.cancelled():
+        return found.result()
     return None
 
 
