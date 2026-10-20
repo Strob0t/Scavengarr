@@ -278,6 +278,20 @@ def test_the_dependabot_merge_needs_the_tested_head(tmp_path: Path) -> None:
     assert not [call for call in calls if call.startswith(("api", "pr merge"))]
 
 
+def test_a_pushed_tag_gets_its_release_page() -> None:
+    """The page's notes come from the tag's CHANGELOG section, and the run
+    may write the release, nothing else."""
+    workflow = _workflow("release.yml")
+    (job,) = workflow["jobs"].values()
+    script = "\n".join(step.get("run", "") for step in job["steps"])
+
+    assert workflow[True] == {"push": {"tags": ["v*"]}}
+    assert workflow["permissions"] == {"contents": "write"}
+    assert 'scripts/release_notes.py "$GITHUB_REF_NAME"' in script
+    assert 'gh release create "$GITHUB_REF_NAME"' in script
+    assert "--verify-tag" in script
+
+
 def test_shipped_config_has_no_container_only_paths() -> None:
     """`poetry run start --config data/config.yaml` must work outside Docker.
 

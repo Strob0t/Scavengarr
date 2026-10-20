@@ -74,7 +74,7 @@ Rules:
 2. Update `CHANGELOG.md` (newest entry on top with version, date, changes; current bugs under `KNOWN_ISSUES`).
 3. Commit & push to `staging`.
 4. `gh pr create --base main --head staging --title "..." --body "..."`; `gh pr merge --merge` after `gh pr checks <n> --watch --required`. When the merge waits for the maintainer, push the release commit to `release/vX.Y.Z` and open the PR from there instead, so that later pushes to `staging` stay out of the release; delete the branch after the merge.
-5. Tag the release on the merge commit: `git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z`; the image workflow publishes `vX.Y.Z` and `latest`.
+5. Tag the release on the merge commit: `git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z`; `image.yml` publishes `vX.Y.Z` and `latest`, `release.yml` the release page.
 6. Sync back: `git fetch origin && git merge origin/main && git push origin staging`.
 
 ---

@@ -158,7 +158,7 @@ curl http://localhost:7979/api/v1/healthz
 
 The answer names the version, the commit and the build time.
 
-Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). [Deploy Scavengarr](docs/how-to/deploy.md) has the details.
+Image tags: `latest` (the newest release), `vX.Y.Z` (one release), `staging` (every push to the development branch, before its CI result) and `sha-<commit>` (one build). Every release has its page under the repository's Releases, with the changes from its changelog section. [Deploy Scavengarr](docs/how-to/deploy.md) has the details.
 
 Scavengarr reads `data/config.yaml` (mounted into the container; when the file is missing, the container writes the default there on its first start, if the directory is writable for its user, uid 1000). Edit the config and run `docker compose restart` to apply changes. In Docker, the log level and format, headless mode and the cache and plugin directories come from environment variables (`Dockerfile.prod`, `docker-compose.yml`), which beat `config.yaml`: change those in `docker-compose.yml`.
 

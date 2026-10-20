@@ -2,7 +2,7 @@
 
 > **Purpose:** Every dependency with its purpose and the reason for it, the tools beside the Python packages and the alternatives not used.
 > **Status:** reference
-> **As of:** d3fefa79
+> **As of:** 501da5f2
 
 Every dependency in `pyproject.toml` with what it does here and why it is the one, the tools beside the Python packages, and the alternatives deliberately not used.
 The versions live in `pyproject.toml` and `poetry.lock` only.
@@ -96,6 +96,7 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 | curl | The image's healthcheck. | `Dockerfile.prod` |
 | Redis, Byparr, Tempo | The optional services of the Compose profiles `redis`, `solver` and `tracing`. | `docker-compose.yml` |
 | Node | The dev container's tools: playwright-mcp, the OpenSpec CLI and the skills. | `.devcontainer/devcontainer.json`, `.devcontainer/setup.sh` |
+| GitHub CLI (`gh`), jq | The Dependabot merge and the release page call the GitHub API with them. | `.github/workflows/dependabot-merge.yml`, `.github/workflows/release.yml` (both tools come with GitHub's runners) |
 
 ## Not used
 

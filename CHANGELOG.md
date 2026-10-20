@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: A Release Page per Tag
+
+- `.github/workflows/release.yml` runs on every pushed `v*` tag with write access to contents only: it prints the notes with `scripts/release_notes.py <tag>` and creates the release with `gh release create --notes-file --verify-tag`, beside the image that `image.yml` publishes for the tag.
+- `scripts/release_notes.py` (standard library only) prints the summary paragraph of the tag's `CHANGELOG.md` section, its entries' titles grouped by kind (Added, Changed, Fixed, Removed, then any other kind as written; a heading without a kind under Other), the image `ghcr.io/strob0t/scavengarr:<tag>` and a link to the full section at the tag, and exits non-zero when the tag has no section, so no page goes out without notes. For v0.5.0 it lists the 87 entries under the four kinds.
+- `tests/unit/infrastructure/test_release_notes_script.py` covers a sample changelog, a missing version and the real file's v0.5.0; `test_repository_files.py` checks the workflow's trigger, permissions and commands. AGENTS.md (§1, the release's step 5), `docs/how-to/deploy.md` (the page beside the image tags; `staging` takes a merged Dependabot update too), `docs/reference/tech-stack.md` (`gh` and jq), `openspec/project.md` and the README say so.
+
 ### Changed: pre-commit Runs the Venv's ruff
 
 - pre-commit's ruff hooks are `local` hooks that run the venv's ruff through `scripts/venv_tool.sh`, with the entries and file types of `ruff-pre-commit`'s own hooks (`--force-exclude`, `types_or`, `require_serial`), the three in their order. `pyproject.toml`'s pin is the only one: Dependabot's Poetry group updates it, and the rule to bump the `ruff-pre-commit` rev with it is gone.
