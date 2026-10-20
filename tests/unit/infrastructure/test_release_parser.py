@@ -125,3 +125,10 @@ class TestParseLanguage:
         result = parse_language(link_language=label, plugin_default_language="de")
         assert result is not None
         assert result.code == code
+
+    @pytest.mark.parametrize("label", ["Original", "Originalversion", "OV"])
+    def test_an_original_version_keeps_its_own_language(self, label: str) -> None:
+        # The mediatheken's "(Originalversion)": the original audio, whichever
+        # language it is, not the plugin's German
+        result = parse_language(link_language=label, plugin_default_language="de")
+        assert result == StreamLanguage(code="ov", label="Original", is_dubbed=False)

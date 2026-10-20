@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: An Original Version Keeps Its Own Language
+
+- `parse_language()` reads "Original", "Originalversion" and "OV" as `ov` (label "Original", not dubbed): the original audio, whichever language it is. Before, such a label fell back to the plugin's default language, so the mediatheken's "(Originalversion)" would have been listed as German. `ov` ranks with the score of an unknown language (`default_language_score`) unless the language scores name it.
+- `tests/unit/infrastructure/test_release_parser.py` covers the three labels; `docs/current/stremio-addon.md` names them.
+
 ### Fixed: The Content-Type Probe Takes Every HLS Playlist Type
 
 - The probe for a URL without a resolver, and for every `.m3u8` or `.mpd` playlist, took `video/*` and `application/vnd.apple.mpegurl` only, so a playlist sent as `application/x-mpegURL` (SRF's and funk's CDNs send that type) or as RFC 8216's `audio/mpegurl` did not resolve. `_HLS_CONTENT_TYPES` adds `application/x-mpegurl`, `audio/mpegurl` and `audio/x-mpegurl`, compared lower-cased.

@@ -309,7 +309,7 @@ Hoster names are resolver names (`HosterResolverRegistry.canonical_hoster`):
 - A placeholder label such as `unknown` falls through to the URL.
 
 A stream's language comes from its release name (guessit), else from the plugin's label for the link (`parse_language()`), else from the plugin's default language.
-`parse_language()` reads English and German words: "German Sub", "Ger-Sub" and "Japanisch mit deutschen Untertiteln" are `de-sub`, "Englisch" is `en`.
+`parse_language()` reads English and German words: "German Sub", "Ger-Sub" and "Japanisch mit deutschen Untertiteln" are `de-sub`, "Englisch" is `en`, and "Original", "Originalversion" and "OV" are `ov` (the original audio, whichever language it is), which ranks with the score of an unknown language unless the scores name it.
 An unrecognised label falls back to the plugin's default language.
 
 A stream's quality comes from its release name (guessit) or the site's quality badge, and its size from the site.
