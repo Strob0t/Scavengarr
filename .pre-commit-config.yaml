@@ -8,30 +8,44 @@ repos:
       - id: mixed-line-ending
         args: ["--fix=lf"]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.9
+  # ruff and basedpyright of the project venv (scripts/venv_tool.sh), so
+  # pyproject.toml's pin is the only one and the edit hook formats the same;
+  # in a git worktree the script finds the main checkout's venv (`poetry run`
+  # would create an empty one there). The ruff hooks take the entries and
+  # file types of ruff-pre-commit's own.
+  - repo: local
     hooks:
       # 1) Sort imports only (I001 / I)
       - id: ruff-check
         name: ruff (sort imports)
+        entry: scripts/venv_tool.sh ruff check --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
         args: ["--select", "I", "--fix"]
 
       # 2) Rest lint/fix
       - id: ruff-check
+        name: ruff check
+        entry: scripts/venv_tool.sh ruff check --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
         args: ["--fix", "--exit-non-zero-on-fix"]
 
-      # 3) Formatter zuletzt
+      # 3) Formatter last
       - id: ruff-format
+        name: ruff format
+        entry: scripts/venv_tool.sh ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter, markdown]
+        require_serial: true
 
-  # Type check (standard mode, [tool.basedpyright] in pyproject.toml) with the
-  # project venv, so it sees the installed dependencies; in a git worktree
-  # the script finds the main checkout's venv (`poetry run` would create an
-  # empty one there)
-  - repo: local
-    hooks:
+      # Type check (standard mode, [tool.basedpyright] in pyproject.toml): the
+      # venv's interpreter sees the installed dependencies
       - id: basedpyright
         name: basedpyright
-        entry: scripts/basedpyright.sh
+        entry: scripts/venv_tool.sh basedpyright
         language: system
         types: [python]
         pass_filenames: false

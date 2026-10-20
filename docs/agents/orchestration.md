@@ -25,6 +25,10 @@ The work queue is [`docs/backlog.md`](../backlog.md); the rows done before the q
   A row's leftover tasks are completed or deleted when it is accepted, and an idle coder's list is empty.
   A plan from plan mode does not replace it.
 - **Release only in a quiet moment:** every worktree clean and pushed, CI green; otherwise in-flight CHANGELOG lines land under the wrong version.
+- **A security alert gets its fix at once.**
+  A Dependabot alert with a fixed version becomes a row the day it shows, `poetry update <package>` for a transitive one: the weekly updates take a version 7 days after its release (`cooldown`) and the direct dependencies only, and Dependabot's security updates are off, since they would target `main`.
+  The alert closes when the fix reaches `main`, and production has the fix after its rebuild.
+  An alert without a fixed version is dismissed with its reason, or becomes an idea when its risk calls for a change.
 - **Privacy in docs and commit texts.**
   Nothing that tells what, when or where the maintainer watches: no titles or IMDb/Kitsu ids of the maintainer's requests (a placeholder such as "Series A" instead), no request ids, no clock times or dates of playbacks and observations (durations, counts and build hashes are fine), no LAN hostnames (`*.example.lan` in examples), no ISP, VPN or device names, no household references.
   Test data and fixtures keep their titles.

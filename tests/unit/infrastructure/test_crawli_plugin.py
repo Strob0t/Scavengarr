@@ -287,7 +287,7 @@ class TestCrawliPlugin:
         assert p.name == "crawli"
         assert p.provides == "download"
         assert p.default_language == "de"
-        assert "crawli.net" in p._domains
+        assert {"crawli.net"} <= set(p._domains)
 
     def test_module_exports_plugin(self) -> None:
         assert hasattr(_crawli, "plugin")

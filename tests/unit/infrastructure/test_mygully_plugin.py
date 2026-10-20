@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -263,7 +264,7 @@ class TestSearch:
 
         assert len(results) == 2
         assert results[0].title == "SpongeBob S01"
-        assert "keeplinks.org" in results[0].download_link
+        assert urlparse(results[0].download_link).hostname == "www.keeplinks.org"
         assert len(results[0].download_links) == 2
         assert results[0].download_links[0]["hoster"] == "rapidgator"
         assert results[0].download_links[1]["hoster"] == "ddownload"
@@ -480,7 +481,7 @@ class TestPostLinkParser:
         parser.feed(html)
 
         assert len(parser.links) == 1
-        assert "keeplinks.org" in parser.links[0]["link"]
+        assert urlparse(parser.links[0]["link"]).hostname == "www.keeplinks.org"
 
     def test_links_outside_post_div_ignored(self) -> None:
         html = """

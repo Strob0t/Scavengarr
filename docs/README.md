@@ -2,7 +2,7 @@
 
 > **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** 93973cf2
+> **As of:** 867eed7a
 
 The one index of the documentation: one line per document with its status.
 

@@ -9,6 +9,10 @@ on:
     branches: [staging]
   pull_request:
     branches: [staging, main]
+  # Weekly on main (GitHub runs a schedule on the default branch only): a new
+  # runner image, Python patch or Poetry release breaks it without a push
+  schedule:
+    - cron: "23 4 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -53,3 +57,18 @@ jobs:
 
       - name: pytest
         run: poetry run pytest -n auto
+
+  # The one check the main ruleset requires, so the matrix changes without the
+  # ruleset. always(), not !cancelled(): a skipped required check counts as
+  # passed.
+  passed:
+    name: CI passed
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every leg passed
+        env:
+          RESULT: ${{ needs.check.result }}
+        run: test "$RESULT" = success

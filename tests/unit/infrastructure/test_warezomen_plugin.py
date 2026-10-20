@@ -269,7 +269,7 @@ class TestPluginAttributes:
 
     def test_domains(self) -> None:
         plugin = _make_plugin()
-        assert "warezomen.com" in plugin._domains
+        assert {"warezomen.com"} <= set(plugin._domains)
 
     def test_base_url(self) -> None:
         plugin = _make_plugin()

@@ -2,7 +2,7 @@
 
 > **Purpose:** Every dependency with its purpose and the reason for it, the tools beside the Python packages and the alternatives not used.
 > **Status:** reference
-> **As of:** cf8d62a9
+> **As of:** 867eed7a
 
 Every dependency in `pyproject.toml` with what it does here and why it is the one, the tools beside the Python packages, and the alternatives deliberately not used.
 The versions live in `pyproject.toml` and `poetry.lock` only.
@@ -56,7 +56,7 @@ guessit took 25 to 33 % of a stream request's Python CPU on the production host,
 |---|---|---|
 | `pydantic-settings` | The typed settings and their layers: CLI, `SCAVENGARR_*` environment, YAML and defaults (`infrastructure/config/`). | One validated model reads every source, and `SecretStr` shows a secret as `***` in the startup line `config_effective`. |
 | `python-dotenv` | Loads a `--dotenv` file into the environment before the settings are read (`infrastructure/config/load.py`). | The file's values must reach `os.environ`, where the CLI reads `HOST` and `PORT`, and a variable already set keeps its value (`override=False`). |
-| `pyyaml` | Reads the config file, and in the tests the repository's YAML files (Compose, Dependabot, the alert rules). | YAML is the config file's format, and `yaml.safe_load` builds plain data only. |
+| `pyyaml` | Reads the config file, and in the tests the repository's YAML files (Compose, Dependabot, the workflows, the alert rules). | YAML is the config file's format, and `yaml.safe_load` builds plain data only. |
 | `diskcache` | The default cache backend: one SQLite database in `cache.dir` (`infrastructure/cache/diskcache_adapter.py`). | Keys with an expiry and no service to run; the adapter runs its disk I/O in worker threads. |
 | `redis` | The optional cache backend through `redis.asyncio` (`infrastructure/cache/redis_adapter.py`, `cache.backend: redis`). | For a deployment that runs Redis, such as the Compose profile `redis`, the cache lives in a service of its own instead of the container's files. |
 | `structlog` | The structured logs: key-value records as JSON or for the console (`infrastructure/logging/setup.py`). | Context variables carry `request_id` into every line of a request and its tasks, and the libraries' standard log records pass the same processors. |
@@ -82,8 +82,8 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 | `pytest-xdist` | Spreads the suite over worker processes (`pytest -n auto`, at most 8), handing them out in chunks of at most eight tests (`--maxschedchunk=8`). | The suite takes about a third of its serial time; the chunk size ends the workers together, where the default `load` mode left one running alone for 6 to 10 s (16.3 s instead of 24.4 s); the comment above `addopts` in `pyproject.toml` has the times. |
 | `pytest-cov` | Coverage reports on demand (`pytest --cov=scavengarr`); no check runs it. | The pytest plugin of coverage.py. |
 | `respx` | Mocks httpx at its transport, so plugin and resolver tests get recorded answers without a network. | It is made for httpx, and resolver tests must use it ([AGENTS.md](../../AGENTS.md#6-testing-tdd-mandatory)). |
-| `ruff` | Lint (`E`, `F`, `W`, `C90`, `I`) and format, in pre-commit and in the edit hook. | One fast tool for what flake8, isort and black do, pinned to the `rev` of `ruff-pre-commit` so that both run the same version. |
-| `basedpyright` | Type checks in `standard` mode, in pre-commit (`scripts/basedpyright.sh`) and in the editor. | The editor and the hook apply the same rules, and it is on Open VSX, where Pylance is not. |
+| `ruff` | Lint (`E`, `F`, `W`, `C90`, `I`) and format, in pre-commit (`scripts/venv_tool.sh`) and in the edit hook. | One fast tool for what flake8, isort and black do; both run the venv's, so this pin is the only one. |
+| `basedpyright` | Type checks in `standard` mode, in pre-commit (`scripts/venv_tool.sh`) and in the editor. | The editor and the hook apply the same rules, and it is on Open VSX, where Pylance is not. |
 | `pre-commit` | Runs ruff, basedpyright and the file hygiene hooks before every commit and in CI (`.pre-commit-config.yaml`). | One file defines the checks for the developer and for CI. |
 
 ## Beside the Python packages
@@ -96,6 +96,7 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 | curl | The image's healthcheck. | `Dockerfile.prod` |
 | Redis, Byparr, Tempo | The optional services of the Compose profiles `redis`, `solver` and `tracing`. | `docker-compose.yml` |
 | Node | The dev container's tools: playwright-mcp, the OpenSpec CLI and the skills. | `.devcontainer/devcontainer.json`, `.devcontainer/setup.sh` |
+| GitHub CLI (`gh`), jq | The Dependabot merge and the release page call the GitHub API with them. | `.github/workflows/dependabot-merge.yml`, `.github/workflows/release.yml` (both tools come with GitHub's runners) |
 
 ## Not used
 
@@ -115,5 +116,6 @@ Installed, the OpenTelemetry packages add about 5 MB to the image and about 2 MB
 | Pydantic models in the domain | `@dataclass` entities and value objects | The domain stays free of frameworks and I/O ([decision 0001](../target/decisions/0001-dependency-rule.md)). |
 | `mypy`, Pylance | basedpyright | Pylance is not on Open VSX, and one checker in `standard` mode serves the editor and pre-commit alike. |
 | `black`, `isort`, `flake8` | ruff | One tool does the work of the three at one pinned version. |
+| `ruff-pre-commit` | Local pre-commit hooks that run the venv's ruff | Its hook installs a ruff of its own, a second pin that had to be bumped together with `pyproject.toml`'s, or the edit hook and pre-commit formatted differently. |
 | OpenTelemetry metrics | prometheus-client | They would need Prometheus' OTLP receiver, which has no authentication, or a collector. |
 | The OpenTelemetry instrumentation of FastAPI and httpx | The core's own stages (`TelemetryPort`) | Their spans carry each request's URL, and the stream URLs hold tokens; the core's spans carry neither URLs nor titles. |

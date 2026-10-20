@@ -429,10 +429,7 @@ class TestDomains:
         assert _DOMAINS[0] == "www.scnsrc.me"
 
     def test_all_known_domains_present(self) -> None:
-        domains_set = set(_DOMAINS)
-        assert "www.scnsrc.me" in domains_set
-        assert "scenesource.me" in domains_set
-        assert "scnsrc.net" in domains_set
+        assert {"www.scnsrc.me", "scenesource.me", "scnsrc.net"} <= set(_DOMAINS)
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,7 @@ poetry run pytest -m live                       # live smoke tests against the r
 poetry run pytest tests/benchmark/ -s -v        # concurrency benchmarks
 ```
 
-The offline suite has about 6,500 tests and must pass before every commit. CI (`.github/workflows/ci.yml`) runs pre-commit and the offline suite on every push to `staging` and on every pull request. Live tests hit real websites; a failure there means a site or hoster changed, not that your change is wrong. They do not run in CI: GitHub's datacenter IPs get harder Cloudflare challenges than a residential network.
+The offline suite has about 7,400 tests and must pass before every commit. CI (`.github/workflows/ci.yml`) runs pre-commit and the offline suite on every push to `staging`, on every pull request and weekly on `main`; its job `CI passed` is green only when every Python version passed, and a pull request into `main` merges only then. Live tests hit real websites; a failure there means a site or hoster changed, not that your change is wrong. They do not run in CI: GitHub's datacenter IPs get harder Cloudflare challenges than a residential network.
 
 Scavengarr is developed **test-first**: write a failing test, make it pass with the smallest change, refactor, commit. Test layout and mock conventions:
 

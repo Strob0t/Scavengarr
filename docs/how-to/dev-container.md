@@ -2,7 +2,7 @@
 
 > **Purpose:** Setting up and working in the dev container: git access, the tools it installs, checks in a worktree, the editor, the Claude Code hooks and the production diagnostics.
 > **Status:** how-to
-> **As of:** 317d12f8
+> **As of:** b102c25c
 
 ## Goal
 
@@ -41,7 +41,7 @@ LAN clients such as Stremio reach a server started in the container with `--host
 A worktree has no `.venv`, so `poetry run` creates an empty one and ends with `Command not found`.
 Run `scripts/worktree_venv.sh` once there: it links `.venv` to the main checkout's venv.
 Then `poetry run pre-commit run --all-files` and `poetry run pytest -n auto` work as in the main checkout, and pytest imports the worktree's own `src` (`pythonpath` in `pyproject.toml`).
-The basedpyright hook runs `scripts/basedpyright.sh`, which finds that venv by itself.
+The ruff and basedpyright hooks run `scripts/venv_tool.sh`, which finds that venv by itself.
 Everything else that imports the package runs with `PYTHONPATH=src` in a worktree: the dev server `poetry run start`, `scripts/generate_config_doc.py`, `scripts/generate_plugin_list.py` and the probes.
 The venv's editable install points at the main checkout's `src`, so without it a worktree's server or generator runs the main checkout's code, and a live proof proves nothing.
 
@@ -55,7 +55,7 @@ Scripts that are run directly (`docker/entrypoint.sh`, `.claude/hooks/*.sh`, `.c
 
 `customizations.vscode.extensions` in `.devcontainer/devcontainer.json` lists only extensions available on Open VSX, so VS Code and VSCodium (DevPod) install the same set.
 Type checking uses `detachhead.basedpyright` in `standard` mode, not Pylance: `[tool.basedpyright]` in `pyproject.toml` gives the editor and `poetry run basedpyright` the same rules.
-Formatting uses ruff, and `pyproject.toml` pins ruff to exactly the `rev` of `ruff-pre-commit` in `.pre-commit-config.yaml`: the edit hook uses the venv's ruff and pre-commit its own, so both are bumped together, otherwise the two formatters can undo each other.
+Formatting uses ruff, and the edit hook and pre-commit run the same one, the venv's: pre-commit's ruff hooks are local hooks through `scripts/venv_tool.sh`, so `pyproject.toml` holds the only pin, and Dependabot's Poetry group updates it.
 
 ### Claude Code hooks and skills
 

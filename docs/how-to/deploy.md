@@ -2,7 +2,7 @@
 
 > **Purpose:** Running the container image: tags, Compose profiles, Redis, a VPN container, a reverse proxy, the build identity.
 > **Status:** how-to
-> **As of:** bdd3f0c4
+> **As of:** 867eed7a
 
 ## Goal
 
@@ -25,8 +25,10 @@ A run from a checkout without a container is described in [CONTRIBUTING.md](../.
 |---|---|
 | `latest` | The newest release. |
 | `vX.Y.Z` | One release (the tag `vX.Y.Z` on `main`). |
-| `staging` | The newest push to the development branch, built while its CI runs, not after it passed. |
+| `staging` | The newest push to the development branch (a merged Dependabot update included), built while its CI runs, not after it passed. |
 | `sha-<commit>` | One build (the commit's first 12 characters). |
+
+Every release tag also gets its page under the repository's Releases (`.github/workflows/release.yml`): the summary and the entry titles of its `CHANGELOG.md` section, by kind, the image tag and a link to the full section, so the page says what a `vX.Y.Z` brings before you pull it.
 
 Every image carries its commit, in the label `org.opencontainers.image.revision` and in its build identity (step 8).
 

@@ -55,7 +55,7 @@ In short:
 - **Branches**: develop on `staging`; `main` is production and only updated via PR on explicit request (see `AGENTS.md` section 1)
 - **Commit messages**: Conventional Commits (`<type>(<scope>): <subject>`), not enforced by tooling
   - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
-- **Pre-commit hooks** (`.pre-commit-config.yaml`): `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `ruff-check` (import sorting), `ruff-check --fix`, `ruff-format` — **never skip** (`--no-verify`)
+- **Pre-commit hooks** (`.pre-commit-config.yaml`): `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `mixed-line-ending`, then the venv's tools through `scripts/venv_tool.sh`: `ruff-check` (import sorting), `ruff-check --fix`, `ruff-format` and `basedpyright` — **never skip** (`--no-verify`)
 - **Quality gates** (must pass before every commit):
   - ✅ `poetry run pre-commit run --all-files`
   - ✅ `poetry run pytest -n auto` (parallel; live tests excluded by default)
@@ -99,7 +99,7 @@ Understanding of German and English streaming and DDL site structures (HTML list
 
 ## External Dependencies
 
-- **GitHub**: Code management, issue tracking and CI (`.github/workflows/ci.yml`: pre-commit and pytest)
+- **GitHub**: Code management, issue tracking and CI (`.github/workflows/ci.yml`: pre-commit and pytest on every push to `staging`, every pull request and weekly on `main`; the job `CI passed` is the check `main`'s ruleset requires) and Dependabot (`.github/dependabot.yml`; `.github/workflows/dependabot-merge.yml` merges its green minor and patch updates into `staging`), and a release page per tag (`.github/workflows/release.yml`)
 - **Container image**: `ghcr.io/strob0t/scavengarr` for `linux/amd64` and `linux/arm64`, built from `Dockerfile.prod` by `.github/workflows/image.yml`
 - **PyPI**: Python package dependencies (managed via Poetry)
 - **Optional services**:

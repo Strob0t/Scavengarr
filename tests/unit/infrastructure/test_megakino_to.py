@@ -451,9 +451,9 @@ class TestDomainFallback:
     async def test_fallback_to_second_domain(self, mod) -> None:
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "megakino.org" in url and request.method == "HEAD":
+            if request.url.host == "megakino.org" and request.method == "HEAD":
                 raise httpx.ConnectError("unreachable")
-            if "megakino.to" in url and request.method == "HEAD":
+            if request.url.host == "megakino.to" and request.method == "HEAD":
                 return httpx.Response(200)
             if "/data/browse/" in url:
                 return httpx.Response(200, text=json.dumps(_BROWSE_RESPONSE))

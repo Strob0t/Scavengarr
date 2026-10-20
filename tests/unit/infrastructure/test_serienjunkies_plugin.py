@@ -408,7 +408,7 @@ class TestSerienjunkiesPluginAttributes:
 
     def test_plugin_domains(self) -> None:
         plug = _make_plugin()
-        assert "serienjunkies.org" in plug._domains
+        assert {"serienjunkies.org"} <= set(plug._domains)
 
     def test_plugin_base_url(self) -> None:
         plug = _make_plugin()
@@ -627,8 +627,8 @@ class TestSerienjunkiesPluginSearch:
         assert first.metadata["audio"] == "AC3"
         assert first.metadata["language"] == "GERMAN"
         assert first.metadata["release_group"] == "UTOPiA"
-        assert "Filer.net" in first.metadata["hosters"]
-        assert "DDownload" in first.metadata["hosters"]
+        hosters = set(first.metadata["hosters"].split(", "))
+        assert {"Filer.net", "DDownload"} <= hosters
         assert first.source_url == "https://serienjunkies.org/serie/dark"
         assert first.download_links is not None
         assert len(first.download_links) == 2

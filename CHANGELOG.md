@@ -4,6 +4,49 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## v0.5.1 - 2026-10-20
+
+Security: certifi's CA bundle drops the root whose intermediate CAs lost their keys (GHSA-6q48-6c7w-9gw2); every httpx client of the app verifies TLS against it, so the image carries the fix with its rebuild. Repository upkeep: CI ends in the one check `main`'s ruleset requires and runs weekly on `main`; Dependabot takes a version a week after its release, updates pre-commit's hooks too, and its green minor and patch updates merge into `staging` by themselves; pre-commit runs the venv's ruff, pinned in `pyproject.toml` only; every release tag gets its page; and the tests check a URL's host exactly.
+
+### Security: certifi's CA Bundle Drops the Compromised emSign Root
+
+- certifi before 2026.10.18 carries the root `emSign ECC Root CA - G3`, below which eight intermediate CAs have compromised keys: whoever holds one and sits on the path can pass a certificate for any host (GHSA-6q48-6c7w-9gw2, Dependabot's critical alert). certifi comes in only through httpx and httpcore, and every httpx client of the app verifies TLS against its bundle.
+- `poetry.lock` moves certifi from 2026.7.22 to 2026.10.19 (2026.10.18 removed every emSign root, 2026.10.19 restored the unaffected ones); its bundle names `emSign ECC Root CA - G3` 0 times, against 3 before. No code changes. The production image installs `poetry.lock`, so it carries the fix with its next rebuild.
+
+### Added: A Release Page per Tag
+
+- `.github/workflows/release.yml` runs on every pushed `v*` tag with write access to contents only: it prints the notes with `scripts/release_notes.py <tag>` and creates the release with `gh release create --notes-file --verify-tag`, beside the image that `image.yml` publishes for the tag.
+- `scripts/release_notes.py` (standard library only) prints the summary paragraph of the tag's `CHANGELOG.md` section, its entries' titles grouped by kind (Added, Changed, Fixed, Removed, then any other kind as written; a heading without a kind under Other), the image `ghcr.io/strob0t/scavengarr:<tag>` and a link to the full section at the tag, and exits non-zero when the tag has no section, so no page goes out without notes. For v0.5.0 it lists the 87 entries under the four kinds.
+- `tests/unit/infrastructure/test_release_notes_script.py` covers a sample changelog, a missing version and the real file's v0.5.0; `test_repository_files.py` checks the workflow's trigger, permissions and commands. AGENTS.md (§1, the release's step 5), `docs/how-to/deploy.md` (the page beside the image tags; `staging` takes a merged Dependabot update too), `docs/reference/tech-stack.md` (`gh` and jq), `openspec/project.md` and the README say so.
+
+### Changed: pre-commit Runs the Venv's ruff
+
+- pre-commit's ruff hooks are `local` hooks that run the venv's ruff through `scripts/venv_tool.sh`, with the entries and file types of `ruff-pre-commit`'s own hooks (`--force-exclude`, `types_or`, `require_serial`), the three in their order. `pyproject.toml`'s pin is the only one: Dependabot's Poetry group updates it, and the rule to bump the `ruff-pre-commit` rev with it is gone.
+- `scripts/venv_tool.sh <tool>` is `scripts/basedpyright.sh` generalised to any tool of the venv (the active one, the project's `.venv`, in a worktree the main checkout's), and the basedpyright hook runs through it too. `tests/unit/infrastructure/test_repository_files.py` keeps it executable; AGENTS.md (§9), `docs/how-to/dev-container.md`, `docs/reference/tech-stack.md` and `openspec/project.md` say so.
+
+### Added: Dependabot's Green Minor and Patch Updates Merge Themselves
+
+- `.github/workflows/dependabot-merge.yml` runs after every CI run of a `dependabot/` branch. For a green `pull_request` run of `dependabot[bot]` from this repository it takes the open Dependabot pull request against `staging` whose head commit the run tested, and merges it at that commit (`gh pr merge --merge --match-head-commit`) when every `update-type:` line of the commit message names a minor or patch update, at least one. Then it starts CI and the image on `staging`, as a merge with `GITHUB_TOKEN` starts no push workflow.
+- A major update, an update without a type, a base image (its next Python is a runtime change no CI leg builds) and an action wait for the maintainer: `GITHUB_TOKEN` may not change a workflow file, a merge included.
+- GitHub runs the workflow from `main` with write access to contents, pull requests and actions, so it checks out nothing, uses no action and reads the event's values through `env:` only. `tests/unit/infrastructure/test_repository_files.py` runs its script with a fake `gh` (a merge; a major update, no type, a base image, an action and a newer head stay open) and checks its trigger and permissions; AGENTS.md (§4) and `openspec/project.md` say so. It takes effect with the next release.
+
+### Changed: Dependabot Waits a Week and Updates pre-commit's Hooks
+
+- Every entry of `.github/dependabot.yml` has `cooldown: default-days: 7`: an update comes 7 days after its release, so a release pulled again within days never reaches `staging`. A security alert shows at once; its fix comes with the weekly update after the cooldown, or by hand.
+- A `pre-commit` entry updates the hook revs of `.pre-commit-config.yaml` against `staging`, like the other three.
+- `tests/unit/infrastructure/test_repository_files.py` checks both, and AGENTS.md (§4) says so. Dependabot reads its file from `main`, so this takes effect with the next release.
+
+### Added: CI Ends in One Required Check and Runs Weekly
+
+- `.github/workflows/ci.yml` ends in the job `CI passed`, which needs both Python legs and fails unless both passed. It runs after a failed or cancelled leg too (`if: always()`), as a required check that is skipped counts as passed. `main`'s ruleset requires this one name, so the matrix can change without the ruleset.
+- A weekly run on `main` (`schedule`; GitHub runs a schedule on the default branch only) shows a break that comes without a push: a new runner image, Python patch or Poetry release.
+- `tests/unit/infrastructure/test_repository_files.py` checks the gate job, and that no workflow step puts an expression into its `run:` script: the values come through `env:`, so a branch name or commit message cannot run as code. AGENTS.md (the CI sentence; the release merge waits for `CI passed`), `CONTRIBUTING.md` and `openspec/project.md` say so.
+
+### Changed: Tests Check a URL's Host Exactly
+
+- 37 test lines checked a URL by substring (`"host" in url`), which CodeQL's default setup reports as `py/incomplete-url-substring-sanitization`: none was a gap in the code, but a lookalike host (`d0000d.com.evil.test`) passed them, and they buried a real finding. Each is now an exact check: the parsed host (`urlparse(url).hostname == ...`), `request.url.host == ...` in the fake transports' handlers, a prefix ending in the host's slash, and for a domain list, a hoster list or the Cloudflare block map the exact members or keys instead of `in`.
+- In 13 files of `tests/unit/infrastructure/` (ddlspot, boerse, mygully, serienjunkies, warezomen, scnsrc, crawli, sto, megakino_to, the IMDb fallback, the doodstream resolver and both plugin bases); no code changes. A lookalike host now fails the checks it slipped through before (tried in the ddlspot parser, the doodstream pass URL, sto's search results and the IMDb fallback's Wikidata route).
+
 ## v0.5.0 - 2026-10-20
 
 Challenges and captchas: a capture that meets a challenge is an outcome of its own, with a cooldown instead of the circuit breaker, and finishes in the background, so the next request finds its stream; a capture hoster's browser state outlives restarts, the browser starts with the app, Filemoon's captcha pass is kept alive while it is in demand, and a capture that met the hoster's captcha waits for it. Playback: the HLS proxy resumes a segment the CDN cuts or stalls and keeps its read-ahead across a pause. Content: the public broadcasters' mediatheken, an original version with its own language, a sub-series no longer gets its parent series' episodes (aniworld, sto), and a Torznab search over several kinds answers every kind. Operations: readiness notices a lost network and the image's healthcheck asks it, the graceful shutdown is bounded at 5 s, and the post-deploy check shows where an answer's time goes. Also the documentation rebuilt around one index, a document contract and decision records, a test of the dependency rule, a live smoke entry for every plugin, and Dependabot's pull requests against `staging`.

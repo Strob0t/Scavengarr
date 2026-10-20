@@ -1,5 +1,7 @@
 # Weekly dependency updates; CI (ci.yml) runs on every pull request.
 # PRs go to staging (main takes merges from staging only); merge rule: AGENTS.md §4.
+# Every entry waits 7 days after a release (cooldown): a release pulled again
+# within days never reaches staging. Security updates do not wait.
 version: 2
 updates:
   # Poetry (pyproject.toml, poetry.lock): Dependabot handles Poetry as "pip"
@@ -10,6 +12,8 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "06:00"
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
     groups:
       minor-and-patch:
@@ -27,6 +31,8 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "06:00"
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
 
@@ -39,5 +45,20 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "06:00"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+
+  # The hook revs of .pre-commit-config.yaml
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    target-branch: "staging"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"

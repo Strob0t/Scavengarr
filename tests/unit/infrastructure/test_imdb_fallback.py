@@ -111,7 +111,7 @@ def _make_client(
     """
 
     def _handler(request: httpx.Request) -> httpx.Response:
-        if "wikidata.org" in str(request.url):
+        if request.url.host == "www.wikidata.org":
             return httpx.Response(200, text=_WIKIDATA_EMPTY_SEARCH)
         return httpx.Response(status_code, text=response_text)
 
@@ -184,9 +184,9 @@ class TestGetTitleAndYear:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
+            if request.url.host == "www.wikidata.org" and "wbgetentities" in url:
                 return httpx.Response(200, text=_WIKIDATA_ENTITY_Q172241_DE)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
             return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
 
@@ -202,8 +202,7 @@ class TestGetTitleAndYear:
         """When Wikidata fails, English title is returned without alts."""
 
         def _handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(500, text="error")
             return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
 
@@ -232,9 +231,9 @@ class TestGetTitleAndYear:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
+            if request.url.host == "www.wikidata.org" and "wbgetentities" in url:
                 return httpx.Response(200, text=entity_no_de)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
             return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
 
@@ -262,9 +261,9 @@ class TestGetTitleAndYear:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
+            if request.url.host == "www.wikidata.org" and "wbgetentities" in url:
                 return httpx.Response(200, text=entity_same)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
             return httpx.Response(200, text=_IRON_MAN_RESPONSE)
 
@@ -281,10 +280,10 @@ class TestGetTitleAndYear:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
+            if request.url.host == "www.wikidata.org" and "wbgetentities" in url:
                 call_count["wikidata"] += 1
                 return httpx.Response(200, text=_WIKIDATA_ENTITY_Q172241_DE)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 call_count["wikidata"] += 1
                 return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
             return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
@@ -322,9 +321,9 @@ class TestLanguageParameter:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
+            if request.url.host == "www.wikidata.org" and "wbgetentities" in url:
                 return httpx.Response(200, text=_WIKIDATA_ENTITY_Q172241_DE)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
             return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
 
@@ -357,9 +356,9 @@ class TestLanguageParameter:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)
-            if "wikidata.org" in url and "wbgetentities" in url:
+            if request.url.host == "www.wikidata.org" and "wbgetentities" in url:
                 return httpx.Response(200, text=entity_fr)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(200, text=_WIKIDATA_SEARCH_Q172241)
             return httpx.Response(200, text=_SHAWSHANK_RESPONSE)
 
@@ -476,8 +475,7 @@ class TestSearchMovies:
         call_count = {"imdb": 0}
 
         def _handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            if "wikidata.org" in url:
+            if request.url.host == "www.wikidata.org":
                 return httpx.Response(200, text=_WIKIDATA_EMPTY_SEARCH)
             call_count["imdb"] += 1
             return httpx.Response(200, text=_SEARCH_MIXED_RESPONSE)

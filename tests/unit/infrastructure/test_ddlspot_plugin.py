@@ -334,9 +334,9 @@ class TestDetailPageParser:
         parser.feed(_DETAIL_HTML_MULTI)
 
         assert len(parser.urls) == 3
-        assert "rapidgator.net" in parser.urls[0]
-        assert "alfafile.net" in parser.urls[1]
-        assert "nitroflare.com" in parser.urls[2]
+        assert urlparse(parser.urls[0]).hostname == "rapidgator.net"
+        assert urlparse(parser.urls[1]).hostname == "alfafile.net"
+        assert urlparse(parser.urls[2]).hostname == "nitroflare.com"
 
     def test_parse_empty_links_box(self) -> None:
         parser = _DetailPageParser()
@@ -524,7 +524,7 @@ class TestSearch:
         # First result: Iron Man (Movies)
         r1 = results[0]
         assert r1.title == "Iron Man 2008 1080p"
-        assert "rapidgator.net" in r1.download_link
+        assert urlparse(r1.download_link).hostname == "rapidgator.net"
         assert r1.size == "4.50 GB"
         assert r1.category == 2000
         assert len(r1.download_links) == 1
@@ -532,7 +532,7 @@ class TestSearch:
         # Second result: Ubuntu (Software)
         r2 = results[1]
         assert r2.title == "Ubuntu 24.04 LTS"
-        assert "rapidgator.net" in r2.download_link
+        assert urlparse(r2.download_link).hostname == "rapidgator.net"
         assert r2.size == "2.10 GB"
         assert r2.category == 4000
         assert len(r2.download_links) == 3
