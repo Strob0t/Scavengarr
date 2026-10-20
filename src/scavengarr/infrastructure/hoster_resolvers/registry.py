@@ -269,19 +269,20 @@ class HosterResolverRegistry:
             or self._domain_map.get(name)
         )
 
+    def resolver_name(self, url: str) -> str | None:
+        """Name of the resolver the dispatch takes for *url* (step 1 of
+        ``resolve()``): a host a resolver claims, then the second-level
+        domain as a resolver's name or alias. ``None`` without one, where
+        the dispatch follows redirects or probes the content type.
+        """
+        url = url.strip()
+        resolver = self._resolver_for(url, extract_domain(url))
+        return resolver.name if resolver is not None else None
+
     @property
     def supported_hosters(self) -> list[str]:
         """Return list of hosters with registered resolvers."""
         return list(self._resolvers.keys())
-
-    @property
-    def supported_domains(self) -> frozenset[str]:
-        """Return second-level domains that dispatch to a resolver.
-
-        Resolver names plus every alias from ``supported_domains``
-        (e.g. ``filelions`` for the vidhide resolver).
-        """
-        return frozenset(self._resolvers) | frozenset(self._domain_map)
 
     def canonical_hoster(self, name: str) -> str | None:
         """Resolver name for a hoster label, second-level domain or host.

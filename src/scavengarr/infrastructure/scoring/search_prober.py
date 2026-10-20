@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -34,21 +35,23 @@ class MiniSearchProber:
     """Runs a limited search query against a plugin and checks results.
 
     Optionally HEAD-checks a few result links to assess hoster
-    reachability.  Only links pointing to *supported* hosters (those
-    with registered resolvers) are HEAD-checked.
+    reachability.  Only links pointing to *supported* hosters are
+    HEAD-checked: those *resolver_name* finds a resolver for, the
+    registry's dispatch lookup (``HosterResolverRegistry.resolver_name``),
+    so a host a resolver claims by its full name counts as well.
     """
 
     def __init__(
         self,
         plugins: PluginRegistryPort,
         http_client: httpx.AsyncClient,
-        supported_hosters: frozenset[str] = frozenset(),
+        resolver_name: Callable[[str], str | None] | None = None,
         hoster_check_count: int = 3,
         hoster_timeout: float = 5.0,
     ) -> None:
         self._plugins = plugins
         self._http = http_client
-        self._supported_hosters = supported_hosters
+        self._resolver_name = resolver_name
         self._hoster_check_count = hoster_check_count
         self._hoster_timeout = hoster_timeout
 
@@ -130,7 +133,7 @@ class MiniSearchProber:
             if not hoster:
                 continue
             hoster_total += 1
-            if hoster in self._supported_hosters:
+            if self._resolver_name is not None and self._resolver_name(link):
                 hoster_supported += 1
                 supported_links.append(link)
 

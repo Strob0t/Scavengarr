@@ -47,6 +47,7 @@ A link that reaches the probe for want of a resolver logs `hoster_without_resolv
 A domain two resolvers claim stays with the first one registered and logs `hoster_domain_conflict`, and the shipped resolvers claim no domain twice.
 A claimed host wins over its second-level name: `moflix-stream` belongs to VidHide, while the host `moflix-stream.link` runs Filemoon's Byse player and belongs to `filemoon`, and `strmup` claims `kinoger.pw` while `kinoger.ru` links redirect to VOE mirrors.
 `canonical_hoster(name)` returns the resolver's name for a hoster label or a second-level domain (`filelions` gives `vidhide`), so the mirror domains of a hoster share one hoster name in the Stremio streams.
+`resolver_name(url)` returns the name of the resolver step 4 takes for a URL, or `None`; the search probe counts a link as supported by it ([plugins](plugins.md#scores-and-probes)).
 
 The resolved stream then takes the way its CDN allows ([the Stremio addon](stremio-addon.md#the-streams)):
 

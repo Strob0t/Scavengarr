@@ -77,14 +77,34 @@ class TestHosterResolverRegistry:
             for e in logs
         )
 
-    def test_supported_domains_include_aliases(self) -> None:
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            # A claimed host first, also behind www.
+            ("https://kinoger.pw/e/abc", "strmup"),
+            ("https://www.kinoger.pw/e/abc", "strmup"),
+            # Then the second-level name, then an alias
+            ("https://voe.sx/e/abc", "voe"),
+            ("https://filelions.to/v/abc", "vidhide"),
+            # Only the second-level name of a claimed host
+            ("https://kinoger.ru/x", None),
+            ("https://unknown.org/x", None),
+            ("not-a-url", None),
+        ],
+    )
+    def test_resolver_name_looks_up_as_the_dispatch(
+        self, url: str, expected: str | None
+    ) -> None:
         vidhide = SimpleNamespace(
             name="vidhide", supported_domains=frozenset({"vidhide", "filelions"})
         )
+        strmup = SimpleNamespace(
+            name="strmup", supported_hosts=frozenset({"kinoger.pw"})
+        )
         voe = SimpleNamespace(name="voe")
-        registry = HosterResolverRegistry(resolvers=[vidhide, voe])
+        registry = HosterResolverRegistry(resolvers=[vidhide, strmup, voe])
 
-        assert registry.supported_domains == frozenset({"vidhide", "filelions", "voe"})
+        assert registry.resolver_name(url) == expected
 
     @pytest.mark.parametrize(
         ("name", "expected"),
@@ -934,7 +954,7 @@ class TestMirrorDomainDispatch:
     async def test_mirror_dispatches_to_resolver(
         self, registry: HosterResolverRegistry, name: str, url: str
     ) -> None:
-        assert extract_domain(url) in registry.supported_domains
+        assert registry.resolver_name(url) == name
 
         result = await registry.resolve(url)
 

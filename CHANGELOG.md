@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: The Search Probe Counts a Claimed Host as Supported
+
+- The search probe counted a link as supported by its second-level name against the registry's resolver names and aliases, so a link to a host a resolver claims by its full name (`supported_hosts`) counted as unsupported: the mediathek resolver's 45 broadcaster hosts and strmup's `kinoger.pw`, while filemoon's `moflix-stream.link` counted only through VidHide's alias `moflix-stream`. So the share of supported hosters, a quarter of a plugin's search score, dropped for the plugins that link there. With scored plugin selection off, as in production, it moved only the choice within a mirror group and the reported scores.
+- `MiniSearchProber` takes the registry's dispatch lookup instead: `HosterResolverRegistry.resolver_name(url)` names the resolver the dispatch takes for a URL (a claimed host, then the second-level name or an alias), and the composition root passes it in place of the registry's `supported_domains`, which nothing else read and which is gone.
+- `tests/unit/infrastructure/test_search_prober.py` covers a claimed host (supported and HEAD-checked), a second-level name and an alias (supported), and another host of a claimed zone and an unknown host (not supported); `test_hoster_registry.py` covers `resolver_name()` the way the dispatch looks up. `docs/current/plugins.md` (the search probe) and `docs/current/hoster-resolvers.md` say so.
+
 ### Added: The Public Broadcasters' Mediatheken
 
 - `plugins/mediathek.py` searches the mediatheken of ARD with its regional broadcasters, ZDF, arte, 3sat, KiKA, phoenix, ORF, SRF and more through MediathekViewWeb's API: one GET `/api/query`, newest first, up to 3 pages of 1000 entries of at least 299 s, the first page in the raising mode. Each result links the broadcaster's own file (the HD file, else the normal one) under the hoster `mediathek`. Films and documentaries are 2000, series episodes 5000, and the plugin locates episodes: by the numbers an entry states, else by the reference's episode title, else by its air date against the broadcast day, never by the request's numbers alone.

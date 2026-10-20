@@ -470,7 +470,8 @@ def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
     search_prober = MiniSearchProber(
         plugins=state.plugins,
         http_client=state.http_client,
-        supported_hosters=state.hoster_resolver_registry.supported_domains,
+        # A link counts as supported where the dispatch finds a resolver
+        resolver_name=state.hoster_resolver_registry.resolver_name,
     )
     query_pool = QueryPoolBuilder(
         http_client=state.http_client,

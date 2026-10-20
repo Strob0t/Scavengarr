@@ -290,7 +290,7 @@ The scoring subsystem (`infrastructure/scoring/`) ranks the stream plugins by ba
 `ScoringScheduler` starts 10 s after startup and ticks every 5 minutes; each tick runs the probes that are due.
 
 - `HealthProber` sends `HEAD` to each plugin's `base_url` (a ranged `GET` on 405 or 501) once a day: a status below 400 without a page block counts as reachable, and a Cloudflare or DDoS-Guard block scores 0.
-- `MiniSearchProber` searches each plugin twice a week per category (2000, 5000) and age bucket (`current`, `y1_2`, `y5_10`), with a query from the bucket's pool: it scores success, speed, the results found, the reachability of up to 3 supported hoster links and the share of supported hosters.
+- `MiniSearchProber` searches each plugin twice a week per category (2000, 5000) and age bucket (`current`, `y1_2`, `y5_10`), with a query from the bucket's pool: it scores success, speed, the results found, the reachability of up to 3 supported hoster links and the share of supported hosters. A link is supported where the registry's dispatch finds a resolver for it (`resolver_name()`: a host a resolver claims, then the second-level domain as a resolver's name or alias), so the hosts of `supported_hosts` count as well.
 - `QueryPoolBuilder` builds the pools from the IMDb suggestion API, 10 prefixes per build, cached for 24 h and rotated by the ISO week; bundled lists stand in when the API answers with errors.
 
 When IMDb cannot be reached at all (a connect error or a connect timeout), a pool build stops at that first request, logs `query_pool_unavailable` once, and gives no queries for 10 minutes; the due probes run on the first tick after that.
