@@ -151,6 +151,8 @@ Mock patterns:
 - `TelemetryPort` is **synchronous** → pass `NO_TELEMETRY`; the concurrency ports hand out async context managers → a real `ConcurrencyPool`.
 - Hoster resolver tests use `respx` (httpx-native HTTP mocking), not `AsyncMock`/`MagicMock`.
 
+Waiting: a test waits for a condition, never for the clock: `eventually()` of `tests/unit/waiting.py`, an event, or a gate on the fake. A sleep stays only where the delay is the subject (a fake's delay, a deadline or timeout under test), with a margin a loaded CI runner keeps, and work a process does once (guessit compiles its rules on its first call) happens before the timed part (`tests/unit/application/conftest.py`).
+
 ---
 
 ## 7. Plugins & hoster resolvers
