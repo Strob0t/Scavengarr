@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.5.1 - 2026-10-20
+
+Security: certifi's CA bundle drops the root whose intermediate CAs lost their keys (GHSA-6q48-6c7w-9gw2); every httpx client of the app verifies TLS against it, so the image carries the fix with its rebuild. Repository upkeep: CI ends in the one check `main`'s ruleset requires and runs weekly on `main`; Dependabot takes a version a week after its release, updates pre-commit's hooks too, and its green minor and patch updates merge into `staging` by themselves; pre-commit runs the venv's ruff, pinned in `pyproject.toml` only; every release tag gets its page; and the tests check a URL's host exactly.
 
 ### Security: certifi's CA Bundle Drops the Compromised emSign Root
 
