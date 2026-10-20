@@ -190,19 +190,23 @@ class TestSearchCache:
         ]
 
     async def test_the_entry_at_the_budget_names_the_plugins_to_come(self) -> None:
-        """One slot: the second plugin starts once the first is done, after
-        the answer budget, and finishes within its own timeout. The entry
-        written at the budget names it missing; its end rewrites the entry,
-        and the search's end writes nothing new."""
+        """One slot: the second plugin starts once the first is done and
+        runs past the answer budget, within its own timeout (it ends when
+        the test lets it). The entry written at the budget names it
+        missing; its end rewrites the entry, and the search's end writes
+        nothing new."""
         cache = memory_cache()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.2),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.2),
+            "second": fake_site([hit("https://dood.to/e/second")], gate=second_may_end),
         }
         pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
         uc = cached_use_case(sites, cache, hard=0.4, pool=pool)
 
         await uc.execute(make_request())
+        await eventually(lambda: len(cache.set.await_args_list) == 1)
+        second_may_end.set()
 
         await eventually(lambda: len(cache.set.await_args_list) == 2)
         entries = [c.args[1] for c in cache.set.await_args_list]
@@ -212,14 +216,18 @@ class TestSearchCache:
 
     async def test_the_answer_waits_for_the_budget_only(self) -> None:
         """The request answers at the budget with the results so far; the
-        plugin still searching is not cancelled and its results reach the
-        cache (continue-cut-searches)."""
+        plugin still searching (one slot: it started after the first, so
+        its own timeout ends after the budget) is not cancelled and its
+        results reach the cache (continue-cut-searches)."""
         cache = memory_cache()
         cancelled = asyncio.Event()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
+            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.2),
             "second": fake_site(
-                [hit("https://dood.to/e/second")], delay=0.2, cancelled=cancelled
+                [hit("https://dood.to/e/second")],
+                cancelled=cancelled,
+                gate=second_may_end,
             ),
         }
         pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
@@ -230,6 +238,7 @@ class TestSearchCache:
 
         assert 0.3 <= time.monotonic() - started < 0.6
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
+        second_may_end.set()
         await eventually(lambda: len(cached_links(cache)) == 2)
         assert not cancelled.is_set()
 
@@ -237,19 +246,22 @@ class TestSearchCache:
         """A request finding the running search past its budget answers at
         once with what it found (source ``cache``)."""
         cache = memory_cache()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.3),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=0.3),
+            "first": fake_site([hit("https://voe.sx/e/first")]),
+            "second": fake_site([hit("https://dood.to/e/second")], gate=second_may_end),
         }
-        pool = ConcurrencyPool(httpx_slots=1, pw_slots=1)
-        uc = cached_use_case(sites, cache, hard=0.4, pool=pool)
+        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.4)
         await uc.execute(make_request())
+        await eventually(lambda: running_links(uc) == ["https://voe.sx/e/first"])
 
         started = time.monotonic()
         streams = await uc.execute(make_request())
 
-        assert time.monotonic() - started < 0.1
+        # At once: well within a budget of its own
+        assert time.monotonic() - started < 0.2
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
+        second_may_end.set()
         await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_a_budget_below_the_plugin_timeout_answers_at_the_budget(
@@ -257,22 +269,25 @@ class TestSearchCache:
     ) -> None:
         """``stremio.answer_budget_seconds`` below the plugin timeout: the
         request answers at the budget with the fast plugin's result while
-        the slow one runs on to its own timeout; the entry at the budget
-        names it missing, the end entry is complete. (Nothing arrived by the
-        budget: nothing is stored then, an empty entry equals a miss.)"""
+        the slow one runs on (until the test lets it end); the entry at the
+        budget names it missing, the end entry is complete. (Nothing arrived
+        by the budget: nothing is stored then, an empty entry equals a
+        miss.)"""
         cache = memory_cache()
+        second_may_end = asyncio.Event()
         sites = {
-            "first": fake_site([hit("https://voe.sx/e/first")], delay=0.1),
-            "second": fake_site([hit("https://dood.to/e/second")], delay=1.0),
+            "first": fake_site([hit("https://voe.sx/e/first")]),
+            "second": fake_site([hit("https://dood.to/e/second")], gate=second_may_end),
         }
-        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.2)
+        uc = cached_use_case(sites, cache, hard=2.0, answer_budget=0.3)
 
         started = time.monotonic()
         streams = await uc.execute(make_request())
 
-        assert 0.2 <= time.monotonic() - started < 0.9
+        assert 0.3 <= time.monotonic() - started < 0.9
         assert [s.url for s in streams] == ["https://voe.sx/e/first"]
-        await eventually(lambda: len(cache.set.await_args_list) == 2, timeout=3.0)
+        second_may_end.set()
+        await eventually(lambda: len(cache.set.await_args_list) == 2)
         entries = [c.args[1] for c in cache.set.await_args_list]
         assert [(e.missing, len(e.results)) for e in entries] == [
             (("second",), 1),
@@ -372,8 +387,9 @@ class TestCompletion:
         await uc.execute(make_request())
         await eventually(lambda: cache.data[SEARCH_KEY].missing == ())
         await uc.execute(make_request())
-        await asyncio.sleep(0.05)
 
+        # A second completion would still run, or would have asked b again
+        assert not uc._title_search.running(SEARCH_KEY)
         assert cached_links(cache) == ["https://voe.sx/e/old"]
         assert b.isolated_search.await_count == 1
 

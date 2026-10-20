@@ -223,12 +223,17 @@ def fake_site(
     delay: float = 0.0,
     *,
     cancelled: asyncio.Event | None = None,
+    gate: asyncio.Event | None = None,
 ) -> AsyncMock:
-    """Plugin answering with *results* after *delay* seconds."""
+    """Plugin answering with *results* after *delay* seconds, and not before
+    the test sets *gate* (a search that runs until the test lets it end,
+    no wall clock). Sets *cancelled* when cancelled."""
 
     async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
         try:
             await asyncio.sleep(delay)
+            if gate is not None:
+                await gate.wait()
         except asyncio.CancelledError:
             if cancelled is not None:
                 cancelled.set()

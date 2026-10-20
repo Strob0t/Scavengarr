@@ -600,14 +600,10 @@ class TestAnswerPolicy:
         # fixed 0.3 s: on a busy machine (a full parallel run) the fast
         # resolution took longer than that
         slow_may_answer = asyncio.Event()
-
-        async def _slow(*_args: object, **_kwargs: object) -> list[SearchResult]:
-            await slow_may_answer.wait()
-            return [hit("https://dood.to/e/slow")]
-
-        slow = fake_site([])
-        slow.isolated_search = AsyncMock(side_effect=_slow)
-        sites = {"fast": fake_site([hit("https://voe.sx/e/fast")]), "slow": slow}
+        sites = {
+            "fast": fake_site([hit("https://voe.sx/e/fast")]),
+            "slow": fake_site([hit("https://dood.to/e/slow")], gate=slow_may_answer),
+        }
         uc = answering_use_case(sites, memory_cache(), resolutions)
         request = asyncio.create_task(
             uc.execute(make_request(), base_url="http://localhost:8080")
