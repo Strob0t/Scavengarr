@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import traceback
 from pathlib import Path
 from types import ModuleType
@@ -25,12 +26,17 @@ def _import_module_from_path(path: Path) -> ModuleType:
         raise PluginLoadError(f"Could not create import spec for {path}")
 
     module = importlib.util.module_from_spec(spec)
+    # The module is found by its name while it runs: dataclasses look up a
+    # string annotation's names there (``from __future__ import annotations``)
+    sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)  # type: ignore[union-attr]
     except SyntaxError as e:
+        del sys.modules[module_name]
         tb = traceback.format_exc()
         raise PluginLoadError(f"SyntaxError while importing {path}:\n{tb}") from e
     except Exception as e:
+        del sys.modules[module_name]
         tb = traceback.format_exc()
         raise PluginLoadError(f"Error while importing {path}:\n{tb}") from e
 

@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Plugin With a Dataclass Loads
+
+- `load_python_plugin()` ran a plugin file as a module `sys.modules` did not know, so a plugin with a dataclass and string annotations (`from __future__ import annotations`) failed to load with `AttributeError: 'NoneType' object has no attribute '__dict__'`: `dataclasses` looks the module up by its name for them. The loader enters the module (`scavengarr_dynamic_plugin_<file stem>`) before it runs the file and takes it out again when the file fails, so a broken plugin leaves no half-built module behind.
+- `tests/unit/infrastructure/test_plugin_registry.py` loads a plugin with a frozen dataclass and checks that a failing file leaves no module; `docs/current/plugins.md` says so, and the new-plugin guide's tests enter their module the same way, while its triage script loads the plugin through `load_python_plugin()`.
+
 ### Fixed: A Capture Keeps a Stream That Arrives with the End of Its Wait
 
 - `_stream_within()` asked the clock before it looked at the stream: when a late event loop ran the wait's timeout and the stream's request in one batch, the capture saw its end passed and gave `None` with the stream in hand, so it clicked again or, after its last click, missed the stream. It now returns the stream it holds once its wait ends.

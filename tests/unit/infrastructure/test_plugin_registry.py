@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import textwrap
 from pathlib import Path
 
@@ -211,6 +212,41 @@ class TestBrokenAndDuplicatePlugins:
         assert registry.list_names() == ["good"]
         with pytest.raises(PluginNotFoundError):
             registry.get("broken")
+
+    def test_a_plugin_with_a_dataclass_loads(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        # dataclasses look the module up by its name for string annotations
+        _write_plugin(
+            tmp_path,
+            "dataclassed.py",
+            """\
+            from __future__ import annotations
+
+            from dataclasses import dataclass
+
+            @dataclass(frozen=True)
+            class _Row:
+                title: str
+
+            class _Plugin:
+                name = "dataclassed"
+                provides = "stream"
+                async def search(self, query, category=None):
+                    return []
+            plugin = _Plugin()
+            """,
+        )
+
+        assert registry.get("dataclassed").name == "dataclassed"
+
+    def test_a_broken_plugin_leaves_no_module_behind(
+        self, registry: PluginRegistry, tmp_path: Path
+    ) -> None:
+        _write_plugin(tmp_path, "broken.py", "raise RuntimeError('broken')\n")
+
+        assert registry.list_names() == []
+        assert "scavengarr_dynamic_plugin_broken" not in sys.modules
 
     def test_first_file_wins_on_duplicate_names(
         self, registry: PluginRegistry, tmp_path: Path

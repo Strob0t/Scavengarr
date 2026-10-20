@@ -177,7 +177,7 @@ Lower `_max_concurrent` for a heavy or fragile site.
 ### 7. Write the tests
 
 Write `tests/unit/infrastructure/test_<name>_plugin.py` first, after an existing plugin's test with the same base class.
-Plugin files are not a package: the tests load them by path with `importlib.util.spec_from_file_location()`.
+Plugin files are not a package: the tests load them by path with `importlib.util.spec_from_file_location()` and enter the module in `sys.modules` before they run it, as the app's loader does, since a dataclass looks up its string annotations in its module.
 Mock HTTP with `respx` (or the plugin's client), and patch `scavengarr.infrastructure.plugins.playwright_base.async_playwright` for a Playwright plugin.
 A plugin test needs no ports; a test of the core around a plugin passes `NO_TELEMETRY` and a real `ConcurrencyPool`, and mocks the other ports as [AGENTS.md](../../AGENTS.md) (section 6, Testing) lists.
 
@@ -236,20 +236,19 @@ Triage in three steps:
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import logging
 import sys
+from pathlib import Path
 
 import structlog
 
+from scavengarr.infrastructure.plugins.loader import load_python_plugin
+
 structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG))
-spec = importlib.util.spec_from_file_location(sys.argv[1], f"plugins/{sys.argv[1]}.py")
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+plugin = load_python_plugin(Path(f"plugins/{sys.argv[1]}.py"))
 
 
 async def main() -> None:
-    plugin = mod.plugin
     try:
         results = await asyncio.wait_for(plugin.search(sys.argv[2]), 90)
         print("RESULT", len(results), "base_url", plugin.base_url)

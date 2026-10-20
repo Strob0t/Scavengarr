@@ -21,6 +21,7 @@ The startup wiring makes that call, so every plugin is imported before the first
 
 A module must export `plugin` with a non-empty `name` and a `search` method; otherwise the loader raises `PluginLoadError`.
 A file that fails to import is logged as `plugin_load_failed` and skipped, and the other plugins keep working.
+The loader enters the module in `sys.modules` (`scavengarr_dynamic_plugin_<file stem>`) before it runs the file, since a dataclass looks up its string annotations (`from __future__ import annotations`) in its module; a file that fails takes its module out again.
 Of two files with the same plugin name the first in name order wins, and the later one is logged as `plugin_name_duplicate`.
 `registry.get()` of an unknown name raises `PluginNotFoundError`, which the Torznab router answers as a "plugin not found" error.
 
