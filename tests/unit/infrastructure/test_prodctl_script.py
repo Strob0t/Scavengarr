@@ -7,6 +7,7 @@ import importlib
 import json
 import py_compile
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -363,6 +364,19 @@ class TestCheck:
         "movie/tt0816692": "Interstellar.2014",
     }
 
+    @pytest.fixture(autouse=True)
+    def _fixed_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """prodctl's clock stands still, as in TestStreamAnswers: the rows
+        read 0.0 s however slow the runner, and the settle wait returns at
+        once."""
+        monkeypatch.setattr(
+            _mod,
+            "time",
+            SimpleNamespace(
+                monotonic=lambda: 0.0, sleep=lambda _: None, time=time.time
+            ),
+        )
+
     @staticmethod
     def _stream(description: str) -> dict[str, str]:
         return {"name": "Scavengarr\n1080p", "description": description, "url": "x"}
@@ -429,9 +443,7 @@ class TestCheck:
         self,
         portainer: Path,
         capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
         self._mock_production()
         self._mock_streams(self._CODES)
 
@@ -462,9 +474,7 @@ class TestCheck:
         self,
         portainer: Path,
         capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(_mod, "_SETTLE_S", 0.0)
         self._mock_production(healthy=False, dns=0.0)
         self._mock_streams({**self._CODES, "series/tt0388629:5:2": "S05E03"})
 
