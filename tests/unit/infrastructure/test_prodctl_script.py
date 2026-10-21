@@ -472,6 +472,28 @@ class TestCommands:
         assert _mod.main(["state", "--keys", "breakers"]) == 0
         assert json.loads(capsys.readouterr().out) == {"breakers": {"voe": "open"}}
 
+    def test_state_prints_its_json_masked(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The app's statistics can name a CDN URL, a client address or a
+        secret: ``state`` prints them as ``mask()`` does (row 159)."""
+        respx.get(f"{_PUBLIC}/api/v1/stats/metrics").respond(
+            json={
+                "last_url": "https://cdn.example.net/hls/a1/index.m3u8",
+                "client_host": "10.20.30.40",
+                "api_key": "k3yv4lue",
+            }
+        )
+
+        assert _mod.main(["state"]) == 0
+
+        out = capsys.readouterr().out
+        for leak in ("/hls/a1/index.m3u8", "10.20.30.40", "k3yv4lue"):
+            assert leak not in out
+        assert '"last_url": "https://cdn.example.net/…"' in out
+        assert '"client_host": "<ip>"' in out
+        assert "<redacted>" in out
+
     def test_the_digest_reads_the_log_and_two_endpoints(
         self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -547,6 +569,66 @@ class TestStreamAnswers:
             5.0,
             None,
         )
+
+
+class _ClientSpy:
+    """Stands in for ``httpx.Client``: notes each client's base URL and
+    ``verify`` and builds the real client (respx answers it)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self._client = httpx.Client
+
+    def __call__(self, *args: Any, **kwargs: Any) -> httpx.Client:
+        self.calls.append((str(kwargs.get("base_url", "")), kwargs.get("verify", True)))
+        return self._client(*args, **kwargs)
+
+
+class TestTls:
+    """TLS verification stays on unless ``--insecure`` asks otherwise: the
+    Komodo client sends the key and its secret (row 159)."""
+
+    @pytest.fixture
+    def spy(self, monkeypatch: pytest.MonkeyPatch) -> _ClientSpy:
+        spy = _ClientSpy()
+        # prodctl and komodo import the same httpx module
+        assert _mod.httpx is _komodo.httpx is httpx
+        monkeypatch.setattr(httpx, "Client", spy)
+        return spy
+
+    @pytest.mark.parametrize("insecure", [False, True])
+    def test_production_builds_both_clients_with_its_verification(
+        self,
+        spy: _ClientSpy,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        insecure: bool,
+    ) -> None:
+        monkeypatch.setattr(_mod, "_BUDGET", tmp_path / "budget.json")
+        found = _komodo.Credentials(
+            url=_KOMODO, key="k3y", secret="s3cr3t", server="host-1", base_url=_PUBLIC
+        )
+        with respx.mock(assert_all_called=False) as router:
+            _mod.Production(found, insecure=insecure)
+
+            assert router.calls.call_count == 0
+        assert sorted(spy.calls) == [(_KOMODO, not insecure), (_PUBLIC, not insecure)]
+
+    @pytest.mark.parametrize("insecure", [False, True])
+    def test_the_stream_requests_use_its_verification(
+        self, spy: _ClientSpy, insecure: bool
+    ) -> None:
+        with respx.mock:
+            respx.get("https://addon.test/stream/movie/tt1.json").respond(
+                json={"streams": []}
+            )
+
+            [answer] = _mod.stream_answers(
+                "https://addon.test", ["movie/tt1"], insecure=insecure, timeout=5
+            )
+
+        assert answer.status == 200
+        assert spy.calls == [("", not insecure)]
 
 
 class TestCheck:
