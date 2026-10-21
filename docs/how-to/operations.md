@@ -2,7 +2,7 @@
 
 > **Purpose:** Reading production with `scripts/prodctl.py`: the container, its logs, metrics, the digest, the post-deploy check and the probes.
 > **Status:** how-to
-> **As of:** 4a898049
+> **As of:** 86d497b5
 
 ## Goal
 

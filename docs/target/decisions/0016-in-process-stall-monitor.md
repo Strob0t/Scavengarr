@@ -2,7 +2,7 @@
 
 > **Purpose:** Records why a thread in the app's own process names a stalled event loop and why its exit is a switch that is off.
 > **Status:** target
-> **As of:** 4a898049
+> **As of:** 86d497b5
 
 ## Context
 

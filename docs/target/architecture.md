@@ -2,7 +2,7 @@
 
 > **Purpose:** The dependency rule, the layer contracts and the invariants.
 > **Status:** target
-> **As of:** 4a898049
+> **As of:** 86d497b5
 
 The rules every change to `src/scavengarr/` must keep.
 How the code implements them now: [`docs/current/architecture.md`](../current/architecture.md).
