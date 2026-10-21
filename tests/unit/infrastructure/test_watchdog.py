@@ -134,11 +134,14 @@ def _events(logs: list[dict[str, Any]], event: str) -> list[dict[str, Any]]:
 
 @pytest.fixture
 def timer(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The faulthandler timer's arming and cancelling, recorded instead."""
+    """The faulthandler timer's arming, "to exit" when it would end the
+    process, and its cancelling, recorded instead."""
     calls: list[str] = []
-    monkeypatch.setattr(
-        faulthandler, "dump_traceback_later", lambda *_a, **_k: calls.append("armed")
-    )
+
+    def _arm(*_args: object, **kwargs: object) -> None:
+        calls.append("armed to exit" if kwargs.get("exit") else "armed")
+
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", _arm)
     monkeypatch.setattr(
         faulthandler, "cancel_dump_traceback_later", lambda: calls.append("cancelled")
     )
@@ -192,6 +195,27 @@ class TestThread:
         assert all(entry["length_s"] >= 0.5 for entry in recovered)
         assert "most recent call first" in Path(dump.name).read_text()
 
+    def test_an_old_heartbeat_before_the_start_is_no_stall(
+        self, tmp_path: Path, dump: TextIO, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The startup's synchronous steps held the loop before the start, past
+        the limit: the first check counts from the start."""
+        verdicts: list[Check] = []
+
+        def _recorded(*args: Any) -> Check:
+            verdicts.append(check(*args))
+            return verdicts[-1]
+
+        monkeypatch.setattr(watchdog, "check", _recorded)
+        monitor = _monitor(tmp_path, dump, check_interval=5.0)
+        _hold_the_loop(0.3)
+        monitor.start()
+        until(lambda: bool(verdicts))
+        monitor.stop()
+        until(_thread_ended)
+
+        assert verdicts == [Check()]
+
     def test_stop_ends_the_thread_and_its_timer(
         self, tmp_path: Path, dump: TextIO, timer: list[str]
     ) -> None:
@@ -234,6 +258,35 @@ class TestThread:
 
 
 class TestExitSwitch:
+    @pytest.mark.parametrize(
+        ("exits", "armed"),
+        [(2, "armed to exit"), (3, "armed")],
+        ids=["an-exit-left", "budget-spent"],
+    )
+    def test_the_timer_exits_only_with_an_exit_left(
+        self, tmp_path: Path, dump: TextIO, timer: list[str], exits: int, armed: str
+    ) -> None:
+        """A spent budget must not exit through the backstop either: that is
+        the restart loop the budget ends."""
+        now = time.time()
+        (tmp_path / "exits.json").write_text(
+            json.dumps({"exits": [now - 60 * (n + 1) for n in range(exits)]})
+        )
+        monitor = _monitor(
+            tmp_path,
+            dump,
+            exit_on_stall=True,
+            backstop=True,
+            flush=lambda: None,
+            end_process=lambda _code: None,
+        )
+        monitor.start()
+        until(lambda: bool(timer))
+        monitor.stop()
+        until(_thread_ended)
+
+        assert timer[0] == armed
+
     def test_on_a_stall_ends_the_process_with_code_3(
         self, tmp_path: Path, dump: TextIO
     ) -> None:

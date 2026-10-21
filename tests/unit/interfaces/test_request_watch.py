@@ -20,7 +20,10 @@ from starlette.routing import Route
 
 from scavengarr.domain.ports.telemetry import RouteClass
 from scavengarr.infrastructure.config import load_config
-from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
+from scavengarr.infrastructure.graceful_shutdown import (
+    GracefulShutdown,
+    WatchedRequest,
+)
 from scavengarr.infrastructure.telemetry.watchdog import await_stack
 from scavengarr.interfaces.api.middleware import RequestWatchMiddleware, route_class
 from scavengarr.interfaces.app import create_app
@@ -127,9 +130,19 @@ class TestMiddleware:
         route.release.set()
         assert (await pending).status_code == 200
 
-    async def test_the_lifespan_passes_through(self) -> None:
+    async def test_the_lifespan_passes_through_unwatched(self) -> None:
+        """The lifespan runs as long as the app: watched, it would be named
+        stuck after 5 min. Read while it runs: its end forgets it either way."""
         shutdown = GracefulShutdown()
-        app = Starlette()
+        seen: list[tuple[WatchedRequest, ...]] = []
+
+        @contextlib.asynccontextmanager
+        async def _lifespan(_app: Starlette) -> AsyncIterator[None]:
+            seen.append(shutdown.watched_requests)
+            yield
+            seen.append(shutdown.watched_requests)
+
+        app = Starlette(lifespan=_lifespan)
         app.add_middleware(RequestWatchMiddleware, shutdown=shutdown)
         messages = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
         sent: list[str] = []
@@ -144,7 +157,7 @@ class TestMiddleware:
         await app(scope, _receive, _send)
 
         assert sent == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
-        assert shutdown.watched_requests == ()
+        assert seen == [(), ()]
 
 
 async def test_the_watched_task_runs_the_route_under_the_apps_middleware(
