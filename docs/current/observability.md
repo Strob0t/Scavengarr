@@ -122,7 +122,7 @@ Production's container once lost its network namespace for 33 h (the VPN contain
 
 ### Background tasks
 
-The service runs eight long-lived tasks beside its requests: six from the composition root (`loop_lag`, the event-loop monitor; `page_budget`, the stealth browser's page budget; `plugin_health`; `scoring`; `browser_warmup`; `pass_keeper`) and the two writers' own (`hoster_state_store`, `plugin_history`).
+The service runs nine long-lived tasks beside its requests: seven from the composition root (`loop_lag`, the event-loop monitor; `page_budget`, the stealth browser's page budget; `plugin_health`; `scoring`; `browser_warmup`; `pass_keeper`; `request_watch`, the stuck-request check) and the two writers' own (`hoster_state_store`, `plugin_history`).
 Each carries the done-callback of `watch_task` (`infrastructure/telemetry/background.py`), so a task that ends with an exception shows at once instead of at the shutdown that awaits it.
 
 - A task that ends with an exception logs `background_task_died` once (error, with `task`, `error`, the exception's type, and its traceback) and counts `scavengarr_background_task_deaths_total{task}`.
@@ -155,6 +155,18 @@ The exit switch `watchdog.exit_on_stall` is off.
 - With the switch on and an exit left in the budget, the timer exits too, with `faulthandler`'s code 1; the budget does not count that exit, since C code cannot write its file.
 
 Reading a stall on production: [Operations](../how-to/operations.md#2-read-the-logs).
+
+### Stuck requests
+
+A request can hang while the loop still runs, on a wait that no time bound ends.
+The request watch names it: `RequestWatchMiddleware` (`interfaces/api/middleware.py`) notes each request's task, route class, start and `request_id` in `GracefulShutdown`, beside the count of requests in flight, and forgets it when the request ends, cancelled or not.
+
+- `watch_requests` (`infrastructure/telemetry/watchdog.py`), the background task `request_watch`, reads the noted requests every 30 s on the loop and logs `request_stuck` once for each one past its route class's limit (warning, with `route`, `age_s`, `request_id` and `stack`), counted in `scavengarr_requests_stuck_total{route}`.
+- The route class comes from the path: `stremio_stream` and `stremio_catalog` after 5 min (a stream request answers by its deadline, 60 s by default), `torznab` for the Torznab searches and the `.crawljob` downloads after 10 min (a search has no overall bound), and `other` for the rest after 5 min; each class has a zero series from the start.
+- The requests under `/api/v1/stremio/play/` and `/api/v1/stremio/proxy/` last as long as a playback and are never noted.
+- `stack` follows the task's await chain, outermost first, down to the innermost wait (its innermost 4000 characters), since `Task.get_stack()` holds only the outermost frame of a suspended coroutine; the chain ends at a future, another task's included, and the lines name no source.
+- The middleware is the innermost one: `log_requests` and the rate limit run the app below them in a task of their own (Starlette's `BaseHTTPMiddleware`), so the noted task is the one that runs the route.
+- The check starts after the startup and stops beside the stall monitor, first at the shutdown.
 
 ### Queries
 
@@ -192,6 +204,9 @@ min_over_time(scavengarr_network_ok[1d])
 
 # Background tasks that died in the last day
 sum by (task) (increase(scavengarr_background_task_deaths_total[1d])) > 0
+
+# Stuck requests in the last day, by route class
+sum by (route) (increase(scavengarr_requests_stuck_total[1d])) > 0
 
 # Ticks later than 5 s in the last day: stalls the loop survived
 sum(increase(scavengarr_event_loop_lag_seconds_count[1d])) - sum(increase(scavengarr_event_loop_lag_seconds_bucket{le="5.0"}[1d]))
@@ -297,7 +312,8 @@ Reading production's metrics, logs and records: [Operations](../how-to/operation
 - `src/scavengarr/infrastructure/telemetry/`: `Telemetry`, the scrape-time collectors and the tracing.
 - `src/scavengarr/infrastructure/plugins/history.py`: the plugin record.
 - `src/scavengarr/infrastructure/network_probe.py`: the readiness probe.
-- `src/scavengarr/infrastructure/telemetry/watchdog.py`: the stall monitor and its exit budget.
+- `src/scavengarr/infrastructure/telemetry/watchdog.py`: the stall monitor, its exit budget and the stuck-request check.
+- `src/scavengarr/interfaces/api/middleware.py`: the request watch and the route classes.
 - [0016](../target/decisions/0016-in-process-stall-monitor.md): the monitor in the process, its exit switch off.
 - `docker/grafana-dashboard.json`, `docker/prometheus-alerts.yml`, `docker/tempo.yaml`: the dashboard, the alert rules and Tempo.
 - [Metrics](../reference/metrics.md), [Operations](../how-to/operations.md), [Architecture](architecture.md).

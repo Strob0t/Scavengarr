@@ -1,6 +1,8 @@
-"""The stall monitor (OpenSpec add-stall-watchdog): a thread outside the
-event loop that names a stalled loop and, with its switch on, ends the
-process, so that the container's restart policy restarts it.
+"""The stall monitor and the stuck-request check (OpenSpec
+add-stall-watchdog): a thread outside the event loop that names a stalled
+loop and, with its switch on, ends the process, so that the container's
+restart policy restarts it, and a task on the loop that names a request
+running past its route class's limit.
 
 ``monitor_loop_lag``'s tick stamps the heartbeat (``StallMonitor.beat``,
 every 0.5 s), and the monitor's thread reads it every 5 s. A heartbeat older
@@ -21,10 +23,16 @@ thread may hold: the line, the dump and the log's flush each get a bounded
 wait in a thread of their own, and the exit follows regardless.
 ``ExitBudget`` ends a restart loop: after 3 exits within 30 min a stall is
 only logged.
+
+In a stuck request the loop still runs: ``watch_requests`` reads the
+requests in flight that the request watch middleware notes in
+``GracefulShutdown`` every 30 s, and logs ``request_stuck`` once for each one
+past its route class's limit, with its task's await chain.
 """
 
 from __future__ import annotations
 
+import asyncio
 import faulthandler
 import json
 import os
@@ -32,13 +40,18 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
 import structlog
 
+from scavengarr.domain.ports.telemetry import RouteClass, TelemetryPort
+from scavengarr.infrastructure.graceful_shutdown import (
+    GracefulShutdown,
+    WatchedRequest,
+)
 from scavengarr.infrastructure.logging.setup import stop_async_logging
 
 log = structlog.get_logger(__name__)
@@ -58,6 +71,18 @@ BUDGET_WINDOW_S = 1800.0
 BUDGET_FILE = "watchdog-exits.json"
 # The stack in the structured line: its innermost part
 _STACK_CHARS = 4000
+# The stuck-request check, every 30 s on the loop, and each route class's
+# limit: a Stremio request answers by its deadline (60 s), a Torznab search
+# has no overall bound
+STUCK_CHECK_S = 30.0
+STUCK_LIMITS: dict[RouteClass, float] = {
+    "stremio_stream": 300.0,
+    "stremio_catalog": 300.0,
+    "torznab": 600.0,
+    "other": 300.0,
+}
+# The await chain's depth a stuck request's stack follows at most
+_CHAIN_DEPTH = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,3 +310,61 @@ class StallMonitor:
 
     def _dump_to(self) -> TextIO:
         return self._dump_file if self._dump_file is not None else sys.stderr
+
+
+def await_stack(task: asyncio.Task[object]) -> str:
+    """*task*'s await chain as stack lines, outermost first: where each
+    coroutine of the chain waits, down to the innermost wait.
+
+    ``Task.get_stack()`` holds only the outermost frame of a suspended
+    coroutine. The lines name no source: it would be read from disk on the
+    loop. The chain ends at a future, another task's included.
+    """
+    lines: list[str] = []
+    awaited: object = task.get_coro()
+    for _ in range(_CHAIN_DEPTH):
+        frame = getattr(awaited, "cr_frame", None) or getattr(awaited, "gi_frame", None)
+        if frame is None:
+            break
+        code = frame.f_code
+        lines.append(
+            f'  File "{code.co_filename}", line {frame.f_lineno}, in {code.co_name}'
+        )
+        awaited = getattr(awaited, "cr_await", None) or getattr(
+            awaited, "gi_yieldfrom", None
+        )
+    return "\n".join(lines)[-_STACK_CHARS:]
+
+
+def report_stuck(
+    requests: Iterable[WatchedRequest], now: float, telemetry: TelemetryPort
+) -> None:
+    """Log and count each request past its route class's limit, once."""
+    for request in requests:
+        age = now - request.started
+        if request.reported or age < STUCK_LIMITS[request.route]:
+            continue
+        request.reported = True
+        log.warning(
+            "request_stuck",
+            route=request.route,
+            age_s=round(age, 1),
+            request_id=request.request_id,
+            stack=await_stack(request.task),
+        )
+        telemetry.record_request_stuck(request.route)
+
+
+async def watch_requests(
+    shutdown: GracefulShutdown,
+    telemetry: TelemetryPort,
+    *,
+    interval: float = STUCK_CHECK_S,
+) -> None:
+    """The stuck-request check every *interval* seconds, on the loop: in a
+    stuck request the loop still runs, and the tasks' coroutines are read on
+    the loop's own thread."""
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(interval)
+        report_stuck(shutdown.watched_requests, loop.time(), telemetry)

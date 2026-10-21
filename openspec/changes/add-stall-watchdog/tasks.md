@@ -27,16 +27,16 @@
 
 ## 3. Stuck requests
 
-- [ ] 3.1 Tests first:
+- [x] 3.1 Tests first:
   - a request older than its route class's limit is logged once as `request_stuck` with its route class, its age and its task's stack, and counted;
   - play and proxy requests are never logged;
   - a request that ends is forgotten.
-- [ ] 3.2 The middleware notes each request's task and start beside `GracefulShutdown`'s in-flight count; the check runs on the loop every 30 s and stops at shutdown.
-- [ ] 3.3 `TelemetryPort.record_request_stuck(route)`, `NO_TELEMETRY` and `scavengarr_requests_stuck_total{route}`; `docs/reference/metrics.md` regenerated.
+- [x] 3.2 The middleware notes each request's task and start beside `GracefulShutdown`'s in-flight count; the check runs on the loop every 30 s and stops at shutdown.
+- [x] 3.3 `TelemetryPort.record_request_stuck(route)`, `NO_TELEMETRY` and `scavengarr_requests_stuck_total{route}`; `docs/reference/metrics.md` regenerated.
 
 ## 4. Docs and the readings
 
-- [ ] 4.1 Docs:
+- [x] 4.1 Docs:
   - `docs/current/observability.md` (the monitor, the switch, the lines);
   - `docs/current/architecture.md` (the lifespan);
   - `docs/how-to/operations.md` (reading a stall from `prodctl logs`, the dump on standard error);

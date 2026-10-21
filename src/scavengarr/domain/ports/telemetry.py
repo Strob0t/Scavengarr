@@ -43,6 +43,7 @@ BackgroundTaskName = Literal[
     "pass_keeper",
     "hoster_state_store",
     "plugin_history",
+    "request_watch",
 ]
 # The same names as values: each task's zero series from the start
 BACKGROUND_TASKS: tuple[BackgroundTaskName, ...] = (
@@ -54,6 +55,18 @@ BACKGROUND_TASKS: tuple[BackgroundTaskName, ...] = (
     "pass_keeper",
     "hoster_state_store",
     "plugin_history",
+    "request_watch",
+)
+
+# The route classes of the stuck-request check, each with its limit
+# (``scavengarr_requests_stuck_total{route}``)
+RouteClass = Literal["stremio_stream", "stremio_catalog", "torznab", "other"]
+# The same classes as values: each one's zero series from the start
+ROUTE_CLASSES: tuple[RouteClass, ...] = (
+    "stremio_stream",
+    "stremio_catalog",
+    "torznab",
+    "other",
 )
 
 AttributeValue = str | int | float | bool
@@ -79,7 +92,8 @@ class Stage(Protocol):
 
 @runtime_checkable
 class TelemetryPort(Protocol):
-    """Records stages, outcomes without a run, values and task deaths."""
+    """Records stages, outcomes without a run, values, task deaths and stuck
+    requests."""
 
     def stage(self, name: StageName, /, **labels: str) -> AbstractContextManager[Stage]:
         """Time the ``with`` block as stage *name*; exceptions propagate."""
@@ -95,6 +109,10 @@ class TelemetryPort(Protocol):
 
     def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
         """Count a background task that ended with an exception."""
+        ...
+
+    def record_request_stuck(self, route: RouteClass, /) -> None:
+        """Count a request that ran past its route class's limit."""
         ...
 
 
@@ -122,6 +140,9 @@ class _NoTelemetry:
         pass
 
     def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
+        pass
+
+    def record_request_stuck(self, route: RouteClass, /) -> None:
         pass
 
 

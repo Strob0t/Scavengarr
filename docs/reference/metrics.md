@@ -55,6 +55,7 @@ prometheus-client adds `process_*` (the Python process), `python_gc_*` and `pyth
 | `scavengarr_plugin_results_total` | counter | `plugin` |  | Validated results of plugin searches |
 | `scavengarr_plugin_search_seconds` | histogram | `plugin` | 1, 2, 4, 7, 10, 15, 30 | Plugin searches of Stremio requests: duration |
 | `scavengarr_plugin_search_total` | counter | `plugin`, `outcome` |  | Plugin searches of Stremio requests by outcome |
+| `scavengarr_requests_stuck_total` | counter | `route` |  | Requests that ran past their route class's limit |
 | `scavengarr_stremio_phase_seconds` | histogram | `phase` | 0.5, 1, 2, 4, 7, 10, 15, 30, 60 | Phases of Stremio stream requests: duration |
 | `scavengarr_stremio_phase_total` | counter | `phase`, `outcome` |  | Phases of Stremio stream requests by outcome |
 | `scavengarr_stremio_request_seconds` | histogram | `source` | 0.5, 1, 2, 4, 7, 10, 15, 30, 60 | Stremio stream requests by search state: duration |

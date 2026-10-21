@@ -18,7 +18,10 @@ from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
 from scavengarr.infrastructure.network_probe import NetworkProbe
 from scavengarr.infrastructure.telemetry import CONTENT_TYPE, Telemetry
 from scavengarr.infrastructure.version import APP_VERSION, build_identity
-from scavengarr.interfaces.api.middleware import RateLimitMiddleware
+from scavengarr.interfaces.api.middleware import (
+    RateLimitMiddleware,
+    RequestWatchMiddleware,
+)
 from scavengarr.interfaces.app_state import AppState
 from scavengarr.interfaces.composition import lifespan
 
@@ -44,6 +47,10 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state = AppState()
     app.state.config = config
     app.state.graceful_shutdown = GracefulShutdown()
+
+    # The request watch, innermost (added first: each later middleware wraps
+    # the earlier ones), so the task it notes is the one that runs the route
+    app.add_middleware(RequestWatchMiddleware, shutdown=app.state.graceful_shutdown)
 
     # API rate limiting (per-IP sliding window)
     if config.api_rate_limit_rpm > 0:

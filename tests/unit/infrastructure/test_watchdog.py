@@ -1,9 +1,11 @@
-"""Tests for the stall monitor (OpenSpec add-stall-watchdog, group 2): the
-decision with a fake clock, the thread, the exit switch and its budget, and
-subprocesses whose event loop a blocking call holds."""
+"""Tests for the stall monitor and the stuck-request check (OpenSpec
+add-stall-watchdog, groups 2 and 3): the decision with a fake clock, the
+thread, the exit switch and its budget, subprocesses whose event loop a
+blocking call holds, and the check of the requests in flight."""
 
 from __future__ import annotations
 
+import asyncio
 import faulthandler
 import json
 import os
@@ -11,23 +13,32 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, get_args
 
 import pytest
 from structlog.testing import capture_logs
 
-from scavengarr.infrastructure.telemetry import watchdog
+from scavengarr.domain.ports.telemetry import RouteClass
+from scavengarr.infrastructure.graceful_shutdown import (
+    GracefulShutdown,
+    WatchedRequest,
+)
+from scavengarr.infrastructure.telemetry import Telemetry, watchdog
 from scavengarr.infrastructure.telemetry.watchdog import (
     EXIT_CODE,
+    STUCK_LIMITS,
     Check,
     ExitBudget,
     StallMonitor,
+    await_stack,
     check,
+    report_stuck,
+    watch_requests,
 )
 
-from ..waiting import until
+from ..waiting import eventually, until
 
 # The subprocesses import this checkout's code, not the venv's install
 _SRC = Path(__file__).resolve().parents[3] / "src"
@@ -419,3 +430,111 @@ class TestBlockedLoop:
 
         assert done.returncode == 0, done.stderr[-2000:]
         assert "Timeout (0:00:01)!" in done.stderr
+
+
+async def _route_waits(release: asyncio.Event) -> None:
+    await release.wait()
+
+
+async def _outer(release: asyncio.Event) -> None:
+    await _route_waits(release)
+
+
+@pytest.fixture
+async def waiting() -> AsyncIterator[asyncio.Task[None]]:
+    """A task that waits in ``_route_waits``, as a request's task waits in its
+    route."""
+    release = asyncio.Event()
+    task = asyncio.create_task(_outer(release))
+    await asyncio.sleep(0)
+    yield task
+    release.set()
+    await task
+
+
+def _stuck(telemetry: Telemetry, route: RouteClass) -> float | None:
+    return telemetry.registry.get_sample_value(
+        "scavengarr_requests_stuck_total", {"route": route}
+    )
+
+
+class TestStuckRequests:
+    """The check on the loop: a request past its route class's limit is logged
+    once with its task's stack, and counted."""
+
+    def test_each_route_class_has_its_limit(self) -> None:
+        """A Stremio request answers by its deadline (60 s), a Torznab search
+        has no overall bound."""
+        assert STUCK_LIMITS == {
+            "stremio_stream": 300.0,
+            "stremio_catalog": 300.0,
+            "torznab": 600.0,
+            "other": 300.0,
+        }
+        assert set(STUCK_LIMITS) == set(get_args(RouteClass))
+
+    async def test_a_request_past_its_limit_is_logged_once_and_counted(
+        self, waiting: asyncio.Task[None]
+    ) -> None:
+        request = WatchedRequest(
+            task=waiting, route="stremio_stream", started=0.0, request_id="ab12"
+        )
+        telemetry = Telemetry()
+        with capture_logs() as logs:
+            report_stuck([request], 300.5, telemetry)
+            report_stuck([request], 400.0, telemetry)
+
+        [stuck] = _events(logs, "request_stuck")
+        assert stuck["route"] == "stremio_stream"
+        assert stuck["age_s"] == 300.5
+        assert stuck["request_id"] == "ab12"
+        assert "in _route_waits" in stuck["stack"]
+        assert _stuck(telemetry, "stremio_stream") == 1.0
+
+    async def test_a_torznab_search_of_9_min_is_not_stuck(
+        self, waiting: asyncio.Task[None]
+    ) -> None:
+        request = WatchedRequest(task=waiting, route="torznab", started=0.0)
+        telemetry = Telemetry()
+        with capture_logs() as logs:
+            report_stuck([request], 599.0, telemetry)
+
+        assert not _events(logs, "request_stuck")
+        assert _stuck(telemetry, "torznab") == 0.0
+
+    async def test_the_stack_follows_the_await_chain(
+        self, waiting: asyncio.Task[None]
+    ) -> None:
+        """Outermost first, down to the innermost wait: ``Task.get_stack()``
+        holds only the outermost frame of a suspended coroutine."""
+        lines = await_stack(waiting).splitlines()
+
+        assert "in _outer" in lines[0]
+        assert "in _route_waits" in lines[1]
+        assert lines[-1].endswith("in wait")  # asyncio.Event.wait
+
+    async def test_the_check_runs_every_interval_and_logs_once(
+        self, waiting: asyncio.Task[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        shutdown = GracefulShutdown()
+        started = asyncio.get_running_loop().time() - 301
+        shutdown.watch_request(
+            WatchedRequest(task=waiting, route="other", started=started)
+        )
+        checks: list[float] = []
+        report = watchdog.report_stuck
+
+        def _counted(*args: Any) -> None:
+            checks.append(time.monotonic())
+            report(*args)
+
+        monkeypatch.setattr(watchdog, "report_stuck", _counted)
+        with capture_logs() as logs:
+            watcher = asyncio.create_task(
+                watch_requests(shutdown, Telemetry(), interval=0.01)
+            )
+            await eventually(lambda: len(checks) >= 3)
+            watcher.cancel()
+            await asyncio.wait([watcher])
+
+        assert len(_events(logs, "request_stuck")) == 1

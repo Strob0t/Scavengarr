@@ -34,8 +34,10 @@ from prometheus_client.exposition import CONTENT_TYPE_PLAIN_0_0_4
 
 from scavengarr.domain.ports.telemetry import (
     BACKGROUND_TASKS,
+    ROUTE_CLASSES,
     AttributeValue,
     BackgroundTaskName,
+    RouteClass,
     StageName,
     ValueName,
 )
@@ -272,6 +274,14 @@ class Telemetry:
         # A zero series per task, so increase() sees the first death
         for task in BACKGROUND_TASKS:
             self._task_deaths.labels(task=task)
+        self._requests_stuck = Counter(
+            "scavengarr_requests_stuck",
+            "Requests that ran past their route class's limit",
+            ("route",),
+            registry=self.registry,
+        )
+        for route in ROUTE_CLASSES:
+            self._requests_stuck.labels(route=route)
         # One series by construction: its labels name the build, not a set
         Info(
             "scavengarr_build", "Scavengarr version and build", registry=self.registry
@@ -303,6 +313,9 @@ class Telemetry:
 
     def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
         self._task_deaths.labels(task=task).inc()
+
+    def record_request_stuck(self, route: RouteClass, /) -> None:
+        self._requests_stuck.labels(route=route).inc()
 
     def finish(
         self, name: StageName, labels: dict[str, str], outcome: str, seconds: float

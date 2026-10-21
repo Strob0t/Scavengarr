@@ -120,6 +120,7 @@ from scavengarr.infrastructure.telemetry.watchdog import (
     BUDGET_FILE,
     ExitBudget,
     StallMonitor,
+    watch_requests,
 )
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
@@ -832,6 +833,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The anime id list, so an IMDb anime request right after the start has
     # its episode's Kitsu number (the shutdown ends a load still running)
     anime_id_lists.load_in_background()
+    # The requests in flight past their route class's limit, every 30 s
+    state._request_watch_task = watch_task(
+        asyncio.create_task(watch_requests(state.graceful_shutdown, state.telemetry)),
+        "request_watch",
+        state.telemetry,
+    )
     # After the startup, whose plugin loading holds the loop, and next to the
     # try: no exit path leaves the thread running
     state.stall_monitor.start()
@@ -839,8 +846,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # First: the shutdown's bounded waits hold the loop as no stall
+        # First: the shutdown's bounded waits hold the loop as no stall, and
+        # its requests cut at the drain are no stuck requests
         state.stall_monitor.stop()
+        await stop_task(state._request_watch_task)
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
 

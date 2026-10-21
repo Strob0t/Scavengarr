@@ -92,6 +92,15 @@ poetry run python scripts/prodctl.py logs --since 4h --grep 'most recent call fi
 - A dump headed `Timeout (0:04:00)!` comes from the `faulthandler` timer: no Python thread ran for twice the limit.
 - After an exit `ps` counts one restart more, and the log keeps the run before it, since a restart keeps the container's log.
 
+A request stuck while the loop runs ([Stuck requests](../current/observability.md#stuck-requests)):
+
+```bash
+poetry run python scripts/prodctl.py logs --since 4h --grep request_stuck --fields route,age_s,request_id,stack --width 0
+```
+
+- `request_id` finds the request's other lines (`--grep` with the id), its `http_request` line among them once the request ends.
+- The last line of `stack` is where the request waits.
+
 ### 3. Read the metrics and the state
 
 ```bash

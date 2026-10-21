@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from typing import get_args
 
 import pytest
 from structlog.testing import capture_logs
 
-from scavengarr.domain.ports.telemetry import TelemetryPort
+from scavengarr.domain.ports.telemetry import ROUTE_CLASSES, RouteClass, TelemetryPort
 from scavengarr.infrastructure.telemetry import (
     LAG_WINDOW,
     Telemetry,
@@ -182,6 +183,22 @@ class TestCountAndRecord:
 
         assert _sample(t, "scavengarr_network_ok", check="dns") == 1.0
         assert _sample(t, "scavengarr_network_ok", check="cache") == 0.0
+
+    def test_stuck_requests_count_by_route_class_from_zero(self) -> None:
+        """A zero series per route class: ``increase()`` sees the first."""
+        t = Telemetry()
+        t.record_request_stuck("torznab")
+
+        assert {
+            route: _sample(t, "scavengarr_requests_stuck_total", route=route)
+            for route in get_args(RouteClass)
+        } == {
+            "stremio_stream": 0.0,
+            "stremio_catalog": 0.0,
+            "torznab": 1.0,
+            "other": 0.0,
+        }
+        assert sorted(ROUTE_CLASSES) == sorted(get_args(RouteClass))
 
 
 class TestRender:

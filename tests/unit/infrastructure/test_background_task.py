@@ -103,6 +103,7 @@ def test_every_task_name_has_a_series_from_the_start() -> None:
         "pass_keeper",
         "hoster_state_store",
         "plugin_history",
+        "request_watch",
     }
     # The values the zero series come from are the Literal's names, once each
     assert sorted(BACKGROUND_TASKS) == sorted(get_args(BackgroundTaskName))

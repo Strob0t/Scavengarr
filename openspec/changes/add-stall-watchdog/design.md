@@ -40,7 +40,7 @@ What the code answers in each failure (Mr. Fable's research, read from the code;
 - **D5, the budget lives in a file.** A restart keeps the container's file system, so a small JSON file in `cache.dir` with the last exits' times survives it; a recreate starts it empty, and a corrupt file counts as empty. After 3 exits within 30 min a stall is logged with its exit skipped.
 - **D6, the switch is off.** `watchdog.exit_on_stall` defaults to false; turning it on is one setting in production's Compose, with the limit chosen from the readings of group 4.
 - **D7, stuck requests are checked on the loop.** In that failure the loop still runs, and `Task.get_stack()` is read on the loop's own thread. The middleware notes each request's task and start beside the in-flight count of `GracefulShutdown`.
-- **D8, fixed label sets.** The task names (`loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup`, `pass_keeper`, `hoster_state_store`, `plugin_history`) and the route classes (`stremio_stream`, `stremio_catalog`, `torznab`, `other`) are `Literal` sets; no path, title or id goes into a label.
+- **D8, fixed label sets.** The task names (`loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup`, `pass_keeper`, `hoster_state_store`, `plugin_history`, `request_watch`) and the route classes (`stremio_stream`, `stremio_catalog`, `torznab`, `other`) are `Literal` sets; no path, title or id goes into a label.
 - **D9, the monitor's lifetime.** It starts after `mark_ready()`, so plugin loading and the browser's start are no stall, and it stops first at shutdown, so the bounded shutdown is none either.
 
 ## Risks / Trade-offs

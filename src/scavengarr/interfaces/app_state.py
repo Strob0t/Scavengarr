@@ -123,6 +123,8 @@ class AppState(State):
     _loop_lag_task: asyncio.Task[None]
     # The thread that names a stalled loop from the heartbeat
     stall_monitor: StallMonitor
+    # Names the requests in flight past their route class's limit
+    _request_watch_task: asyncio.Task[None]
 
     # Adapts the stealth browser's page limit (PageBudget)
     _page_budget_task: asyncio.Task[None]

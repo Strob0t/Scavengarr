@@ -38,3 +38,4 @@ class TestNoTelemetry:
         NO_TELEMETRY.count("plugin_search", "breaker_open", plugin="kinoger")
         NO_TELEMETRY.record("stremio_streams", 5)
         NO_TELEMETRY.record_background_task_death("loop_lag")
+        NO_TELEMETRY.record_request_stuck("torznab")

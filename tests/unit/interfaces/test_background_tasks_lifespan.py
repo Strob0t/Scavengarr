@@ -79,6 +79,7 @@ async def test_every_long_lived_task_carries_the_callback(
             "pass_keeper": state._pass_keeper_task,
             "hoster_state_store": state.hoster_state_store._task,
             "plugin_history": state.plugin_history._task,
+            "request_watch": state._request_watch_task,
         }
 
         assert set(watched) == set(get_args(BackgroundTaskName))

@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Added: Stuck Requests Are Logged
+
+- A request that hung while the event loop ran left no trace until it ended, if it ended.
+- `RequestWatchMiddleware` (`interfaces/api/middleware.py`), a pure ASGI middleware and the innermost one, notes each request's task, route class, start and `request_id` in `GracefulShutdown` and forgets it in a `finally`, so a cancelled or disconnected request leaves too. `route_class()` maps the path to `stremio_stream`, `stremio_catalog`, `torznab` (the Torznab searches and the `.crawljob` downloads) or `other`; play and proxy requests are never noted.
+- `watch_requests()` (`infrastructure/telemetry/watchdog.py`), the background task `request_watch`, reads them every 30 s on the loop and logs `request_stuck` once per request past its limit (5 min for Stremio and the rest, 10 min for Torznab) with `route`, `age_s`, `request_id` and the task's await chain, counted in `scavengarr_requests_stuck_total{route}` through `TelemetryPort.record_request_stuck()`, with a zero series per route class. It starts after the startup and stops beside the stall monitor, first at the shutdown.
+- Group 3 of the OpenSpec change `add-stall-watchdog`; design D8 names the ninth task. Tests: `test_request_watch.py` (the route classes, a request watched while it runs and forgotten after it, a cancelled one, a playback never watched, the lifespan passing through, and under the app's own middleware the noted task runs the route, not `call_next`), `test_watchdog.py` (the limits, one line per request, the await chain, the check's interval), `test_graceful_shutdown.py`, `test_telemetry.py`, `test_background_task.py` and `test_background_tasks_lifespan.py`. `docs/current/observability.md` (Stuck requests), `docs/current/architecture.md`, `docs/how-to/operations.md`, `docs/reference/metrics.md` and the README say so.
+
 ### Added: A Stall Monitor Names a Stalled Event Loop
 
 - A synchronous call that held the event loop stopped every request and the health routes with it: Docker marked the container unhealthy and restarted nothing, and the log named no cause.
