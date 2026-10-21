@@ -2,7 +2,7 @@
 
 > **Purpose:** This document maps the modules of `src/scavengarr/` to their layers, follows a Torznab search and a Stremio stream request through them, and gives the order in which the app starts and stops.
 > **Status:** current
-> **As of:** 53cfaacf
+> **As of:** 4a898049
 
 ## Purpose
 
@@ -204,7 +204,8 @@ Metadata, Torznab, validation, telemetry and the runtime services:
 | `infrastructure/telemetry/metrics.py` | `Telemetry` | The `TelemetryPort` adapter on prometheus-client. |
 | `infrastructure/telemetry/tracing.py` | `Tracing`, `otlp_tracing` | The stages as OpenTelemetry spans, loaded only with an endpoint. |
 | `infrastructure/telemetry/collectors.py` | `BreakerCollector`, `BrowserPagesCollector`, `ContainerCollector` | Metrics read when Prometheus scrapes. |
-| `infrastructure/telemetry/loop_lag.py` | `monitor_loop_lag` | The event-loop lag monitor. |
+| `infrastructure/telemetry/loop_lag.py` | `monitor_loop_lag` | The event-loop lag monitor, whose tick is the stall monitor's heartbeat. |
+| `infrastructure/telemetry/watchdog.py` | `StallMonitor`, `ExitBudget` | The thread that names a stalled event loop, and the budget of its exits. |
 | `infrastructure/circuit_breaker.py` | `PluginCircuitBreaker` | The circuit breaker of plugins and hosters: closed, open, half-open. |
 | `infrastructure/concurrency.py` | `ConcurrencyPool`, `RequestBudget` | The global fair-share httpx and Playwright slots. |
 | `infrastructure/graceful_shutdown.py` | `GracefulShutdown` | The readiness flag and the drain of in-flight requests. |
@@ -352,7 +353,7 @@ At the answer budget the entry goes into the cache with the plugins still runnin
 
 ```mermaid
 flowchart TD
-    begin(["lifespan() starts"]) --> tel["Telemetry and the event-loop lag monitor, concurrency auto-tuned"]
+    begin(["lifespan() starts"]) --> tel["Telemetry, the stall monitor and the event-loop lag monitor that stamps its heartbeat, concurrency auto-tuned"]
     tel --> cache["Cache backend opened, cleared in the dev environment"]
     cache --> http["Shared HTTP client, given to the httpx plugins with the cache"]
     http --> plugins["Plugin registry discovered, per-plugin overrides applied"]
@@ -374,12 +375,14 @@ flowchart TD
     anime --> ucs["Stremio stream and catalog use cases"]
     ucs --> ready["mark_ready(), readyz answers 200"]
     ready --> bg["Background tasks: browser warm-up, pass keeper, anime id list"]
-    bg --> serve(["The app serves requests"])
+    bg --> watch["The stall monitor's thread starts"]
+    watch --> serve(["The app serves requests"])
 ```
 
 The cache comes first because most components keep their state in it.
 `HosterStateStore` and `PluginHistory` restore their snapshots before the app reports ready, so the first request finds the resolver outcomes and breakers of the run before.
 The browser warm-up, the pass keeper and the anime id list load run in the background: readiness does not wait for them.
+The stall monitor's thread starts last, since the plugin loading holds the loop, and stops first at the shutdown ([Stalls](observability.md#stalls)).
 
 ### Shutdown
 
@@ -395,9 +398,10 @@ flowchart TD
         waitc -. "5 s after the signal" .-> cancel["The request tasks still running are cancelled"]
         waitt -. "5 s after the signal" .-> cancel
     end
-    waitt --> drain
-    cancel --> drain
+    waitt --> monitor
+    cancel --> monitor
     subgraph app["The app: lifespan() cleanup"]
+        monitor["The stall monitor's thread stops: the bounded waits below are no stall"] --> drain
         drain["GracefulShutdown.wait_for_drain() for up to 10 s, readyz answers 503"] --> stop["The background work ends: Stremio searches and resolutions, anime ids, StremioLinks, segment read-ahead, pass keeper"]
         stop --> reg["The resolver registry's half-open probes and challenged captures end"]
         reg --> snap["The last writes of HosterStateStore and PluginHistory, each logged with its counts when something changed"]
@@ -456,7 +460,7 @@ The settings that shape the flows above are `stremio.plugin_timeout_seconds`, `s
 
 The core records its steps through `TelemetryPort` as stages: `stremio_request`, `stremio_phase`, `plugin_search`, `hoster_resolve`, `hoster_challenge_completion`, `hoster_pass_keep`, `hls_proxy`, `hls_readahead`, `browser_page_wait` and `browser_page`.
 Their metrics, labels and endpoints: [`docs/reference/metrics.md`](../reference/metrics.md).
-The start logs `config_effective` and `app_startup_complete` with the build identity; the stop logs `app_shutdown_complete`.
+The start logs `config_effective`, `app_startup_complete` with the build identity and `stall_monitor_started`; the stop logs `stall_monitor_stopped` first and `app_shutdown_complete` last.
 
 ## Limits
 

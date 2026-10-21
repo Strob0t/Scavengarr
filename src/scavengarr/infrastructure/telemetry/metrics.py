@@ -251,10 +251,15 @@ class Telemetry:
                 registry=self.registry,
             ),
         }
+        # Up to the stall monitor's limit: a stall the loop survived stays in
+        # the scraped metrics after the container's log is gone
         self._loop_lag = Histogram(
             "scavengarr_event_loop_lag_seconds",
             "How late a 0.5 s event-loop timer fired",
-            buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+            buckets=(
+                *(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+                *(5.0, 10.0, 30.0, 60.0, 120.0),
+            ),
             registry=self.registry,
         )
         self._loop_lag_ms: deque[float] = deque(maxlen=LAG_WINDOW)

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from scavengarr.infrastructure.scoring.scheduler import ScoringScheduler
     from scavengarr.infrastructure.stremio.hls_proxy import SegmentReadAhead
     from scavengarr.infrastructure.telemetry import Telemetry
+    from scavengarr.infrastructure.telemetry.watchdog import StallMonitor
 
 
 class AppState(State):
@@ -118,8 +119,10 @@ class AppState(State):
     # unreachable marks per day), in the cache across restarts
     plugin_history: PluginHistory
 
-    # Event-loop lag monitor (feeds telemetry)
+    # Event-loop lag monitor (feeds telemetry, stamps the heartbeat)
     _loop_lag_task: asyncio.Task[None]
+    # The thread that names a stalled loop from the heartbeat
+    stall_monitor: StallMonitor
 
     # Adapts the stealth browser's page limit (PageBudget)
     _page_budget_task: asyncio.Task[None]

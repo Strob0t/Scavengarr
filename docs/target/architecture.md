@@ -2,7 +2,7 @@
 
 > **Purpose:** The dependency rule, the layer contracts and the invariants.
 > **Status:** target
-> **As of:** 9d2fc4c7
+> **As of:** 4a898049
 
 The rules every change to `src/scavengarr/` must keep.
 How the code implements them now: [`docs/current/architecture.md`](../current/architecture.md).
@@ -58,6 +58,7 @@ Application and infrastructure meet only in the domain's ports and types, and in
 ### Invariants
 
 - Nothing may block the event loop: I/O must be asynchronous, and CPU-bound work must run in a worker thread through `asyncio.to_thread` (`run_in_executor` drops the log context).
+- A stall of the event loop must be named from a thread outside it, with the loop thread's stack, and the process must end on a stall only with `watchdog.exit_on_stall` on ([0016](decisions/0016-in-process-stall-monitor.md)).
 - Independent URLs (detail pages, link checks) must run in parallel with bounded concurrency.
 - Link validation must try `HEAD` with redirects first and `GET` only when `HEAD` fails, with short timeouts and a semaphore.
 - Stremio search results must be cached per title and shared by the requests for that title while the search runs (single-flight).
@@ -104,5 +105,6 @@ Application and infrastructure meet only in the domain's ports and types, and in
 
 - [`docs/current/architecture.md`](../current/architecture.md): the module map, the request flows, the composition and the shutdown order.
 - [`docs/target/decisions/0001-dependency-rule.md`](decisions/0001-dependency-rule.md): the decision behind the rule.
+- [`docs/target/decisions/0016-in-process-stall-monitor.md`](decisions/0016-in-process-stall-monitor.md): the stall monitor in the process, its exit switch off.
 - `src/scavengarr/interfaces/composition.py`: the composition root.
 - `AGENTS.md` §3 and §5: the agents' summary of these rules and the typing rules.

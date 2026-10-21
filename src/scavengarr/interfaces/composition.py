@@ -116,6 +116,11 @@ from scavengarr.infrastructure.telemetry.collectors import (
     BreakerCollector,
     BrowserPagesCollector,
 )
+from scavengarr.infrastructure.telemetry.watchdog import (
+    BUDGET_FILE,
+    ExitBudget,
+    StallMonitor,
+)
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
 from scavengarr.infrastructure.torznab.search_engine import HttpxSearchEngine
@@ -532,8 +537,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.telemetry = create_telemetry(config.telemetry.tracing_endpoint)
     if state.telemetry.tracing is not None:
         log.info("tracing_enabled", endpoint=config.telemetry.tracing_endpoint)
+    # The stall monitor's thread reads the loop lag monitor's tick; it starts
+    # once the app is ready (OpenSpec add-stall-watchdog, design D1 and D9)
+    state.stall_monitor = StallMonitor(
+        stall_seconds=config.watchdog.stall_seconds,
+        exit_on_stall=config.watchdog.exit_on_stall,
+        budget=ExitBudget(config.cache.directory / BUDGET_FILE),
+    )
     state._loop_lag_task = watch_task(
-        asyncio.create_task(monitor_loop_lag(state.telemetry)),
+        asyncio.create_task(
+            monitor_loop_lag(state.telemetry, heartbeat=state.stall_monitor.beat)
+        ),
         "loop_lag",
         state.telemetry,
     )
@@ -818,10 +832,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The anime id list, so an IMDb anime request right after the start has
     # its episode's Kitsu number (the shutdown ends a load still running)
     anime_id_lists.load_in_background()
+    # After the startup, whose plugin loading holds the loop, and next to the
+    # try: no exit path leaves the thread running
+    state.stall_monitor.start()
 
     try:
         yield
     finally:
+        # First: the shutdown's bounded waits hold the loop as no stall
+        state.stall_monitor.stop()
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
 

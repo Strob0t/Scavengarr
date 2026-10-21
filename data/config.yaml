@@ -158,3 +158,8 @@ stremio:
 # -- Telemetry --------------------------------------------------------
 # telemetry:
 #   tracing_endpoint: "http://tempo:4318" # OTLP/HTTP; the core's stages as OpenTelemetry spans (compose profile tracing); off when unset
+
+# -- Stall monitor ----------------------------------------------------
+# watchdog:
+#   stall_seconds: 120          # no event-loop tick for this long: event_loop_stalled with the stacks; 0 turns it off
+#   exit_on_stall: false        # true: end the process with code 3, at most 3 times in 30 min

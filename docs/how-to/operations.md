@@ -2,7 +2,7 @@
 
 > **Purpose:** Reading production with `scripts/prodctl.py`: the container, its logs, metrics, the digest, the post-deploy check and the probes.
 > **Status:** how-to
-> **As of:** afe8dbb1
+> **As of:** 4a898049
 
 ## Goal
 
@@ -77,6 +77,20 @@ The search's log lines ([Stremio addon](../current/stremio-addon.md#observabilit
 - `stremio_stream_response` with the route's `source`, `complete` and `missing_count`, the values of its `X-Cache` and `X-Search-Complete` headers.
 
 `prodctl.py logs --grep stremio_search_complete` shows whether late plugins empty `missing`.
+
+A stall of the event loop ([Stalls](../current/observability.md#stalls)):
+
+```bash
+poetry run python scripts/prodctl.py logs --since 4h --grep 'event_loop_(stalled|recovered)|stall_monitor' --fields age_s,exit,length_s
+poetry run python scripts/prodctl.py logs --since 4h --grep event_loop_stalled --fields stack --width 0
+poetry run python scripts/prodctl.py logs --since 4h --grep 'most recent call first|File "|Timeout \(' --limit 0 --width 0
+```
+
+- `event_loop_stalled` names the stall's age and its `exit` (`on`, `skipped` or `off`), `event_loop_recovered` its length; a stall the process exited on has no recovery line.
+- `stack` holds the innermost part of the loop thread's stack: its last `File` line is the call that held the loop.
+- The dump is plain text on stderr, which the log merges by time: a `Thread 0x… (most recent call first):` line per thread with its frames below, innermost first, and `Current thread` for the monitor's own.
+- A dump headed `Timeout (0:04:00)!` comes from the `faulthandler` timer: no Python thread ran for twice the limit.
+- After an exit `ps` counts one restart more, and the log keeps the run before it, since a restart keeps the container's log.
 
 ### 3. Read the metrics and the state
 

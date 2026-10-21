@@ -22,11 +22,23 @@ The service SHALL detect from outside the event loop when the loop has not run i
 - **THEN** no monitor thread runs
 
 ### Requirement: Held Interpreter Backstop
-While the detection is on, the service SHALL keep a `faulthandler` timer armed at twice `watchdog.stall_seconds` and re-armed by the heartbeat, so that a stall in which no Python thread can run still dumps the traceback of every thread.
+While the detection is on, the service SHALL keep a `faulthandler` timer armed at twice `watchdog.stall_seconds` and re-armed at every check of the monitor thread, so that a stall in which no Python thread can run still dumps the traceback of every thread. The timer SHALL end the process only while `watchdog.exit_on_stall` is true and the exit budget has an exit left. A failed check and the end of the monitor thread SHALL leave no timer armed.
 
 #### Scenario: No Python thread runs
 - **WHEN** a call holds the interpreter for more than twice `watchdog.stall_seconds`
 - **THEN** standard error holds the traceback of every thread
+
+#### Scenario: The monitor thread runs during the stall
+- **WHEN** a call that lets other threads run holds the event loop for more than twice `watchdog.stall_seconds`
+- **THEN** standard error holds one dump, the monitor's
+
+#### Scenario: A failed check
+- **WHEN** one check of the monitor thread raises
+- **THEN** the thread keeps running and its next check arms the timer again
+
+#### Scenario: The monitor stops
+- **WHEN** the monitor stops at shutdown
+- **THEN** no timer stays armed
 
 ### Requirement: Exit On Stall Is Opt-In
 The service SHALL end its process on a detected stall only when `watchdog.exit_on_stall` is true (default false). It SHALL then exit with code 3 after the dump, without waiting on a lock or a write the stalled thread may hold, so that the container's restart policy restarts it. After 3 exits within 30 minutes, counted in a file that outlives a restart of the container, a further stall SHALL only be logged, with its exit skipped.

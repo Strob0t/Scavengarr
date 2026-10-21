@@ -2,7 +2,7 @@
 
 > **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** afe8dbb1
+> **As of:** 4a898049
 
 The one index of the documentation: one line per document with its status.
 
@@ -118,6 +118,7 @@ One line per feature, with the document that describes it.
 | [`target/decisions/0013-mirror-groups.md`](target/decisions/0013-mirror-groups.md) | target | Mirror sites form a group, and a Stremio request asks one of them. |
 | [`target/decisions/0014-resolver-state-snapshot.md`](target/decisions/0014-resolver-state-snapshot.md) | target | The resolver registry's state outlives a restart as one snapshot. |
 | [`target/decisions/0015-privacy-rule.md`](target/decisions/0015-privacy-rule.md) | target | Docs and commit texts tell nothing about what the maintainer watches. |
+| [`target/decisions/0016-in-process-stall-monitor.md`](target/decisions/0016-in-process-stall-monitor.md) | target | A thread in the process names a stalled loop, its exit switch off. |
 | [`target/decisions/_template.md`](target/decisions/_template.md) | target | The template of a decision record. |
 
 ## Features

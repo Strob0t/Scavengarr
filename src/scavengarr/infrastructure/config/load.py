@@ -25,6 +25,7 @@ _SECTION_KEYS: set[str] = {
     "stremio",
     "scoring",
     "telemetry",
+    "watchdog",
 }
 
 # Top-level scalar keys passed through as they are

@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution, every stealth browser page and every HLS proxy request.
 > **Status:** current
-> **As of:** 53cfaacf
+> **As of:** 4a898049
 
 ## Purpose
 
@@ -131,6 +131,31 @@ Each carries the done-callback of `watch_task` (`infrastructure/telemetry/backgr
 - A dead task is not restarted: what it did (the lag samples, the page budget's changes, the writes of the snapshots) stops until the next start.
 - A dead task no longer stops the shutdown: the shutdown and both writers' `aclose()` stop each task with `stop_task()` (beside `watch_task`), which cancels it and waits for its end without raising its exception, so the writers' last snapshots, the browsers' cleanup and the closes of the HTTP client, the cache and the telemetry still run. A cancellation of the shutdown itself still propagates.
 
+### Stalls
+
+A synchronous call that holds the event loop stops every request at once, and `healthz` and `readyz` time out with it: Docker marks the container unhealthy and restarts nothing.
+The stall monitor (`StallMonitor`, `infrastructure/telemetry/watchdog.py`) names such a stall from a thread outside the loop, and its exit switch can end the process, so that the container's restart policy restarts it.
+
+- The loop lag task's tick stamps a heartbeat every 0.5 s, and the monitor's thread reads it every 5 s; a heartbeat older than `watchdog.stall_seconds` (120 s by default) is a stall.
+- A stall logs `event_loop_stalled` once (error, with `age_s`, `limit_s`, `exit` and `stack`, the innermost 4000 characters of the loop thread's stack) and dumps every thread's traceback to standard error through `faulthandler`, which writes from C, past the logging path.
+- While the stall lasts the thread reads the heartbeat every 0.5 s; when the loop ticks again, `event_loop_recovered` (warning) names the stall's length in `length_s`.
+- The monitor starts after `app_startup_complete`, since the startup's plugin loading holds the loop, and logs `stall_monitor_started` with `stall_seconds`, `exit_on_stall` and `backstop_seconds`; a limit of 0 starts no thread and logs `stall_monitor_off`.
+- It stops first at the shutdown (`stall_monitor_stopped`), since the shutdown's bounded waits hold the loop too.
+- A `faulthandler` timer at twice the limit dumps the tracebacks of a stall in which no Python thread runs, such as a C call that holds the interpreter. The monitor's thread arms it again at every check, so the timer never fires while the thread runs, and a stall the monitor names has one dump.
+- A check that raises logs `stall_monitor_check_failed` and cancels the timer, and the next check arms it again; the thread's end cancels it too, so it never fires on a healthy loop.
+- The lag histogram `scavengarr_event_loop_lag_seconds` has buckets up to 120 s, so a stall the loop survived stays in the scraped metrics after the logs are gone.
+
+The exit switch `watchdog.exit_on_stall` is off.
+
+- Switched on, a stall ends the process with code 3 after its line and its dump (`exit=on`), and tini and the restart policy restart the container.
+- The line, the dump and the log's flush each wait at most 2 s, so a lock or a write the stalled thread holds does not hold the exit.
+- The exit budget allows 3 exits within 30 min, counted in `watchdog-exits.json` of the cache directory, which a restart keeps, and a recreate too where the directory is a volume, as in `docker-compose.yml`.
+- A further stall logs `exit=skipped` and the process keeps running; a file that cannot be read counts as empty, and a failed write adds `budget_error` to the line.
+- With the switch off a stall logs `exit=off`.
+- With the switch on and an exit left in the budget, the timer exits too, with `faulthandler`'s code 1; the budget does not count that exit, since C code cannot write its file.
+
+Reading a stall on production: [Operations](../how-to/operations.md#2-read-the-logs).
+
 ### Queries
 
 ```promql
@@ -167,6 +192,9 @@ min_over_time(scavengarr_network_ok[1d])
 
 # Background tasks that died in the last day
 sum by (task) (increase(scavengarr_background_task_deaths_total[1d])) > 0
+
+# Ticks later than 5 s in the last day: stalls the loop survived
+sum(increase(scavengarr_event_loop_lag_seconds_count[1d])) - sum(increase(scavengarr_event_loop_lag_seconds_bucket{le="5.0"}[1d]))
 ```
 
 ### Request id
@@ -269,5 +297,7 @@ Reading production's metrics, logs and records: [Operations](../how-to/operation
 - `src/scavengarr/infrastructure/telemetry/`: `Telemetry`, the scrape-time collectors and the tracing.
 - `src/scavengarr/infrastructure/plugins/history.py`: the plugin record.
 - `src/scavengarr/infrastructure/network_probe.py`: the readiness probe.
+- `src/scavengarr/infrastructure/telemetry/watchdog.py`: the stall monitor and its exit budget.
+- [0016](../target/decisions/0016-in-process-stall-monitor.md): the monitor in the process, its exit switch off.
 - `docker/grafana-dashboard.json`, `docker/prometheus-alerts.yml`, `docker/tempo.yaml`: the dashboard, the alert rules and Tempo.
 - [Metrics](../reference/metrics.md), [Operations](../how-to/operations.md), [Architecture](architecture.md).

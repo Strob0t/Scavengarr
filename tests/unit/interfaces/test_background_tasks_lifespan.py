@@ -5,6 +5,7 @@ writers' own tasks carry the done-callback."""
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import cast, get_args
 
@@ -33,6 +34,10 @@ _PLUGIN_GLOBALS: tuple[tuple[type, str], ...] = (
 )
 
 
+async def _no_warmup(_pool: StealthPool) -> None:
+    return None
+
+
 async def test_every_long_lived_task_carries_the_callback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -52,10 +57,7 @@ async def test_every_long_lived_task_carries_the_callback(
     for module in (composition, state_store, history):
         monkeypatch.setattr(module, "watch_task", _watch)
 
-    async def _warmup(_pool: StealthPool) -> None:
-        return None
-
-    monkeypatch.setattr(StealthPool, "warmup", _warmup)
+    monkeypatch.setattr(StealthPool, "warmup", _no_warmup)
     plugins = tmp_path / "plugins"
     plugins.mkdir()
     config = load_config(
@@ -81,6 +83,31 @@ async def test_every_long_lived_task_carries_the_callback(
 
         assert set(watched) == set(get_args(BackgroundTaskName))
         assert all(watched[name] is task for name, task in kept.items())
+
+
+async def test_the_stall_monitor_watches_from_the_startup_to_the_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It starts once the app is ready, whose plugin loading held the loop,
+    and its stop is the shutdown's first step, before its bounded waits."""
+    for base, name in _PLUGIN_GLOBALS:
+        monkeypatch.setattr(base, name, getattr(base, name))
+    monkeypatch.setattr(StealthPool, "warmup", _no_warmup)
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    config = load_config(
+        cli_overrides={"plugin_dir": plugins, "cache_dir": tmp_path / "cache"}
+    )
+    app = create_app(config)
+    with capture_logs() as logs:
+        async with app.router.lifespan_context(app):
+            assert "stall-monitor" in {t.name for t in threading.enumerate()}
+            served = len(logs)
+
+    events = [e["event"] for e in logs]
+    started = events.index("stall_monitor_started")
+    assert events.index("app_startup_complete") < started < served
+    assert events[served] == "stall_monitor_stopped"
 
 
 async def test_a_task_that_died_before_the_shutdown_does_not_stop_it(

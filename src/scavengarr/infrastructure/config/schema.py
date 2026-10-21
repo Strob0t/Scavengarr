@@ -49,6 +49,32 @@ class TelemetryConfig(BaseModel):
         return value
 
 
+class WatchdogConfig(BaseModel):
+    """The stall monitor (``docs/current/observability.md``)."""
+
+    stall_seconds: float = Field(
+        default=120.0,
+        ge=0,
+        description=(
+            "Seconds without an event-loop tick that make a stall: the stall "
+            "monitor logs event_loop_stalled with the loop thread's stack and "
+            "dumps every thread's traceback to standard error, and a "
+            "faulthandler timer at twice the limit dumps them where no Python "
+            "thread runs. 0 turns the monitor off."
+        ),
+    )
+    exit_on_stall: bool = Field(
+        default=False,
+        description=(
+            "End the process with code 3 after a stall's line and dump, so "
+            "that the container's restart policy restarts it; after 3 exits "
+            "within 30 min a stall is only logged. The faulthandler timer "
+            "then exits too, with code 1, which the budget does not count. "
+            "Off until readings of real stalls choose the limit."
+        ),
+    )
+
+
 class ScoringConfig(BaseModel):
     """Background plugin scoring and probing configuration."""
 
@@ -481,6 +507,9 @@ class AppConfig(BaseModel):
 
     # Metrics and tracing (YAML section: telemetry)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+
+    # The stall monitor (YAML section: watchdog)
+    watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
 
     # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(

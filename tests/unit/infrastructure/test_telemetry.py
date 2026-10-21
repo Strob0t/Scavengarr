@@ -321,3 +321,28 @@ class TestEventLoopLag:
                 await task
 
         assert any(e["event"] == "event_loop_lag" for e in logs)
+
+    async def test_every_tick_stamps_the_heartbeat(self) -> None:
+        """The stall monitor's sign of the loop's life (design D1)."""
+        t = Telemetry()
+        beats: list[None] = []
+        task = asyncio.create_task(
+            monitor_loop_lag(t, interval=0.01, heartbeat=lambda: beats.append(None))
+        )
+        await eventually(lambda: len(beats) >= 3)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert len(beats) == _loop_samples(t)
+
+    def test_the_histogram_reaches_the_stall_range(self) -> None:
+        """A stall the loop survived stays in the scraped metrics: 40 s
+        lands in the bucket of 60 s, not in the one of 30 s."""
+        t = Telemetry()
+        t.record_loop_lag(40_000.0)
+
+        bucket = "scavengarr_event_loop_lag_seconds_bucket"
+        assert _sample(t, bucket, le="60.0") == 1
+        assert _sample(t, bucket, le="30.0") == 0
+        assert _sample(t, bucket, le="120.0") == 1

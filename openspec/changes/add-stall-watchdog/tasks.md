@@ -10,20 +10,20 @@
 
 ## 2. The stall monitor
 
-- [ ] 2.1 Tests first, the decision as a pure function with a fake clock:
+- [x] 2.1 Tests first, the decision as a pure function with a fake clock:
   - no stall below the limit;
   - one `event_loop_stalled` per stall, with its age;
   - `event_loop_recovered` with the stall's length, and the next stall logged again;
   - a limit of 0 starts no thread.
-- [ ] 2.2 The heartbeat in `monitor_loop_lag` and the daemon thread (design D1, D2, D9); the lag histogram's buckets up to 120 s.
-- [ ] 2.3 A subprocess test: a loop blocked by `time.sleep` beyond a short limit logs `event_loop_stalled` with the main thread's stack and dumps every thread's traceback to standard error; with the switch off the process lives on and logs `event_loop_recovered`.
-- [ ] 2.4 The backstop: the `faulthandler` timer is armed at twice the limit and re-armed by the heartbeat, with `exit` following the switch; a subprocess test proves its dump where a test can hold the interpreter.
-- [ ] 2.5 The exit switch (design D4, D5):
+- [x] 2.2 The heartbeat in `monitor_loop_lag` and the daemon thread (design D1, D2, D9); the lag histogram's buckets up to 120 s.
+- [x] 2.3 A subprocess test: a loop blocked by `time.sleep` beyond a short limit logs `event_loop_stalled` with the main thread's stack and dumps every thread's traceback to standard error; with the switch off the process lives on and logs `event_loop_recovered`.
+- [x] 2.4 The backstop: the `faulthandler` timer is armed at twice the limit and re-armed at every check of the monitor thread, with `exit` following the switch and the budget; a failed check and the thread's end cancel it; subprocess tests prove its dump where a test can hold the interpreter, and one dump only where the monitor thread runs.
+- [x] 2.5 The exit switch (design D4, D5):
   - with `exit_on_stall` on, a stall ends the process with code 3 after the dump (subprocess test);
   - the structured line and the flush wait a bounded time, the exit follows regardless;
   - the fourth stall within 30 min only logs, with its exit skipped;
   - a corrupt budget file counts as empty.
-- [ ] 2.6 The settings `watchdog.stall_seconds` and `watchdog.exit_on_stall` with their descriptions; `docs/reference/configuration.md` regenerated.
+- [x] 2.6 The settings `watchdog.stall_seconds` and `watchdog.exit_on_stall` with their descriptions; `docs/reference/configuration.md` regenerated.
 
 ## 3. Stuck requests
 

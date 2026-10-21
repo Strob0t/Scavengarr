@@ -51,7 +51,11 @@ What the code answers in each failure (Mr. Fable's research, read from the code;
   - Up to 30 s of hoster state and up to 1 min of plugin history are lost.
   - A proxied playback is cut, but a stalled loop has already stopped it. A direct stream plays from the hoster's CDN and does not notice.
 - **The warm-up after a restart.** About 30 s until the browser is up (Chromium about 13 s, then the stealth context).
-- **A held interpreter.** A C call that holds the GIL starves the monitor thread; the `faulthandler` timer dumps from C. With the switch on it exits too (`exit=True`), at twice the limit.
+- **A held interpreter.** A C call that holds the GIL starves the monitor thread; the `faulthandler` timer dumps from C at twice the limit.
+  - The monitor thread arms the timer again at every check, so in a stall it sees the timer never fires: its dump stays the only one.
+  - With the switch on and an exit left in the budget the timer exits too (`exit=True`), with `faulthandler`'s code 1; the budget does not count that exit, since C code cannot write its file.
+  - Armed by the heartbeat instead, the timer would exit a stall the budget had spared, at twice the limit, and start a thread on the loop at every tick.
+  - A failed check and the thread's end cancel the timer, so it never fires on a healthy loop.
 - **A blocked log output.** If the log driver blocks standard output, the structured line may not get out and the dump may block; the exit does not wait on either (D4).
 
 ## Migration Plan

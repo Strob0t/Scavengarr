@@ -50,6 +50,7 @@ _SECTIONS = (
     "stremio",
     "scoring",
     "telemetry",
+    "watchdog",
 )
 
 
