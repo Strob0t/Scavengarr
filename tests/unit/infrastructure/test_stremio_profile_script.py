@@ -15,11 +15,10 @@ import pytest
 import respx
 
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
-_PORTAINER = "http://portainer.test:9000"
 
 
 def _load() -> ModuleType:
-    sys.path.insert(0, str(_SCRIPTS))  # the script imports portainer
+    sys.path.insert(0, str(_SCRIPTS))
     try:
         spec = importlib.util.spec_from_file_location(
             "stremio_profile", _SCRIPTS / "stremio_profile.py"
@@ -33,11 +32,6 @@ def _load() -> ModuleType:
 
 
 _mod = _load()
-
-
-def _frame(text: str, stream: int = 1) -> bytes:
-    data = text.encode()
-    return bytes([stream, 0, 0, 0]) + len(data).to_bytes(4, "big") + data
 
 
 def _log(event: str, **fields: Any) -> str:
@@ -146,33 +140,3 @@ class TestDockerCli:
             ["docker", "exec", "--user", "root", "--detach", "scavengarr"]
             + ["py-spy", "record"]
         ]
-
-
-class TestPortainer:
-    @respx.mock
-    def test_exec_runs_in_the_docker_environment(self) -> None:
-        respx.get(f"{_PORTAINER}/api/endpoints").respond(
-            json=[{"Id": 3, "Type": 1, "Name": "local"}]
-        )
-        listing = respx.get(f"{_PORTAINER}/api/endpoints/3/docker/containers/json")
-        listing.respond(json=[])
-        create = respx.post(
-            f"{_PORTAINER}/api/endpoints/3/docker/containers/scavengarr/exec"
-        ).respond(json={"Id": "e1"})
-        respx.post(f"{_PORTAINER}/api/endpoints/3/docker/exec/e1/start").respond(
-            content=_frame('{"python": 1.5, "chrome": 2.0}\n')
-        )
-        respx.get(f"{_PORTAINER}/api/endpoints/3/docker/exec/e1/json").respond(
-            json={"ExitCode": 0}
-        )
-        portainer = _mod.Portainer("scavengarr", _PORTAINER, "key")
-
-        cpu = _mod.cpu_seconds(portainer)
-
-        assert cpu == {"python": 1.5, "chrome": 2.0}
-        body = json.loads(create.calls.last.request.content)
-        assert body["Cmd"][:2] == ["python", "-c"]
-        assert "User" not in body
-        # listing first: Portainer applies access labels of recreated containers
-        assert listing.called
-        assert create.calls.last.request.headers["X-API-Key"] == "key"

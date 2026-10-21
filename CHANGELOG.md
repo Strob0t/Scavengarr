@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: Production Diagnostics Read Through Komodo
+
+- Komodo replaced Portainer on the production host, and Portainer's API answers no more. `scripts/komodo.py` reads the `scavengarr` container with two of Komodo Core's read requests, `POST {KOMODO_URL}/read` with `InspectContainer` and `GetContainerLog` and the headers `X-Api-Key` and `X-Api-Secret`, and uses no other path: the key reaches every container of the host. `inspect()` keeps the state (status, health, start, restarts, OOM kill) and the CPU and memory limits and drops the rest of Docker's inspect object, the container's environment and its secrets among it; `log()` asks for the last 5000 lines, Komodo's cap, and merges the answer's stdout and stderr by their times. `credentials()` reads `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET`, `KOMODO_SERVER` and `PRODCTL_BASE_URL` (production's public base URL); the request budget (100 per minute for every process on the machine), the retry and `mask()` carry over from `portainer.py`, and `mask()` also replaces the hosts it is given.
+- The measurement scripts read the app's CPU from `/metrics`: `playback_under_load.py` and `stremio_round.py` trade `--portainer` for `--cpu` (`process_cpu_seconds_total`, the app's Python process without Chromium's), `stremio_profile.py` keeps `--docker` on the Docker host, and `scripts/probes/header_binding.py` loses its production source and its links' source column. `docs/how-to/performance-measurement.md` says so.
+
 ### Fixed: A Dead Background Task No Longer Stops the Shutdown
 
 - The lifespan's shutdown cancelled its six background tasks and awaited each with only `CancelledError` suppressed, and both writers' `aclose()` did the same with their own task. A task that had died before the shutdown re-raised its exception at that await, and the rest of the shutdown was skipped: the writers' last snapshots, the browsers' cleanup, the closes of the HTTP client and the cache and the telemetry's flush. The same `suppress` also swallowed a cancellation of the shutdown itself.

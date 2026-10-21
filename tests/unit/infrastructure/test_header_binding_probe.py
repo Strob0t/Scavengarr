@@ -177,99 +177,12 @@ class TestLink:
         self, is_hls: bool, address_bound: bool, route: str
     ) -> None:
         link = probe.Link(
-            "dev", "voe", video_url=_URL, is_hls=is_hls, address_bound=address_bound
+            "voe", video_url=_URL, is_hls=is_hls, address_bound=address_bound
         )
         assert link.route == route
 
     def test_a_link_without_video_takes_no_route(self) -> None:
-        assert probe.Link("dev", "filemoon", note="not resolved").route == "–"
-
-
-def _dump_line(**fields: object) -> str:
-    record = {
-        "hoster": "vidoza",
-        "title": "Interstellar",
-        "video_url": _URL,
-        "video_headers": json.dumps(_REFERER),
-        "is_hls": False,
-        "address_bound": False,
-        **fields,
-    }
-    return json.dumps(record)
-
-
-class TestDump:
-    def test_the_dump_compiles(self) -> None:
-        compile(probe.DUMP, "<dump>", "exec")
-
-    def test_json_lines_become_links_and_the_rest_is_skipped(self) -> None:
-        output = "\n".join(
-            [
-                "warning: something",
-                _dump_line(),
-                _dump_line(),  # a pinned copy repeats the video URL
-                _dump_line(video_url=""),
-                "{not json",
-                _dump_line(
-                    hoster="voe",
-                    video_url="https://cdn.example/m.m3u8",
-                    video_headers="",
-                    is_hls=True,
-                ),
-                _dump_line(
-                    hoster="mixdrop",
-                    video_url="https://cdn.example/x.mp4",
-                    video_headers="[1, 2]",
-                    address_bound=True,
-                ),
-                _dump_line(
-                    hoster="vinovo",
-                    video_url="https://cdn.example/y.mp4",
-                    video_headers="{broken",
-                ),
-            ]
-        )
-        links = probe.parse_dump(output)
-        assert [(link.hoster, link.route) for link in links] == [
-            ("vidoza", "play"),
-            ("voe", "proxy"),
-            ("mixdrop", "file"),
-            ("vinovo", "play"),
-        ]
-        assert links[0].headers == _REFERER
-        assert links[0].title == "Interstellar"
-        assert links[0].source == "production"
-        assert [link.headers for link in links[1:]] == [{}, {}, {}]
-
-    def test_production_links_run_the_dump_in_the_container(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls: list[list[str]] = []
-
-        class Container:
-            def run(self, cmd: list[str]) -> tuple[str, int]:
-                calls.append(cmd)
-                return _dump_line() + "\n", 0
-
-        monkeypatch.setattr(probe, "portainer_client", lambda name: Container())
-        links = probe.production_links("scavengarr", 3600.0, [])
-        assert [link.hoster for link in links] == ["vidoza"]
-        assert calls[0][:3] == ["python", "-c", probe.DUMP]
-        assert calls[0][3:] == ["3600.0"]
-        probe.production_links("scavengarr", 3600.0, ["a1", "b2"])
-        assert calls[1][3:] == ["0", "a1", "b2"]
-
-    def test_a_failed_dump_names_its_exit_code_only(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        class Container:
-            def run(self, cmd: list[str]) -> tuple[str, int]:
-                return f"Traceback ... {_URL}", 1
-
-        monkeypatch.setattr(probe, "portainer_client", lambda name: Container())
-        with pytest.raises(SystemExit) as raised:
-            probe.production_links("scavengarr", 3600.0, [])
-        assert str(raised.value) == "the container's link dump failed (exit 1)"
+        assert probe.Link("filemoon", note="not resolved").route == "–"
 
 
 class TestFetch:
@@ -332,7 +245,7 @@ class TestAsk:
     @respx.mock
     def test_a_referer_bound_cdn_is_header_bound(self) -> None:
         _cdn_needing("Referer")
-        link = probe.Link("dev", "vidoza", video_url=_URL, headers=_REFERER)
+        link = probe.Link("vidoza", video_url=_URL, headers=_REFERER)
         answers = asyncio.run(probe.ask(link, 0))
         assert list(answers) == list(probe.WAYS)
         assert probe.verdict(answers) == "headers"
@@ -340,13 +253,13 @@ class TestAsk:
     @respx.mock
     def test_a_user_agent_bound_cdn_is_user_agent_bound(self) -> None:
         _cdn_needing("User-Agent", probe.DEFAULT_USER_AGENT)
-        link = probe.Link("dev", "veev", video_url=_URL, headers=_REFERER)
+        link = probe.Link("veev", video_url=_URL, headers=_REFERER)
         assert probe.verdict(asyncio.run(probe.ask(link, 0))) == "user-agent"
 
     @respx.mock
     def test_a_free_cdn_is_asked_twice_without_stored_headers(self) -> None:
         route = respx.get(_URL).respond(206, content=_MP4)
-        link = probe.Link("dev", "streamtape", video_url=_URL)
+        link = probe.Link("streamtape", video_url=_URL)
         answers = asyncio.run(probe.ask(link, 0))
         assert route.call_count == 2
         assert probe.verdict(answers) == "free"
@@ -388,7 +301,7 @@ class TestPlaylists:
 
 
 class TestByteRanges:
-    _HLS = probe.Link("dev", "voe", video_url=_M3U8, headers=_REFERER, is_hls=True)
+    _HLS = probe.Link("voe", video_url=_M3U8, headers=_REFERER, is_hls=True)
 
     @respx.mock
     def test_the_first_variant_is_read_like_the_proxy_reads_it(self) -> None:
@@ -423,11 +336,9 @@ def _result(
     hoster: str,
     route: str,
     verdict_ok: dict[str, bool],
-    source: str = "production",
     ranges: str = "–",
 ) -> Any:
     link = probe.Link(
-        source,
         hoster,
         title="A | B",
         video_url=_URL,
@@ -447,37 +358,32 @@ class TestRender:
         )
         line = probe.row(probed)
         assert line == (
-            "| production | vidoza | A / B | play | cdn.example"
+            "| vidoza | A / B | play | cdn.example"
             " | Referer, User-Agent | 206 mp4 | 403 html | 206 mp4 | 403 html"
             " | headers | – |"
         )
         assert "secret" not in line and "hoster.example" not in line
 
     def test_a_link_without_video_names_why(self) -> None:
-        line = probe.row(probe.Probed(probe.Link("dev", "filemoon", note="gone")))
-        assert line == ("| dev | filemoon | – | – | – | – | – | – | – | – | gone | – |")
+        line = probe.row(probe.Probed(probe.Link("filemoon", note="gone")))
+        assert line == ("| filemoon | – | – | – | – | – | – | – | – | gone | – |")
 
     def test_the_summary_names_the_bound_hosters_of_the_play_route(self) -> None:
         results = [
             _result("vidoza", "play", {"check": True, "bare": False}),
             _result("vidoza", "play", {"check": True, "bare": True}),
             _result("voe", "proxy", {"check": True, "bare": False}, ranges="yes"),
-            _result("voe", "proxy", {"check": True, "bare": True}, "dev", "no"),
+            _result("voe", "proxy", {"check": True, "bare": True}, "no"),
             _result("mixdrop", "file", {"check": False, "bare": False}),
-            _result("streamtape", "play", {"check": True, "bare": True}, "dev"),
-            probe.Probed(probe.Link("dev", "filemoon", note="not resolved")),
+            _result("streamtape", "play", {"check": True, "bare": True}),
+            probe.Probed(probe.Link("filemoon", note="not resolved")),
         ]
         text = probe.summary(results)
-        assert (
-            "| vidoza | play | production: free ×1, production: user-agent ×1 | – |"
-            in text
-        )
-        assert (
-            "| voe | proxy | dev: free ×1, production: user-agent ×1 | no ×1, yes ×1 |"
-            in text
-        )
-        assert "| mixdrop | file | production: dead here ×1 | – |" in text
-        assert "| filemoon | – | dev: not resolved ×1 | – |" in text
+        assert "| vidoza | play | free ×1, user-agent ×1 | – |" in text
+        assert "| voe | proxy | free ×1, user-agent ×1 | no ×1, yes ×1 |" in text
+        assert "| mixdrop | file | dead here ×1 | – |" in text
+        assert "| filemoon | – | not resolved ×1 | – |" in text
+        assert "| streamtape | play | free ×1 | – |" in text
         assert "(what the player lacks there): vidoza\n" in text
         assert text.endswith("by byte range (EXT-X-BYTERANGE): voe")
 
@@ -497,16 +403,10 @@ class TestRun:
 
     def test_defaults(self) -> None:
         args = probe.parser().parse_args([])
-        assert (args.source, args.since, args.ids, args.pause) == (
-            "both",
-            3600.0,
-            [],
-            0.5,
-        )
-        assert args.urls == probe.URLS
+        assert (args.hosters, args.urls, args.pause) == (None, probe.URLS, 0.5)
 
     @respx.mock
-    def test_both_sources_are_asked_and_filtered_by_hoster(
+    def test_the_links_are_filtered_by_hoster(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         respx.get(_URL).respond(206, content=_MP4)
@@ -514,43 +414,26 @@ class TestRun:
         urls.write_text(json.dumps({"vidoza": "https://h/1", "voe": "https://h/2"}))
         seen: dict[str, object] = {}
 
-        def production(container: str, since: float, ids: list[str]) -> list[Any]:
-            seen["production"] = (container, since, ids)
-            return [
-                probe.Link("production", "vidoza", video_url=_URL),
-                probe.Link("production", "voe", video_url=_URL),
-            ]
-
         async def dev(asked: dict[str, str]) -> list[Any]:
             seen["dev"] = asked
-            return [probe.Link("dev", "vidoza", video_url=_URL)]
+            return [probe.Link("vidoza", video_url=_URL)]
 
-        monkeypatch.setattr(probe, "production_links", production)
         monkeypatch.setattr(probe, "dev_links", dev)
         results = asyncio.run(
             probe.run(self._args(hosters="vidoza", urls=urls, pause=0.0))
         )
-        assert [(p.link.source, p.link.hoster) for p in results] == [
-            ("production", "vidoza"),
-            ("dev", "vidoza"),
-        ]
-        assert all(p.outcome == "free" for p in results)
-        assert seen["production"] == ("scavengarr", 3600.0, [])
+        assert [(p.link.hoster, p.outcome) for p in results] == [("vidoza", "free")]
         assert seen["dev"] == {"vidoza": "https://h/1"}
 
     def test_a_link_without_video_is_not_asked(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         async def dev(asked: dict[str, str]) -> list[Any]:
-            return [probe.Link("dev", "filemoon", note="not resolved")]
+            return [probe.Link("filemoon", note="not resolved")]
 
         monkeypatch.setattr(probe, "dev_links", dev)
-        results = asyncio.run(
-            probe.run(self._args(source="dev", urls=tmp_path / "none.json"))
-        )
-        assert results == [
-            probe.Probed(probe.Link("dev", "filemoon", note="not resolved"))
-        ]
+        results = asyncio.run(probe.run(self._args(urls=tmp_path / "none.json")))
+        assert results == [probe.Probed(probe.Link("filemoon", note="not resolved"))]
 
     @respx.mock
     def test_only_playlists_are_read_for_byte_ranges(
@@ -561,12 +444,12 @@ class TestRun:
 
         async def dev(asked: dict[str, str]) -> list[Any]:
             return [
-                probe.Link("dev", "voe", video_url=_M3U8, is_hls=True),
-                probe.Link("dev", "streamtape", video_url=_URL),
+                probe.Link("voe", video_url=_M3U8, is_hls=True),
+                probe.Link("streamtape", video_url=_URL),
             ]
 
         monkeypatch.setattr(probe, "dev_links", dev)
-        args = self._args(source="dev", urls=tmp_path / "none.json", pause=0.0)
+        args = self._args(urls=tmp_path / "none.json", pause=0.0)
         results = asyncio.run(probe.run(args))
         assert [(p.link.hoster, p.outcome, p.ranges) for p in results] == [
             ("voe", "free", "no"),

@@ -1,16 +1,15 @@
-"""Stored resolutions from the player's side: which CDNs need the playback headers.
+"""Resolutions from the player's side: which CDNs need the playback headers.
 
 Usage (dev container):
     PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/header_binding.py
-    ... --source dev|production|both --hosters voe,vidoza --since 3600
-    ... --ids ID ... --urls .cache/live/resolver-urls.json --out FILE
+    ... --hosters voe,vidoza --urls .cache/live/resolver-urls.json --out FILE
 
 A file that is neither HLS nor address-bound reaches Stremio through
 ``/play``, a redirect to the CDN: the player fetches the video URL itself,
 with its own User-Agent and without the playback headers the resolver
 stored (``Referer``, ``Origin``), while the registry's checks
 (``verify_video_url()``, ``check_playable()``) send them. The probe asks the
-CDN of each stored resolution for the first 2 KiB (a ``Range`` GET,
+CDN of each resolution for the first 2 KiB (a ``Range`` GET,
 redirects followed, a fresh client per request, so no cookie carries over),
 in up to four ways:
 
@@ -35,13 +34,11 @@ by byte range (``EXT-X-BYTERANGE``, ``EXT-X-MAP`` with ``BYTERANGE``):
 ``yes``, ``no``, or which playlist gave no playlist. The proxy's segment
 route asks the CDN without the player's ``Range`` header.
 
-Sources: ``dev`` resolves the live suite's hoster links (``--urls``, written
-by ``scripts/probes/resolver_urls.py``) with the app's registry here, so a
-file bound to the resolving address plays from here and only header binding
-shows; ``production`` reads production's links resolved in the last
-``--since`` seconds (or the ``--ids``) through Portainer (``PORTAINER_URL``
-and ``PORTAINER_API_KEY`` as in ``scripts/portainer.py``): resolved from the
-production host's address and fetched from here, as a player on the LAN fetches them.
+The links: the live suite's hoster links (``--urls``, written by
+``scripts/probes/resolver_urls.py``), resolved with the app's registry here,
+so a file bound to the resolving address plays from here and only header
+binding shows. Production's stored resolutions stay out: Komodo's read
+requests run no command in the container.
 Prints hosters, titles, CDN domains, header names, statuses and content
 kinds, never a URL, a header value or a stream id; changes nothing.
 """
@@ -68,12 +65,9 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.interfaces.app import create_app
 from scavengarr.interfaces.app_state import AppState
 
-# scripts/ holds the Portainer client and the play check's media test:
-# appended, so that nothing there shadows an installed package
+# scripts/ holds the play check's media test: appended, so that nothing
+# there shadows an installed package
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from prodctl import (  # noqa: E402  # pyright: ignore[reportMissingImports]
-    portainer_client,
-)
 from stremio_playcheck import (  # noqa: E402  # pyright: ignore[reportMissingImports]
     is_media,
     media_kind,
@@ -94,81 +88,11 @@ WAYS = ("check", "bare", "player UA", "check UA")
 # Not what the bare player lacks: the probe's other verdicts
 UNBOUND = frozenset({"free", "dead here", "no answer"})
 
-# Runs inside the container (``python -c <DUMP> <since> [ids]``): the stored
-# links as JSON lines, read by this probe and never printed
-DUMP = r"""
-import asyncio, json, logging, os, sys, time
-from pathlib import Path
-
-import structlog
-
-structlog.configure(
-    wrapper_class=structlog.make_filtering_bound_logger(logging.ERROR)
-)
-
-from scavengarr.infrastructure.cache.cache_factory import create_cache
-from scavengarr.infrastructure.config import load_config
-from scavengarr.infrastructure.persistence.stream_link_cache import (
-    CacheStreamLinkRepository,
-)
-
-
-async def main(since, ids):
-    env = os.getenv("SCAVENGARR_CONFIG")
-    config = load_config(config_path=Path(env) if env else None)
-    if not ids:
-        if config.cache.backend != "redis":
-            sys.exit("pass stream ids: only the Redis backend can list links")
-        import redis.asyncio as aioredis
-
-        client = aioredis.from_url(config.cache.redis_url)
-        try:
-            ids = sorted(
-                [
-                    key.decode().rsplit("streamlink:", 1)[1]
-                    async for key in client.scan_iter(
-                        match="*streamlink:*", count=500
-                    )
-                ]
-            )
-        finally:
-            await client.aclose()
-    cache = create_cache(
-        backend=config.cache.backend,
-        directory=str(config.cache.directory),
-        redis_url=config.cache.redis_url,
-    )
-    async with cache:
-        repo = CacheStreamLinkRepository(cache)
-        for stream_id in ids:
-            link = await repo.get(stream_id)
-            if link is None or not link.video_url:
-                continue
-            if since > 0 and time.time() - link.resolved_at > since:
-                continue
-            print(
-                json.dumps(
-                    {
-                        "hoster": link.hoster,
-                        "title": link.title,
-                        "video_url": link.video_url,
-                        "video_headers": link.video_headers,
-                        "is_hls": link.is_hls,
-                        "address_bound": link.address_bound,
-                    }
-                )
-            )
-
-
-asyncio.run(main(float(sys.argv[1]), sys.argv[2:]))
-"""
-
 
 @dataclass(frozen=True)
 class Link:
-    """A stored resolution: where it came from and what the player gets."""
+    """A resolution: its hoster and what the player gets."""
 
-    source: str
     hoster: str
     title: str = ""
     video_url: str = ""
@@ -354,55 +278,6 @@ async def byte_ranges(link: Link) -> str:
     return "yes" if by_byte_range(text) else "no"
 
 
-def parse_dump(output: str) -> list[Link]:
-    """The container's JSON lines as links, one per video URL (a pinned copy
-    of a link repeats it); other lines (warnings) are skipped."""
-    links: list[Link] = []
-    seen: set[str] = set()
-    for line in output.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            data = json.loads(line)
-        except ValueError:
-            continue
-        url = str(data.get("video_url") or "")
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        try:
-            headers = json.loads(data.get("video_headers") or "{}")
-        except ValueError:
-            headers = {}
-        if not isinstance(headers, dict):
-            headers = {}
-        links.append(
-            Link(
-                "production",
-                str(data.get("hoster") or "?"),
-                str(data.get("title") or ""),
-                url,
-                {str(k): str(v) for k, v in headers.items()},
-                bool(data.get("is_hls")),
-                bool(data.get("address_bound")),
-            )
-        )
-    return links
-
-
-def production_links(container: str, since: float, ids: list[str]) -> list[Link]:
-    """Production's stored links through Portainer: resolved in the last
-    *since* seconds, or the *ids*. A failed dump reports its exit code only:
-    its output may hold URLs."""
-    output, code = portainer_client(container).run(
-        ["python", "-c", DUMP, str(0 if ids else since), *ids]
-    )
-    if code != 0:
-        raise SystemExit(f"the container's link dump failed (exit {code})")
-    return parse_dump(output)
-
-
 async def dev_links(urls: dict[str, str]) -> list[Link]:
     """The live suite's hoster links resolved here by the app's registry."""
     links: list[Link] = []
@@ -426,15 +301,14 @@ async def dev_links(urls: dict[str, str]) -> list[Link]:
                     )
                 except (TimeoutError, httpx.HTTPError, OSError) as exc:
                     links.append(
-                        Link("dev", name, note=f"not resolved ({type(exc).__name__})")
+                        Link(name, note=f"not resolved ({type(exc).__name__})")
                     )
                     continue
                 if stream is None:
-                    links.append(Link("dev", name, note="not resolved"))
+                    links.append(Link(name, note="not resolved"))
                     continue
                 links.append(
                     Link(
-                        "dev",
                         name,
                         video_url=stream.video_url,
                         headers=dict(stream.headers),
@@ -473,9 +347,9 @@ class Probed:
 
 
 TABLE_HEAD = (
-    "| Source | Hoster | Title | Route | CDN | Stored headers | check | bare"
+    "| Hoster | Title | Route | CDN | Stored headers | check | bare"
     " | player UA | check UA | Verdict | Byte ranges |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|---|"
+    "|---|---|---|---|---|---|---|---|---|---|---|"
 )
 
 
@@ -485,7 +359,7 @@ def row(probed: Probed) -> str:
     names = ", ".join(sorted(link.headers)) or "–"
     cells = " | ".join(str(answers[w]) if w in answers else "–" for w in WAYS)
     return (
-        f"| {link.source} | {link.hoster} | {_cell(link.title)} | {link.route}"
+        f"| {link.hoster} | {_cell(link.title)} | {link.route}"
         f" | {cdn(link.video_url) or '–'} | {_cell(names, 60)} | {cells}"
         f" | {probed.outcome} | {probed.ranges} |"
     )
@@ -503,7 +377,7 @@ def summary(results: list[Probed]) -> str:
     ranges: defaultdict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     for probed in results:
         key = (probed.link.hoster, probed.link.route)
-        verdicts[key][f"{probed.link.source}: {probed.outcome}"] += 1
+        verdicts[key][probed.outcome] += 1
         if probed.ranges != "–":
             ranges[key][probed.ranges] += 1
     lines = ["| Hoster | Route | Verdicts | Byte ranges |", "|---|---|---|---|"]
@@ -534,8 +408,8 @@ def render(results: list[Probed]) -> str:
 
 
 async def run(args: argparse.Namespace) -> list[Probed]:
-    """Each source's links, then each link asked every way and, when the
-    check gets a playlist, its media playlist read for byte ranges."""
+    """The links, each asked every way and, when the check gets a
+    playlist, its media playlist read for byte ranges."""
     only = set(args.hosters.split(",")) if args.hosters else None
     results: list[Probed] = []
 
@@ -550,37 +424,20 @@ async def run(args: argparse.Namespace) -> list[Probed]:
                 await asyncio.sleep(args.pause)
                 ranges = await byte_ranges(link)
             probed = Probed(link, answers, ranges)
-            print(f"  {link.source} {link.hoster}: {probed.outcome}", file=sys.stderr)
+            print(f"  {link.hoster}: {probed.outcome}", file=sys.stderr)
             results.append(probed)
 
-    if args.source in ("production", "both"):
-        await asked(
-            await asyncio.to_thread(
-                production_links, args.container, args.since, args.ids
-            )
-        )
-    if args.source in ("dev", "both"):
-        urls = json.loads(args.urls.read_text()) if args.urls.is_file() else {}
-        if only is not None:
-            urls = {name: url for name, url in urls.items() if name in only}
-        await asked(await dev_links({str(k): str(v) for k, v in urls.items()}))
+    urls = json.loads(args.urls.read_text()) if args.urls.is_file() else {}
+    if only is not None:
+        urls = {name: url for name, url in urls.items() if name in only}
+    await asked(await dev_links({str(k): str(v) for k, v in urls.items()}))
     return results
 
 
 def parser() -> argparse.ArgumentParser:
     parsed = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    parsed.add_argument(
-        "--source", choices=("dev", "production", "both"), default="both"
-    )
     parsed.add_argument("--hosters", help="only these, comma-separated")
-    parsed.add_argument(
-        "--since", type=float, default=3600.0, help="production: resolved within"
-    )
-    parsed.add_argument(
-        "--ids", nargs="*", default=[], help="production: these stream ids"
-    )
-    parsed.add_argument("--urls", type=Path, default=URLS, help="dev: hoster links")
-    parsed.add_argument("--container", default="scavengarr")
+    parsed.add_argument("--urls", type=Path, default=URLS, help="the hoster links")
     parsed.add_argument(
         "--pause", type=float, default=0.5, help="seconds between two requests"
     )

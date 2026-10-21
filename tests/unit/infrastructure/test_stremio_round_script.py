@@ -230,7 +230,7 @@ def test_render_has_a_row_per_title_and_a_summary() -> None:
         ),
     ]
     rows[0] = _row(findings=("DOOD: FAIL html",), full_bodies=1)
-    table = _mod.render(rows, {"python": 12.5, "chrome": 40.0})
+    table = _mod.render(rows, 12.5)
     lines = table.splitlines()
     assert lines[0] == (
         "| Title | First answer | Streams | X-Cache | Complete "
@@ -249,7 +249,10 @@ def test_render_has_a_row_per_title_and_a_summary() -> None:
     ) in lines
     assert "1 of 3 (first answer), 0 of 3 (cached answer)" in table
     assert "max first answer 10.0 s" in table
-    assert "Python 12.5 s, Chromium 40.0 s" in table
+    assert (
+        "CPU of the app's Python process during the round: 12.5 s"
+        " (Chromium's processes are not in it)." in table
+    )
 
 
 def test_render_without_playcheck_or_cpu() -> None:
@@ -296,6 +299,47 @@ def test_main_prints_the_findings_under_the_title(
     assert out[0].endswith("playable 1 of 2")
     assert out[1:3] == ["   DOOD: FAIL html b'<html>'", "   1× 200 instead of 206"]
     assert "https://" not in "\n".join(out[:3])
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("totals", "line"),
+    [
+        ([10.0, 22.5], "during the round: 12.5 s"),
+        ([10.0, 2.0], None),  # a restart during the round
+        ([None], None),  # no metrics
+    ],
+    ids=["read", "restart", "no-metrics"],
+)
+def test_cpu_reads_the_process_cpu_before_and_after_the_round(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    totals: list[float | None],
+    line: str | None,
+) -> None:
+    answers = iter(totals)
+
+    def metrics(_: httpx.Request) -> httpx.Response:
+        total = next(answers)
+        if total is None:
+            return httpx.Response(404)
+        return httpx.Response(200, text=f"process_cpu_seconds_total {total}\n")
+
+    reads = respx.get(f"{_BASE}/metrics").mock(side_effect=metrics)
+    respx.get(f"{_BASE}/api/v1/stremio/stream/movie/tt1.json").mock(
+        return_value=httpx.Response(200, json={"streams": [{"url": "a"}]})
+    )
+    ids = tmp_path / "ids.txt"
+    ids.write_text("movie/tt1  # One\n")
+
+    _mod.main(["--base", _BASE, "--ids-file", str(ids), "--no-playcheck", "--cpu"])
+
+    out = capsys.readouterr().out
+    assert reads.call_count == len(totals)
+    if line is None:
+        assert "CPU of the app" not in out
+    else:
+        assert line in out
 
 
 @respx.mock

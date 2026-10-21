@@ -7,7 +7,7 @@ import asyncio
 import importlib
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import httpx
@@ -20,7 +20,7 @@ _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 
 
 def _load() -> ModuleType:
-    sys.path.insert(0, str(_SCRIPTS))  # the script imports portainer and prodctl
+    sys.path.insert(0, str(_SCRIPTS))  # the script imports stremio_playcheck
     try:
         return importlib.import_module("playback_under_load")
     finally:
@@ -28,6 +28,7 @@ def _load() -> ModuleType:
 
 
 _mod = _load()
+_CPU_LINE = "process_cpu_seconds_total"
 
 _BASE = "http://app.test"
 _PROXY = f"{_BASE}/api/v1/stremio/proxy/abc"
@@ -280,41 +281,43 @@ class TestRun:
         with pytest.raises(SystemExit, match="master playlist: HTTP 404"):
             asyncio.run(_mod.run_once(_args()))
 
-    def test_the_cpu_sampler_reads_until_stopped(
+    @respx.mock
+    def test_the_cpu_sampler_reads_the_process_cpu_until_stopped(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        class Container:
-            def __init__(self) -> None:
-                self.calls = 0
+        """Two CPU-seconds per read a second apart: two cores in use. A
+        failed read leaves its interval to the next read, and a restart's
+        smaller counter starts anew."""
+        totals = iter([10.0, 12.0, None, 16.0, 1.0, 3.0])
+        clock = iter(range(100, 10_000))
 
-            def stats(self) -> dict[str, object]:
-                self.calls += 1
-                return {
-                    "cpu_stats": {
-                        "cpu_usage": {"total_usage": 300},
-                        "system_cpu_usage": 1_000,
-                        "online_cpus": 4,
-                    },
-                    "precpu_stats": {
-                        "cpu_usage": {"total_usage": 100},
-                        "system_cpu_usage": 600,
-                    },
-                }
+        def answer(_: httpx.Request) -> httpx.Response:
+            total = next(totals, 99.0)
+            if total is None:
+                return httpx.Response(502)
+            return httpx.Response(200, text=f"{_CPU_LINE} {total}\n")
 
-        async def scenario() -> tuple[int, list[float]]:
-            monkeypatch.setattr(_mod, "_STATS_EVERY", 0.01)
-            container = Container()
+        reads = respx.get(f"{_BASE}/metrics").mock(side_effect=answer)
+        monkeypatch.setattr(
+            _mod, "time", SimpleNamespace(monotonic=lambda: float(next(clock)))
+        )
+        monkeypatch.setattr(_mod, "_STATS_EVERY", 0.01)
+
+        async def scenario() -> list[float]:
             run = _mod.Run("idle")
             stop = asyncio.Event()
-            task = asyncio.create_task(_mod.sample_cpu(container, run, stop))
-            await eventually(lambda: container.calls >= 2)
-            stop.set()
-            await task
-            return container.calls, run.cpu
+            async with httpx.AsyncClient() as client:
+                task = asyncio.create_task(_mod.sample_cpu(client, _BASE, run, stop))
+                await eventually(lambda: reads.call_count >= 6)
+                stop.set()
+                await task
+            return run.cpu
 
-        calls, cpu = asyncio.run(scenario())
-        assert calls >= 2
-        assert cpu[0] == pytest.approx(2.0)
+        cpu = asyncio.run(scenario())
+
+        # 10 -> 12 in 1 s, the failed read, 12 -> 16 in 2 s, the restart
+        # (16 -> 1), 1 -> 3 in 1 s
+        assert cpu[:3] == [2.0, 2.0, 2.0]
 
 
 class TestParser:
@@ -326,7 +329,7 @@ class TestParser:
             10.0,
             30.0,
         )
-        assert not args.portainer and args.out is None
+        assert not args.cpu and args.out is None
 
     def test_a_stream_id_is_required(self) -> None:
         with pytest.raises(SystemExit):

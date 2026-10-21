@@ -1,8 +1,8 @@
 """Measure stream requests of a running instance: time, CPU, outbound requests.
 
-Usage (against a running container):
+Usage (on the Docker host, against its running container):
     poetry run python scripts/stremio_profile.py --base https://app.example.lan \\
-        (--portainer | --docker) [--container scavengarr] [--insecure] \\
+        --docker [--container scavengarr] [--insecure] \\
         [--connect-to app.example.lan:192.0.2.10] [--py-spy] [IDS]
 
 IDS are Stremio ids (``movie/tt0816692``, ``series/tt0903747:1:2``); without
@@ -25,13 +25,8 @@ holding the GIL only) and prints the CPU share per category. py-spy is
 installed into the container's ``/tmp`` and runs as root; the container needs
 ``cap_add: [SYS_PTRACE]``.
 
-Container access:
-
-- ``--portainer`` reads ``PORTAINER_URL`` and ``PORTAINER_API_KEY`` from
-  ``.env.devcontainer`` or the environment (``portainer.py``). The Portainer
-  user needs access to the container, e.g. through the label
-  ``io.portainer.accesscontrol.users``.
-- ``--docker`` uses the local docker CLI, so run the script on the Docker host.
+Container access: ``--docker`` uses the local docker CLI, so the script runs
+on the Docker host (Komodo's read requests run no command in the container).
 """
 
 from __future__ import annotations
@@ -47,7 +42,6 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
-from portainer import Portainer, credentials
 
 # The titles of the baseline (docs/how-to/performance-measurement.md)
 BASELINE_IDS = ("movie/tt0816692", "series/tt0903747:1:2", "movie/tt0133093")
@@ -231,12 +225,6 @@ def _connect_to(mapping: str) -> None:
     socket.getaddrinfo = _resolve
 
 
-def _container(args: argparse.Namespace) -> Container:
-    if args.docker:
-        return DockerCli(args.container)
-    return Portainer(args.container, *credentials())
-
-
 def measure(
     http: httpx.Client, base: str, container: Container, sid: str
 ) -> dict[str, Any]:
@@ -272,9 +260,12 @@ def measure(
 def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--base", required=True, help="the instance's base URL")
-    access = parser.add_mutually_exclusive_group(required=True)
-    access.add_argument("--portainer", action="store_true")
-    access.add_argument("--docker", action="store_true")
+    parser.add_argument(
+        "--docker",
+        action="store_true",
+        required=True,
+        help="the local docker CLI: run the script on the Docker host",
+    )
     parser.add_argument("--container", default="scavengarr")
     parser.add_argument("--insecure", action="store_true", help="skip TLS checks")
     parser.add_argument("--connect-to", help="HOST:IP, e.g. app.example.lan:192.0.2.10")
@@ -288,7 +279,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.connect_to:
         _connect_to(args.connect_to)
-    container = _container(args)
+    container = DockerCli(args.container)
     ids = args.ids or list(BASELINE_IDS)
 
     if args.py_spy:
