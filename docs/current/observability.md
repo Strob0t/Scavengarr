@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution, every stealth browser page and every HLS proxy request.
 > **Status:** current
-> **As of:** 54ee500c
+> **As of:** 9fb7318f
 
 ## Purpose
 
@@ -37,9 +37,10 @@ The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`)
 - Exceptions always propagate, and `stage.label(...)` sets a label known only later.
 - `count(name, outcome, **labels)` counts an outcome without a run, such as a plugin skipped by its open breaker or a resolution from the cache.
 - `record(name, value, **labels)` records a value that is not a duration: streams per answer, bytes, the state of a readiness check.
+- `record_background_task_death(task)` counts a long-lived background task that ended with an exception ([Background tasks](#background-tasks)).
 
 The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown.
-Nine places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, Filemoon's pass keeper (`PassKeeper`), the stealth browser's page gate (`PageGate`), the HLS proxy route with its read-ahead (`SegmentReadAhead`), the event-loop monitor and the readiness probe (`NetworkProbe`).
+Ten places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, Filemoon's pass keeper (`PassKeeper`), the stealth browser's page gate (`PageGate`), the HLS proxy route with its read-ahead (`SegmentReadAhead`), the event-loop monitor, the readiness probe (`NetworkProbe`) and the background tasks' done-callback (`watch_task`).
 Plugins and resolvers contain no metrics code, so a new one is recorded without changes.
 A component without a wired port gets `NO_TELEMETRY`, which records nothing, as in most tests.
 
@@ -119,6 +120,16 @@ Production's container once lost its network namespace for 33 h (the VPN contain
 - The loss logs `network_lost` once (error, with `seconds`, `probes` and `dns_error`), its end `network_recovered` (`seconds`, `probes`); a failed Redis ping counts toward the cache's `redis_unavailable` and `redis_recovered` lines.
 - Docker marks the container unhealthy after three failed checks and restarts nothing by itself.
 
+### Background tasks
+
+The service runs eight long-lived tasks beside its requests: six from the composition root (`loop_lag`, the event-loop monitor; `page_budget`, the stealth browser's page budget; `plugin_health`; `scoring`; `browser_warmup`; `pass_keeper`) and the two writers' own (`hoster_state_store`, `plugin_history`).
+Each carries the done-callback of `watch_task` (`infrastructure/telemetry/background.py`), so a task that ends with an exception shows at once instead of at the shutdown that awaits it.
+
+- A task that ends with an exception logs `background_task_died` once (error, with `task`, `error`, the exception's type, and its traceback) and counts `scavengarr_background_task_deaths_total{task}`.
+- A cancelled task (the shutdown) and one that returns (the browser's warm-up) log and count nothing.
+- The names are a fixed set (`BackgroundTaskName` in the telemetry port); each has a zero series from the start, so `increase()` sees the first death.
+- A dead task is not restarted: what it did (the lag samples, the page budget's changes, the writes of the snapshots) stops until the next start.
+
 ### Queries
 
 ```promql
@@ -152,6 +163,9 @@ histogram_quantile(0.9, sum by (le, kind) (rate(scavengarr_browser_page_wait_sec
 
 # Readiness checks that failed at a scrape of the last day (0) or never (1)
 min_over_time(scavengarr_network_ok[1d])
+
+# Background tasks that died in the last day
+sum by (task) (increase(scavengarr_background_task_deaths_total[1d])) > 0
 ```
 
 ### Request id

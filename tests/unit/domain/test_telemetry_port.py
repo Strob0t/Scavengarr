@@ -37,3 +37,4 @@ class TestNoTelemetry:
     def test_count_and_record_do_nothing(self) -> None:
         NO_TELEMETRY.count("plugin_search", "breaker_open", plugin="kinoger")
         NO_TELEMETRY.record("stremio_streams", 5)
+        NO_TELEMETRY.record_background_task_death("loop_lag")

@@ -32,6 +32,30 @@ ValueName = Literal[
     "network_ok",
 ]
 
+# The service's long-lived background tasks, whose death is logged and
+# counted (``scavengarr_background_task_deaths_total{task}``)
+BackgroundTaskName = Literal[
+    "loop_lag",
+    "page_budget",
+    "plugin_health",
+    "scoring",
+    "browser_warmup",
+    "pass_keeper",
+    "hoster_state_store",
+    "plugin_history",
+]
+# The same names as values: each task's zero series from the start
+BACKGROUND_TASKS: tuple[BackgroundTaskName, ...] = (
+    "loop_lag",
+    "page_budget",
+    "plugin_health",
+    "scoring",
+    "browser_warmup",
+    "pass_keeper",
+    "hoster_state_store",
+    "plugin_history",
+)
+
 AttributeValue = str | int | float | bool
 
 
@@ -55,7 +79,7 @@ class Stage(Protocol):
 
 @runtime_checkable
 class TelemetryPort(Protocol):
-    """Records stages, outcomes without a run, and values."""
+    """Records stages, outcomes without a run, values and task deaths."""
 
     def stage(self, name: StageName, /, **labels: str) -> AbstractContextManager[Stage]:
         """Time the ``with`` block as stage *name*; exceptions propagate."""
@@ -67,6 +91,10 @@ class TelemetryPort(Protocol):
 
     def record(self, name: ValueName, value: float, /, **labels: str) -> None:
         """Record a value that is not a duration (a count, bytes, a state)."""
+        ...
+
+    def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
+        """Count a background task that ended with an exception."""
         ...
 
 
@@ -91,6 +119,9 @@ class _NoTelemetry:
         pass
 
     def record(self, name: ValueName, value: float, /, **labels: str) -> None:
+        pass
+
+    def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
         pass
 
 

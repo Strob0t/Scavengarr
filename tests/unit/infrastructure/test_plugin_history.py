@@ -11,6 +11,7 @@ import structlog
 from structlog.typing import EventDict
 
 from scavengarr.infrastructure.plugins.history import PluginHistory
+from scavengarr.infrastructure.telemetry import Telemetry
 
 _KEY = "plugin_history:v1"
 _DAY_S = 86400
@@ -366,3 +367,32 @@ class TestWrites:
 
         assert _events(logs, "plugin_history_save_failed")
         assert await cache.get(_KEY) is not None
+
+
+class TestDeath:
+    async def test_a_dying_writer_is_logged_and_counted(self) -> None:
+        """A write that raises past the record's own guard ends its task:
+        ``background_task_died`` names it (add-stall-watchdog, group 1)."""
+        telemetry = Telemetry()
+        history = PluginHistory(_backend(), interval_s=0.01, telemetry=telemetry)
+
+        async def _save() -> None:
+            raise RuntimeError("boom")
+
+        history._save = _save  # type: ignore[method-assign]
+        with structlog.testing.capture_logs() as logs:
+            history.start()
+            assert history._task is not None
+            await asyncio.wait({history._task}, timeout=2)
+            await asyncio.sleep(0)
+
+        died = _events(logs, "background_task_died")
+        assert [(e["task"], e["error"]) for e in died] == [
+            ("plugin_history", "RuntimeError")
+        ]
+        assert (
+            telemetry.registry.get_sample_value(
+                "scavengarr_background_task_deaths_total", {"task": "plugin_history"}
+            )
+            == 1.0
+        )

@@ -4,6 +4,14 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## Unreleased (staging)
+
+### Added: Background Tasks Log Their Death
+
+- A long-lived task of the service that ended with an exception left no log line until the shutdown awaited it: the event-loop monitor had no guard, and the writers of the hoster state and the plugin history guard only their write. Its work (the lag samples, the page budget, the snapshots) stopped without a trace.
+- `watch_task()` (`infrastructure/telemetry/background.py`) attaches a done-callback: a task that ends with an exception logs `background_task_died` once (with `task`, the exception's type and its traceback) and counts `scavengarr_background_task_deaths_total{task}` through `TelemetryPort.record_background_task_death()`; a cancelled task and one that returns log and count nothing. The composition root watches `loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup` and `pass_keeper`, the two writers their own task (`hoster_state_store`, `plugin_history`); the names are the fixed set `BackgroundTaskName`, each with a zero series from the start.
+- Group 1 of the OpenSpec change `add-stall-watchdog`. Tests: `test_background_task.py` (a death, a cancellation, a return, the zero series), the two writers' `TestDeath`, and `test_background_tasks_lifespan.py` (all eight tasks of a started app carry the callback). `docs/current/observability.md` (Background tasks) and `docs/reference/metrics.md` say so.
+
 ## v0.5.1 - 2026-10-20
 
 Security: certifi's CA bundle drops the root whose intermediate CAs lost their keys (GHSA-6q48-6c7w-9gw2); every httpx client of the app verifies TLS against it, so the image carries the fix with its rebuild. Repository upkeep: CI ends in the one check `main`'s ruleset requires and runs weekly on `main`; Dependabot takes a version a week after its release, updates pre-commit's hooks too, and its green minor and patch updates merge into `staging` by themselves; pre-commit runs the venv's ruff, pinned in `pyproject.toml` only; every release tag gets its page; and the tests check a URL's host exactly.

@@ -32,7 +32,13 @@ from prometheus_client import (
 )
 from prometheus_client.exposition import CONTENT_TYPE_PLAIN_0_0_4
 
-from scavengarr.domain.ports.telemetry import AttributeValue, StageName, ValueName
+from scavengarr.domain.ports.telemetry import (
+    BACKGROUND_TASKS,
+    AttributeValue,
+    BackgroundTaskName,
+    StageName,
+    ValueName,
+)
 from scavengarr.infrastructure.telemetry.collectors import ContainerCollector
 from scavengarr.infrastructure.version import build_identity
 
@@ -252,6 +258,15 @@ class Telemetry:
             registry=self.registry,
         )
         self._loop_lag_ms: deque[float] = deque(maxlen=LAG_WINDOW)
+        self._task_deaths = Counter(
+            "scavengarr_background_task_deaths",
+            "Background tasks that ended with an exception",
+            ("task",),
+            registry=self.registry,
+        )
+        # A zero series per task, so increase() sees the first death
+        for task in BACKGROUND_TASKS:
+            self._task_deaths.labels(task=task)
         # One series by construction: its labels name the build, not a set
         Info(
             "scavengarr_build", "Scavengarr version and build", registry=self.registry
@@ -280,6 +295,9 @@ class Telemetry:
             child.set(value)
         else:
             child.inc(value)
+
+    def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
+        self._task_deaths.labels(task=task).inc()
 
     def finish(
         self, name: StageName, labels: dict[str, str], outcome: str, seconds: float

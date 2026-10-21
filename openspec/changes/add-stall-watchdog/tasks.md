@@ -1,12 +1,12 @@
 ## 1. Background tasks log their death
 
-- [ ] 1.1 Tests first:
+- [x] 1.1 Tests first:
   - a task that raises logs `background_task_died` with its name and the exception, once, and counts it;
   - a cancelled task and a task that returns log and count nothing;
   - every long-lived task of the lifespan and the two writers' own tasks carry the callback.
-- [ ] 1.2 One done-callback helper with the task names as a `Literal` set (design D8), attached in `composition.py` to `loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup` and `pass_keeper`, and in `state_store.py` and `history.py` to their own tasks.
-- [ ] 1.3 `TelemetryPort.record_background_task_death(task)`, `NO_TELEMETRY` and `scavengarr_background_task_deaths_total{task}`; `docs/reference/metrics.md` regenerated.
-- [ ] 1.4 Docs: `docs/current/observability.md` (the line and the counter), `CHANGELOG.md`.
+- [x] 1.2 One done-callback helper with the task names as a `Literal` set (design D8), attached in `composition.py` to `loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup` and `pass_keeper`, and in `state_store.py` and `history.py` to their own tasks.
+- [x] 1.3 `TelemetryPort.record_background_task_death(task)`, `NO_TELEMETRY` and `scavengarr_background_task_deaths_total{task}`; `docs/reference/metrics.md` regenerated.
+- [x] 1.4 Docs: `docs/current/observability.md` (the line and the counter), `CHANGELOG.md`.
 
 ## 2. The stall monitor
 

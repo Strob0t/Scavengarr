@@ -21,10 +21,12 @@ from typing import Any
 import structlog
 
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
+from scavengarr.infrastructure.telemetry.background import watch_task
 
 log = structlog.get_logger(__name__)
 
@@ -60,11 +62,13 @@ class HosterStateStore:
         breakers: Mapping[str, PluginCircuitBreaker],
         *,
         interval_s: float = 30.0,
+        telemetry: TelemetryPort = NO_TELEMETRY,
     ) -> None:
         self._cache = cache
         self._registry = registry
         self._breakers = breakers
         self._interval_s = interval_s
+        self._telemetry = telemetry
         # The changes the stored snapshot holds
         self._saved = self._changes()
         self._task: asyncio.Task[None] | None = None
@@ -143,7 +147,11 @@ class HosterStateStore:
 
     def start(self) -> None:
         """Write the snapshot every *interval_s* while the state changes."""
-        self._task = asyncio.create_task(self._run(), name="hoster_state_store")
+        self._task = watch_task(
+            asyncio.create_task(self._run(), name="hoster_state_store"),
+            "hoster_state_store",
+            self._telemetry,
+        )
 
     async def _run(self) -> None:
         while True:

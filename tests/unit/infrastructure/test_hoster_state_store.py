@@ -17,6 +17,7 @@ from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
 from scavengarr.infrastructure.hoster_resolvers.state_store import HosterStateStore
+from scavengarr.infrastructure.telemetry import Telemetry
 
 _KEY = "hoster_state:v1"
 _ALIVE = "https://voe.sx/e/alive"
@@ -307,3 +308,40 @@ class TestWrites:
 
         assert _events(logs, "hoster_state_save_failed")
         assert await cache.get(_KEY) is not None
+
+
+class TestDeath:
+    async def test_a_dying_writer_is_logged_and_counted(self) -> None:
+        """A write that raises past the store's own guard ends its task:
+        ``background_task_died`` names it (add-stall-watchdog, group 1)."""
+        cache = _backend()
+        telemetry = Telemetry()
+        store = HosterStateStore(
+            cache,
+            HosterResolverRegistry(resolvers=[_resolver()]),
+            {},
+            interval_s=0.01,
+            telemetry=telemetry,
+        )
+
+        async def _save() -> None:
+            raise RuntimeError("boom")
+
+        store._save = _save  # type: ignore[method-assign]
+        with structlog.testing.capture_logs() as logs:
+            store.start()
+            assert store._task is not None
+            await asyncio.wait({store._task}, timeout=2)
+            await asyncio.sleep(0)
+
+        died = _events(logs, "background_task_died")
+        assert [(e["task"], e["error"]) for e in died] == [
+            ("hoster_state_store", "RuntimeError")
+        ]
+        assert (
+            telemetry.registry.get_sample_value(
+                "scavengarr_background_task_deaths_total",
+                {"task": "hoster_state_store"},
+            )
+            == 1.0
+        )

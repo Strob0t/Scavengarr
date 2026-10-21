@@ -26,6 +26,8 @@ import structlog
 
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.plugin_history import PluginCounter
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
+from scavengarr.infrastructure.telemetry.background import watch_task
 
 log = structlog.get_logger(__name__)
 
@@ -76,9 +78,11 @@ class PluginHistory:
         *,
         interval_s: float = _INTERVAL_S,
         clock: Callable[[], float] = time.time,
+        telemetry: TelemetryPort = NO_TELEMETRY,
     ) -> None:
         self._cache = cache
         self._interval_s = interval_s
+        self._telemetry = telemetry
         self._clock = clock
         self._plugins: Record = {}
         # Counted since the start, and how much of it the backend holds
@@ -136,7 +140,11 @@ class PluginHistory:
 
     def start(self) -> None:
         """Write the record every *interval_s* while it changes."""
-        self._task = asyncio.create_task(self._run(), name="plugin_history")
+        self._task = watch_task(
+            asyncio.create_task(self._run(), name="plugin_history"),
+            "plugin_history",
+            self._telemetry,
+        )
 
     async def _run(self) -> None:
         while True:
