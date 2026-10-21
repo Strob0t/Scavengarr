@@ -43,4 +43,5 @@
   - a decision record in `docs/target/decisions/` (the in-process monitor with its switch off, over an autoheal container and an orchestrator);
   - `CHANGELOG.md`.
 - [ ] 4.2 Production after the deploy (Mr. Fable): the start line names the monitor and its settings. Over two weeks, after each deploy, the stalls, the task deaths, the stuck requests and the lag histogram's top buckets are read and recorded here.
+  - The deploy of 5321c32f (version 0.5.1): `stall_monitor_started` follows `app_startup_complete` with `stall_seconds=120.0`, `exit_on_stall=False` and `backstop_seconds=240.0`; the post-deploy check passed 10 of 10; the nine series of `scavengarr_background_task_deaths_total` (with `request_watch`) and the four of `scavengarr_requests_stuck_total` read 0; the lag histogram's 1693 samples of the first minutes all lie at or below 2.5 s, its new buckets up to 120 s empty.
 - [ ] 4.3 The maintainer decides on the switch and its limit with those numbers; turning it on is a setting in production's Compose.
