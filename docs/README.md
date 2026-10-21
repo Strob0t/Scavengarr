@@ -37,6 +37,7 @@ The `how-to` guides work with the `current` documents and look up the `reference
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
 Open in the hoster resolvers and the browser: the production proof that Filemoon's captcha pass stays warm, read from the maintainer's use.
 Open in the production diagnostics: [`how-to/operations.md`](how-to/operations.md)'s `scripts/prodctl.py` moves from Portainer, which answers no more, to Komodo's read requests.
+Open in the observability: the stall watchdog of [`add-stall-watchdog`](../openspec/changes/add-stall-watchdog/proposal.md), which names a hang's cause in the log, with its exit switch off until its readings.
 The plugins have no open row; their ideas wait in the backlog for their trigger.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
 

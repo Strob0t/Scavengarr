@@ -56,3 +56,4 @@ The maintainer's choice of 2026-10-20: diagnosis with an exit switch that is off
   - The Compose file: the restart policy is already `unless-stopped`.
   - No new dependency: `threading`, `faulthandler` and `sys._current_frames()` are stdlib.
 - **Order:** the task deaths first (group 1, small), then the monitor and the stuck requests (groups 2 and 3); the switch stays off until the readings of group 4 and the maintainer's decision.
+- **Approval:** the maintainer approved the whole change on 2026-10-21; group 1 is row 156 of `docs/backlog.md`, groups 2, 3 and 4.1 are row 157.
