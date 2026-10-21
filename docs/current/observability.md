@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution, every stealth browser page and every HLS proxy request.
 > **Status:** current
-> **As of:** 9fb7318f
+> **As of:** 53cfaacf
 
 ## Purpose
 
@@ -129,6 +129,7 @@ Each carries the done-callback of `watch_task` (`infrastructure/telemetry/backgr
 - A cancelled task (the shutdown) and one that returns (the browser's warm-up) log and count nothing.
 - The names are a fixed set (`BackgroundTaskName` in the telemetry port); each has a zero series from the start, so `increase()` sees the first death.
 - A dead task is not restarted: what it did (the lag samples, the page budget's changes, the writes of the snapshots) stops until the next start.
+- A dead task no longer stops the shutdown: the shutdown and both writers' `aclose()` stop each task with `stop_task()` (beside `watch_task`), which cancels it and waits for its end without raising its exception, so the writers' last snapshots, the browsers' cleanup and the closes of the HTTP client, the cache and the telemetry still run. A cancellation of the shutdown itself still propagates.
 
 ### Queries
 

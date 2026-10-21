@@ -6,11 +6,12 @@ import asyncio
 from contextlib import suppress
 from typing import get_args
 
+import pytest
 from structlog.testing import capture_logs
 
 from scavengarr.domain.ports.telemetry import BACKGROUND_TASKS, BackgroundTaskName
 from scavengarr.infrastructure.telemetry import Telemetry
-from scavengarr.infrastructure.telemetry.background import watch_task
+from scavengarr.infrastructure.telemetry.background import stop_task, watch_task
 
 _DEATHS = "scavengarr_background_task_deaths_total"
 
@@ -105,3 +106,80 @@ def test_every_task_name_has_a_series_from_the_start() -> None:
     }
     # The values the zero series come from are the Literal's names, once each
     assert sorted(BACKGROUND_TASKS) == sorted(get_args(BackgroundTaskName))
+
+
+class TestStopTask:
+    """The shutdown stops each task without its exception (row 158): a task
+    that died before would end the shutdown at its await."""
+
+    async def test_a_running_task_is_cancelled(self) -> None:
+        telemetry = Telemetry()
+        task = watch_task(asyncio.create_task(_waits()), "loop_lag", telemetry)
+        await asyncio.sleep(0)
+        with capture_logs() as logs:
+            await stop_task(task)
+            await asyncio.sleep(0)
+
+        assert task.cancelled()
+        assert [e for e in logs if e["event"] == "background_task_died"] == []
+        assert _deaths(telemetry, "loop_lag") == 0.0
+
+    async def test_a_dead_task_raises_nothing_and_is_not_counted_again(self) -> None:
+        telemetry = Telemetry()
+        task = watch_task(asyncio.create_task(_raises()), "page_budget", telemetry)
+        await _settle(task)
+
+        with capture_logs() as logs:
+            await stop_task(task)
+
+        assert isinstance(task.exception(), RuntimeError)
+        assert [e for e in logs if e["event"] == "background_task_died"] == []
+        assert _deaths(telemetry, "page_budget") == 1.0
+
+    async def test_a_cancelled_task_raises_nothing(self) -> None:
+        task = watch_task(asyncio.create_task(_waits()), "scoring", Telemetry())
+        await asyncio.sleep(0)
+        task.cancel()
+        await _settle(task)
+
+        await stop_task(task)
+
+        assert task.cancelled()
+
+    async def test_a_returned_task_raises_nothing(self) -> None:
+        task = watch_task(
+            asyncio.create_task(_returns()), "browser_warmup", Telemetry()
+        )
+        await _settle(task)
+
+        await stop_task(task)
+
+        assert task.exception() is None
+
+    async def test_a_cancelled_shutdown_still_propagates(self) -> None:
+        """The caller's own cancellation is not swallowed while the task
+        takes its time to end."""
+        release = asyncio.Event()
+
+        async def _slow_to_end() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await release.wait()
+                raise
+
+        task = watch_task(
+            asyncio.create_task(_slow_to_end()), "pass_keeper", Telemetry()
+        )
+        await asyncio.sleep(0)
+        stopping = asyncio.create_task(stop_task(task))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        stopping.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await stopping
+        assert not task.done()
+        release.set()
+        await _settle(task)
+        assert task.cancelled()

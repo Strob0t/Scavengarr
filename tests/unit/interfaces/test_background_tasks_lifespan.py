@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import cast, get_args
 
 import pytest
+from structlog.testing import capture_logs
 
 from scavengarr.domain.ports.telemetry import BackgroundTaskName, TelemetryPort
 from scavengarr.infrastructure.browser.stealth_pool import StealthPool
 from scavengarr.infrastructure.config import load_config
 from scavengarr.infrastructure.hoster_resolvers import state_store
+from scavengarr.infrastructure.hoster_resolvers.pass_keeper import PassKeeper
 from scavengarr.infrastructure.plugins import history
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.playwright_base import PlaywrightPluginBase
@@ -79,3 +81,40 @@ async def test_every_long_lived_task_carries_the_callback(
 
         assert set(watched) == set(get_args(BackgroundTaskName))
         assert all(watched[name] is task for name, task in kept.items())
+
+
+async def test_a_task_that_died_before_the_shutdown_does_not_stop_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first task the shutdown stops (the pass keeper) and the last (the
+    warm-up) died before it: the cache still closes (row 158)."""
+    for base, name in _PLUGIN_GLOBALS:
+        monkeypatch.setattr(base, name, getattr(base, name))
+
+    async def _dies(_self: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(StealthPool, "warmup", _dies)
+    monkeypatch.setattr(PassKeeper, "run_forever", _dies)
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    config = load_config(
+        cli_overrides={
+            "plugin_dir": plugins,
+            "cache_dir": tmp_path / "cache",
+            "scoring": {"enabled": False},
+        }
+    )
+    app = create_app(config)
+    with capture_logs() as logs:
+        async with app.router.lifespan_context(app):
+            state = cast(AppState, app.state)
+            dead = {state._pass_keeper_task, state._browser_warmup_task}
+            async with asyncio.timeout(5):
+                await asyncio.wait(dead)
+
+    events = [e["event"] for e in logs]
+    died = [e["task"] for e in logs if e["event"] == "background_task_died"]
+    assert sorted(died) == ["browser_warmup", "pass_keeper"]
+    assert "cache_closed" in events
+    assert events[-1] == "app_shutdown_complete"

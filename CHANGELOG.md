@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Dead Background Task No Longer Stops the Shutdown
+
+- The lifespan's shutdown cancelled its six background tasks and awaited each with only `CancelledError` suppressed, and both writers' `aclose()` did the same with their own task. A task that had died before the shutdown re-raised its exception at that await, and the rest of the shutdown was skipped: the writers' last snapshots, the browsers' cleanup, the closes of the HTTP client and the cache and the telemetry's flush. The same `suppress` also swallowed a cancellation of the shutdown itself.
+- `stop_task()` (`infrastructure/telemetry/background.py`, beside `watch_task`) cancels a task and waits for its end with `asyncio.wait`, which raises neither its exception (`watch_task` has logged the death and retrieved it) nor swallows the caller's cancellation. The shutdown uses it for all eight tasks in its order, the writers' `aclose()` for theirs.
+- Tests: `stop_task` with a running, a dead, a cancelled and a returned task and with a cancelled caller; each writer's `aclose()` writes its last snapshot after its task died; a started app whose pass keeper and warm-up died before the shutdown still closes the cache and logs `app_shutdown_complete`. `stop_task` put back to a plain `await` under `suppress(CancelledError)` fails five of them.
+
 ### Added: Background Tasks Log Their Death
 
 - A long-lived task of the service that ended with an exception left no log line until the shutdown awaited it: the event-loop monitor had no guard, and the writers of the hoster state and the plugin history guard only their write. Its work (the lag samples, the page budget, the snapshots) stopped without a trace.

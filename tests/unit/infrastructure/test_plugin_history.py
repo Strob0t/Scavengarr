@@ -396,3 +396,24 @@ class TestDeath:
             )
             == 1.0
         )
+
+    async def test_aclose_writes_the_last_record_after_a_death(self) -> None:
+        """The shutdown's write still runs when the task died before (row 158)."""
+        cache = _backend()
+        history = _history(cache, interval_s=0.01)
+        await history.restore()
+
+        async def _run() -> None:
+            raise RuntimeError("boom")
+
+        history._run = _run  # type: ignore[method-assign]
+        history.start()
+        assert history._task is not None
+        await asyncio.wait({history._task}, timeout=2)
+        history.count("kinoger", "searches")
+
+        await history.aclose()
+
+        key, record = cache.set.await_args_list[-1].args
+        assert key == _KEY
+        assert list(record["plugins"]) == ["kinoger"]

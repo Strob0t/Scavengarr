@@ -345,3 +345,24 @@ class TestDeath:
             )
             == 1.0
         )
+
+    async def test_aclose_writes_the_last_snapshot_after_a_death(self) -> None:
+        """The shutdown's write still runs when the task died before (row 158)."""
+        cache = _backend()
+        process = _Process(cache, interval_s=0.01)
+        await process.store.restore()
+
+        async def _run() -> None:
+            raise RuntimeError("boom")
+
+        process.store._run = _run  # type: ignore[method-assign]
+        process.store.start()
+        assert process.store._task is not None
+        await asyncio.wait({process.store._task}, timeout=2)
+        process.hoster_breaker.record_failure("filemoon")
+
+        await process.store.aclose()
+
+        key, snapshot = cache.set.await_args_list[-1].args
+        assert key == _KEY
+        assert [e["name"] for e in snapshot["breakers"]["hoster"]] == ["filemoon"]

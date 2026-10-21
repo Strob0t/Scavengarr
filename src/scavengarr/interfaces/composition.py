@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from functools import partial
 from typing import cast
 from urllib.parse import urlparse
@@ -111,7 +111,7 @@ from scavengarr.infrastructure.stremio.stream_converter import convert_search_re
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 from scavengarr.infrastructure.telemetry import create_telemetry, monitor_loop_lag
-from scavengarr.infrastructure.telemetry.background import watch_task
+from scavengarr.infrastructure.telemetry.background import stop_task, watch_task
 from scavengarr.infrastructure.telemetry.collectors import (
     BreakerCollector,
     BrowserPagesCollector,
@@ -834,9 +834,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.stremio_links.aclose()
         await state.hls_read_ahead.aclose()
         # The pass keeper's capture, before the registry ends its completions
-        state._pass_keeper_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._pass_keeper_task
+        await stop_task(state._pass_keeper_task)
         await state.hoster_resolver_registry.aclose()
         # The last resolutions and breaker changes, before the cache closes
         await state.hoster_state_store.aclose()
@@ -845,27 +843,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.plugin_history.aclose()
 
         if state._scoring_task is not None:
-            state._scoring_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await state._scoring_task
+            await stop_task(state._scoring_task)
             log.info("scoring_scheduler_stopped")
 
         if state._plugin_health_task is not None:
-            state._plugin_health_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await state._plugin_health_task
+            await stop_task(state._plugin_health_task)
 
-        state._loop_lag_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._loop_lag_task
+        await stop_task(state._loop_lag_task)
 
-        state._page_budget_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._page_budget_task
+        await stop_task(state._page_budget_task)
 
-        state._browser_warmup_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._browser_warmup_task
+        await stop_task(state._browser_warmup_task)
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:

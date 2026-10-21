@@ -2,7 +2,7 @@
 
 > **Purpose:** This document maps the modules of `src/scavengarr/` to their layers, follows a Torznab search and a Stremio stream request through them, and gives the order in which the app starts and stops.
 > **Status:** current
-> **As of:** 9d2fc4c7
+> **As of:** 53cfaacf
 
 ## Purpose
 
@@ -410,6 +410,7 @@ flowchart TD
     signal -. "a second SIGINT" .-> force["force_exit: the waits end and the app's cleanup is skipped"]
 ```
 
+Each background task ends through `stop_task()` (`infrastructure/telemetry/background.py`): cancelled, then waited for without its exception, so a task that died before the shutdown ([Background tasks](observability.md#background-tasks)) skips none of the steps after it.
 Uvicorn's two waits together last up to 5 s: the CLI sets `timeout_graceful_shutdown=5`.
 A connection still answering then, such as a proxied playback, is cancelled with the line `Cancel 1 running task(s), timeout graceful shutdown exceeded`.
 The log setup (`_ShutdownBoundFilter` in `infrastructure/logging/setup.py`) makes that line a warning and drops the cancelled task's `Exception in ASGI application` with its `CancelledError`, so a stop during a playback writes no error line; every other cancel and exception stays an error.

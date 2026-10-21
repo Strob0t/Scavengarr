@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -27,7 +26,7 @@ import structlog
 from scavengarr.domain.ports.cache import CachePort
 from scavengarr.domain.ports.plugin_history import PluginCounter
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
-from scavengarr.infrastructure.telemetry.background import watch_task
+from scavengarr.infrastructure.telemetry.background import stop_task, watch_task
 
 log = structlog.get_logger(__name__)
 
@@ -155,9 +154,7 @@ class PluginHistory:
         """Stop the periodic writes and write the last changes (shutdown,
         before the cache backend closes)."""
         if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+            await stop_task(self._task)
             self._task = None
         await self._save()
 
