@@ -2,7 +2,7 @@
 
 > **Purpose:** Setting up and working in the dev container: git access, the tools it installs, checks in a worktree, the editor, the Claude Code hooks and the production diagnostics.
 > **Status:** how-to
-> **As of:** b102c25c
+> **As of:** afe8dbb1
 
 ## Goal
 
@@ -13,7 +13,7 @@ The rules these steps serve are in [`AGENTS.md`](../../AGENTS.md) §9.
 
 - VS Code or VSCodium (DevPod) with the dev container support.
 - `.env.devcontainer` (not versioned): on the first start `initializeCommand` copies `.env.devcontainer.example` to it if it is missing; fill it in, then rebuild.
-  It holds `GH_TOKEN`, the git identity `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`, `PORTAINER_URL` and `PORTAINER_API_KEY` for the production diagnostics and `USAGE_STATUS_REPO` for the usage guard.
+  It holds `GH_TOKEN`, the git identity `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`, `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET`, `KOMODO_SERVER` and `PRODCTL_BASE_URL` for the production diagnostics and `USAGE_STATUS_REPO` for the usage guard.
   A change to it needs a container rebuild or restart.
 
 ## Steps
@@ -83,10 +83,11 @@ The servers and their flags: [`docs/agents/mcp-servers.md`](../agents/mcp-server
 
 ### Production diagnostics
 
-`scripts/prodctl.py` (`ps`, `stats`, `logs`, `metrics`, `state`, `probe`, `digest`, `check`) reads production through Portainer's Docker API with `PORTAINER_URL` and `PORTAINER_API_KEY` from `.env.devcontainer` (`scripts/portainer.py`).
-Everything it prints passes `portainer.mask()`: URLs shrink to their host, and no IP addresses, tokens or credentials show.
-A budget shared by all processes allows 100 Portainer requests per minute.
-Probes in `scripts/probes/` must not change state; which run in the container, which in the dev container (with `PYTHONPATH=src`) and the post-deploy check: [Operations](operations.md).
+`scripts/prodctl.py` (`ps`, `stats`, `logs`, `metrics`, `state`, `digest`, `check`) reads the production container through two of Komodo Core's read requests, `InspectContainer` and `GetContainerLog`, with `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET` and `KOMODO_SERVER` from `.env.devcontainer` (`scripts/komodo.py`), and the app's own endpoints through `PRODCTL_BASE_URL`.
+It runs no command in the container, and of the inspect answer it keeps the state and the limits only: the container's environment holds its secrets.
+Everything it prints passes `komodo.mask()`: URLs shrink to their host, and no IP addresses, tokens or credentials show.
+A budget shared by all processes allows 100 Komodo requests per minute, and the log reaches back 5000 lines.
+Probes in `scripts/probes/` must not change state; which run in the dev container (with `PYTHONPATH=src`), which in the container by the maintainer's `docker exec -i`, and the post-deploy check: [Operations](operations.md).
 Rebuilds and restarts stay with the user.
 
 ## Verify

@@ -1,6 +1,10 @@
 """Stored Stremio stream links: hoster, release title, HLS, CDN domain, age.
 
-``probe links [ID ...]`` prints the given stream ids; without ids, the links
+Run by the maintainer in the production container, ARGS ``[ID ...]``:
+
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/links.py
+
+It prints the given stream ids; without ids, the links
 resolved in the last hour (Redis backend only: the probe scans the keys).
 Read-only; prints no video URLs, only the CDN's domain.
 """

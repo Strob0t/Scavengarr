@@ -231,6 +231,12 @@ class ContainerLog:
         """The first line's time: as far back as the log reaches."""
         return self.lines[0].partition(" ")[0] if self.lines else None
 
+    @property
+    def cut(self) -> bool:
+        """Komodo's line cap cut the answer: the container's log may reach
+        further back than its first line."""
+        return len(self.lines) >= LOG_LINES
+
 
 class Komodo:
     """Komodo Core's read requests about the container on one server."""

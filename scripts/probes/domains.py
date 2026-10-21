@@ -1,6 +1,9 @@
 """Plugin domains from where the probe runs: DNS, connect, HEAD, GET.
 
-    probe domains [--plugins megakino_to,movie4k] [--history]
+    poetry run python scripts/probes/domains.py [ARGS]
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/domains.py
+
+with ARGS ``[--plugins megakino_to,movie4k] [--history]``.
 
 For every ``_domains`` entry of each plugin (default: every stream plugin)
 the probe resolves the name, opens a TCP connection to port 443, sends the
@@ -8,8 +11,9 @@ domain check's ``HEAD https://<domain>/`` (its timeout, the plugin's client
 and headers) and a ``GET`` of the same page, and prints per step the
 outcome and its time. A domain *answers* by the domain check's rule: below
 400, or ``_site_answers`` (an error page or a challenge page is the site).
-Run it in the dev container (a residential connection) and on the production host
-(``prodctl.py probe domains``, the VPN exit) to compare the two.
+Run it in the dev container (a residential connection, the first line) and
+in the production container (the VPN exit, the second line, by the
+maintainer) to compare the two.
 
 ``--history`` also prints the plugins' long-term record from the app on
 this host (``GET http://127.0.0.1:$PORT/api/v1/stats/plugins``): per day

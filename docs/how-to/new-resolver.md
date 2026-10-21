@@ -2,7 +2,7 @@
 
 > **Purpose:** Adding or repairing a hoster resolver, from the unresolved hosters to the regenerated resolver list.
 > **Status:** how-to
-> **As of:** eb83019c
+> **As of:** afe8dbb1
 
 ## Goal
 
@@ -23,10 +23,10 @@ The hosters whose links the plugins deliver without a resolver are counted, the 
 
 ```bash
 poetry run python scripts/prodctl.py state --keys unresolved_hosters
-poetry run python scripts/prodctl.py logs --since 1d --grep hoster_without_resolver --fields hoster,plugin
+poetry run python scripts/prodctl.py logs --since 4h --grep hoster_without_resolver --fields hoster,plugin
 ```
 
-The first reads `unresolved_hosters` of production's `GET /api/v1/stats/metrics`, and the second names the plugins that deliver the links.
+The first reads `unresolved_hosters` of production's `GET /api/v1/stats/metrics`, and the second names the plugins that deliver the links, as far back as the log's last 5000 lines reach ([Operate production](operations.md#the-logs-window)).
 
 ### 2. Reuse a generic resolver first
 

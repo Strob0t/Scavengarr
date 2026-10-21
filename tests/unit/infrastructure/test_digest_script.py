@@ -390,6 +390,37 @@ class TestRender:
             " RuntimeError: aclose() | 2 |" in text
         )
 
+    def test_a_shorter_log_names_its_window_in_the_first_line(self) -> None:
+        """Komodo answers the log's last 5000 lines, about 4 h of it."""
+        data = _mod.digest(
+            container="scavengarr",
+            since_s=_DAY_S,
+            log_text=_LOG,
+            metrics_text=_METRICS,
+            plugin_record=_RECORD,
+            now=_NOW,
+            log_s=3.9 * 3600,
+        )
+
+        assert _mod.render(data).startswith(
+            "# scavengarr: the last 24.0 h (the log reaches back 3.9 h only)\n"
+        )
+        assert _digest()["log_s"] is None
+
+    def test_a_log_reaching_further_than_the_window_is_not_named(self) -> None:
+        data = _mod.digest(
+            container="scavengarr",
+            since_s=900,
+            log_text="",
+            metrics_text="",
+            plugin_record=None,
+            now=_NOW,
+            log_s=3600,
+        )
+
+        assert data["log_s"] is None
+        assert _mod.render(data).startswith("# scavengarr: the last 15 min\n")
+
     def test_without_the_record_and_metrics(self) -> None:
         data = _mod.digest(
             container="scavengarr",

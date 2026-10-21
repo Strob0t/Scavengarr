@@ -1,46 +1,67 @@
 # Operate production
 
-> **Purpose:** Reading production with `scripts/prodctl.py`: logs, metrics, the digest, the post-deploy check and the probes.
+> **Purpose:** Reading production with `scripts/prodctl.py`: the container, its logs, metrics, the digest, the post-deploy check and the probes.
 > **Status:** how-to
-> **As of:** a4b5f7d8
+> **As of:** afe8dbb1
 
 ## Goal
 
-Read a production deployment behind Portainer from a development machine without changing it: its containers, logs, metrics and state, a report of a window, the check after a deploy, and probes that run inside the container or against the sites.
+Read the production container from a development machine without changing it: its state, logs, metrics and state endpoint, a report of a window and the check after a deploy, and run probes against the sites or, by the maintainer's hand, inside the container.
 
 ## Prerequisites
 
-- `PORTAINER_URL` and `PORTAINER_API_KEY` in `.env.devcontainer` (`scripts/portainer.py` reads them).
-- Portainer access to the production containers; the container is `scavengarr` unless `-c`/`--container` names another.
-- For `check`: the public addon URL, up to `/api/v1/stremio`.
+- In `.env.devcontainer` (`scripts/komodo.py` reads them; the file wins over the environment):
+  - `KOMODO_URL`: Komodo Core's address;
+  - `KOMODO_API_KEY` and `KOMODO_API_SECRET`: a Komodo key that may read the `scavengarr` container;
+  - `KOMODO_SERVER`: the production host's name in Komodo;
+  - `PRODCTL_BASE_URL`: production's public base URL, without a path.
+- For the production host's local CA: `--insecure` before the command (`prodctl.py --insecure check`) skips the TLS checks of Komodo and of the public URL.
 
-`scripts/prodctl.py` prints everything through `portainer.mask()`: URLs keep only scheme and host, IP addresses and secret-like values are replaced.
-Its errors too: an HTTP error from Portainer (a 403 for a container outside the label access, a 500 for an unknown one) ends with one masked line on stderr, such as `logs failed: Client error '403 Forbidden' for url 'http://<ip>:9000/…'`, and exit code 1 instead of a traceback with Portainer's address and the request's path.
-A budget shared by all processes on the machine allows 100 Portainer requests per minute.
-Overloaded or unreachable Portainer requests are retried with backoff, an exec only when Portainer refused it before it ran.
+`scripts/prodctl.py` reads the container `scavengarr` with two of Komodo Core's read requests and nothing else: `POST {KOMODO_URL}/read` with `InspectContainer` (the container's state and limits) or `GetContainerLog` (its log).
+It uses no other path of Komodo's API (`/execute`, `/write`, `/terminal`), so it runs no command in the container and changes nothing, although the key reaches every container of the host.
+Docker's inspect object holds the container's environment with its secrets: `komodo.py` keeps the status, health, start, restarts, OOM kill and the CPU and memory limits, and prints, logs and stores nothing else of it.
+The app's own endpoints (`/metrics`, `/api/v1/stats/metrics`, `/api/v1/stats/plugins` and the stream requests of `check`) come through `PRODCTL_BASE_URL`.
+
+Everything it prints passes `komodo.mask()`: URLs keep only scheme and host, IP addresses and secret-like values are replaced.
+Its errors too: a refused request ends with one line on stderr and exit code 1 instead of a traceback, such as `logs failed: GetContainerLog answered 403` with Komodo's reason when its answer names one, and an error that quotes a URL names neither Komodo's host nor production's (`https://<host>/…`).
+A budget shared by all processes on the machine allows 100 Komodo requests per minute.
+A request that Komodo answers with 429, 502, 503 or 504, or that finds it unreachable, is sent again with backoff, three attempts in all: every request is a read.
 Rebuilds and restarts stay with the maintainer.
+
+### The log's window
+
+`GetContainerLog` answers the log's last 5000 lines, Komodo's cap (a larger request gets 5000 without an error), with stdout and stderr apart; `komodo.py` merges them by their times, as `docker logs` interleaves them.
+At production's usual rate the 5000 lines cover about 4 h.
+`logs` and `digest` filter them by `--since`; when the log begins after the requested start, `logs` ends with the time it reaches back to (`[the log reaches back to … UTC only: Komodo answers its last 5000 lines]`), and the digest's first line names the shorter window.
+A record older than the window is out of reach, such as the start's `config_effective` of a container that has run for hours.
 
 ## Steps
 
-### 1. Look at the containers
+### 1. Look at the container
 
 ```bash
-poetry run python scripts/prodctl.py ps                       # containers and their state
-poetry run python scripts/prodctl.py stats                    # CPU cores, memory, processes, network
+poetry run python scripts/prodctl.py ps        # status, health, start, restarts, OOM kill
+poetry run python scripts/prodctl.py stats     # the app process's CPU, memory, open files
 ```
+
+- `ps` is one `InspectContainer` request: `scavengarr | running (healthy) | started … UTC | restarts 0 | OOM-killed no`.
+- `stats` is one `InspectContainer` request for the limits and two `GET /metrics` 5 s apart: `process_cpu_seconds_total` as the cores in use between the two, `process_resident_memory_bytes` and `process_open_fds`, against the container's CPU and memory limits.
+- The process counters are the app's Python process: Chromium's processes are not in them, as the last line says.
 
 ### 2. Read the logs
 
 ```bash
 poetry run python scripts/prodctl.py logs --since 30m --grep kinoger --fields plugin,duration_ms
-poetry run python scripts/prodctl.py logs --since 7d --grep config_ --width 0   # the config it runs with
+poetry run python scripts/prodctl.py logs --since 4h --grep config_ --width 0   # the config it runs with
 poetry run python scripts/prodctl.py logs --since 1h --grep hoster_state_       # what a restart restored
 ```
 
-- `logs` renders JSON records as `time level event key=value ...` and drops the liveness and readiness checks; `--health` keeps them, and `--raw` prints the masked lines as logged.
+- `logs` is one `GetContainerLog` request.
+- It renders JSON records as `time level event key=value ...` and drops the liveness and readiness checks; `--health` keeps them, and `--raw` prints the masked lines as logged.
 - `--since` defaults to 15 minutes and `--limit` to the last 60 lines.
 - Records are cut to 400 characters; `--width 0` prints them whole, for a traceback's last lines (`--fields exception --width 0`).
 - `--grep` is a case-insensitive regex over the raw JSON record.
+- The configuration lines come at the start: they are in the log while its 5000 lines reach back to the start ([Configuration](../reference/configuration.md)).
 
 A start logs what it restored of the run before ([State across restarts](../current/hoster-resolvers.md#caches-and-state-across-restarts)):
 
@@ -64,7 +85,7 @@ poetry run python scripts/prodctl.py metrics --grep plugin_search_seconds_count
 poetry run python scripts/prodctl.py state --keys circuit_breaker,event_loop
 ```
 
-`metrics` and `state` fetch `GET /metrics` and `GET /api/v1/stats/metrics` inside the container ([Metrics](../reference/metrics.md)).
+`metrics` and `state` are one `GET /metrics` and one `GET /api/v1/stats/metrics` through `PRODCTL_BASE_URL` ([Metrics](../reference/metrics.md)).
 
 ### 4. Read a window in one report
 
@@ -72,8 +93,9 @@ poetry run python scripts/prodctl.py state --keys circuit_breaker,event_loop
 poetry run python scripts/prodctl.py digest --since 24h       # --json: its data
 ```
 
-`digest` costs one log request and one exec in the container (`/metrics` and `/api/v1/stats/plugins` together); the computation lives in `scripts/digest.py`.
-The log window defaults to 24 h, while the metrics count since the start, so a restart inside the window shows as a short uptime in the first line.
+`digest` costs one `GetContainerLog` request, `GET /metrics` and `GET /api/v1/stats/plugins`; the computation lives in `scripts/digest.py`.
+The window defaults to 24 h, more than the log's last 5000 lines usually reach: the first line then names the window the log covers (`# scavengarr: the last 24.0 h (the log reaches back 3.9 h only)`).
+The metrics count since the start, so a restart inside the window shows as a short uptime in the second line.
 Its sections:
 
 - **Requests:** the stream requests of the window joined over `request_id`, by source (`search`, `joined`, `stale`, `cache`, `none`), with their count, the p50 and p90 of the answer time, the streams per answer and the answers without a stream; one line counts the requests per id scheme of the request path (`tt`, `kitsu`, `tmdb`).
@@ -88,13 +110,14 @@ Its sections:
 ### 5. Check a deploy
 
 ```bash
-poetry run python scripts/prodctl.py check --base https://scavengarr.example/api/v1/stremio --insecure
+poetry run python scripts/prodctl.py --insecure check
 ```
 
 `check` is the post-deploy check as one command, judged in `scripts/deploy_check.py` (tested from fixture records and answers, no network) and printed as one table; it exits 1 when a check failed.
-It costs ten Portainer requests (the container list, its inspection for the start time, the log since that start, `/metrics` through one exec of three requests, and the endpoint lookup with its container listing for each of its two clients) and four stream requests through the public addon URL; `--insecure` skips the TLS check for a local CA.
+It costs two Komodo requests (`InspectContainer` for the state and the start, `GetContainerLog` after the stream requests) and, through the public URL, four stream requests and `GET /metrics`.
+`--base` names another addon URL up to `/api/v1/stremio`; the default is `PRODCTL_BASE_URL` with `/api/v1/stremio`.
 
-1. The container is running and healthy.
+1. The container is running and healthy; its restarts and an OOM kill are shown.
 2. The newest `app_startup_complete` record is younger than the container's start and names the version.
 3. `config_unknown_keys` of that start is shown as a warning, not a failure.
 4. `hoster_state_restored` and `plugin_history_restored` of that start are shown with their counts.
@@ -104,22 +127,29 @@ It costs ten Portainer requests (the container list, its inspection for the star
    Each stream row ends with the client's time to the response headers and to the body's end beside the server's `duration_ms` of that `http_request` record (`client 4.1 s to headers, 4.2 s to the end, server 3.9 s`); a client more than 5 s slower than the server turns a passed row into a warning that names the gap (`27.0 s more on the way`): the time went into the proxy or the network, not the search.
 8. The readiness probe's gauge `scavengarr_network_ok` reads 1 for the cache backend and the DNS ([Readiness](../current/observability.md#readiness)); a check at 0 fails, and no sample yet (nothing asked `/api/v1/readyz` since the start) is a warning.
 
+Checks 2 to 4 read the log from the container's start on: a restart keeps the container's log, so the lines before the start do not count.
+When Komodo's 5000 lines begin after the start, the start's records are gone, and checks 2 to 4 are warnings that the log no longer reaches the start, not failures; a check right after the deploy reads them.
 The stream requests are its only writes to production (four searches).
-The stream descriptions are the only site data in the table, and the output passes `portainer.mask()`.
+The stream descriptions are the only site data in the table, and the output passes `komodo.mask()`.
 A container replaced during the check needs the check again.
 
 ### 6. Run a probe
 
+The probes in `scripts/probes/` change nothing.
+The dev-container ones run there; in a worktree with `PYTHONPATH=src`, so they import the worktree's code:
+
 ```bash
-poetry run python scripts/prodctl.py probe tasks              # where the asyncio tasks wait
-poetry run python scripts/prodctl.py probe resources          # cgroup limits and pressure, memory, top processes
-poetry run python scripts/prodctl.py probe links              # stream links of the last hour: hoster, CDN, age
-PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/series_episodes.py   # in the dev container
+PYTHONPATH=src xvfb-run -a poetry run python scripts/probes/series_episodes.py
 ```
 
-`probe NAME [ARGS]` runs a file of `scripts/probes/` inside the container (`python -c`, so it sees the app's code, config and cache), `probe path/to/file.py` an ad-hoc one; `--timeout` (default 300 s) bounds it and `--env KEY=VALUE` passes a variable.
-The probes change nothing.
-In a worktree the dev-container probes run with `PYTHONPATH=src`, so they import the worktree's code.
+A container probe reads the app's code, config and cache, so it runs inside the container.
+Komodo's read requests run no command there: the maintainer runs it on the Docker host, with the probe's file on standard input (`-`) and its arguments behind it, `-e KEY=VALUE` for a variable:
+
+```bash
+docker exec -i scavengarr python - [ARGS] < scripts/probes/NAME.py
+```
+
+That is also how a shorter `autoplay_wait` is timed on the production host first (`capture_timing --autoplay-wait`).
 
 | Probe | Runs in | Shows |
 |---|---|---|
@@ -134,7 +164,7 @@ In a worktree the dev-container probes run with `PYTHONPATH=src`, so they import
 | `series_episodes [--json FILE] [ID ...]` | dev container | Series episodes per plugin: what the episode filter keeps, and its leaks. |
 | `title_match [--json FILE]` | dev container | Title matching per plugin: the queries sent, the raw titles, the verdicts. |
 | `resolver_urls [--avoid FILE]` | dev container | The hoster page URLs of the live resolver tests (`.cache/live/resolver-urls.json`); `--avoid` takes each resolver's next link. |
-| `header_binding [--source production]` | dev container | Which CDNs need a resolution's playback headers; `--source production` takes production's stored resolutions through Portainer. |
+| `header_binding` | dev container | Which CDNs need a resolution's playback headers, for the live suite's hoster links resolved there. |
 | `anime_offsets [--aniworld]` | dev container | How far an IMDb request's absolute episode number lies from the Kitsu number, against Cinemeta, the Anime Kitsu addon and Fribb's id list; `--aniworld` adds where `locate()` places each episode. |
 | `sto_linkout` | both | Whether sto's hoster link-outs (`/r?t=<token>`) leave the site. |
 | `vidhide_segments` | both | Which headers VidHide's CDN wants behind the HLS proxy; in the dev container with `--imdb` and the dev server's `PORT`. |
@@ -160,13 +190,17 @@ In a worktree the dev-container probes run with `PYTHONPATH=src`, so they import
 
 ## Verify
 
-- `prodctl.py ps` lists the containers and their state, and `prodctl.py check` ends with exit code 0 and every row passed.
+- `prodctl.py ps` prints the container's line, and `prodctl.py check` ends with exit code 0, every row passed or warned.
 - A probe prints its report; it reads only, so production's state is the same afterwards.
 
 ## Troubleshooting
 
-- **A `logs --grep` that finds nothing:** the pattern runs over the raw JSON record, so `path=/metrics` matches nothing while `/metrics` does; verify a zero with a broader pattern before reporting it.
-- **A command hangs before its first line:** the shared budget of 100 Portainer requests per minute is spent, and a full budget waits; other processes on the machine share it.
-- **Portainer answers 429 or 5xx:** the command retries with backoff; an exec is retried only when Portainer refused it before it ran.
+- **A `logs --grep` that finds nothing:** the pattern runs over the raw JSON record, so `path=/metrics` matches nothing while `/metrics` does; verify a zero with a broader pattern before reporting it. A record older than the log's last 5000 lines is gone: the last line names how far back the log reaches.
+- **`missing in .env.devcontainer and the environment: …`:** the line names the variables to set.
+- **`… failed: InspectContainer answered 403` (or 500):** the key may not read the container, or `KOMODO_SERVER` names no server of Komodo's; Komodo's reason follows when its answer names one.
+- **A TLS error such as `CERTIFICATE_VERIFY_FAILED`:** the production host's local CA; `--insecure` goes before the command.
+- **A command hangs before its first line:** the shared budget of 100 Komodo requests per minute is spent, and a full budget waits; other processes on the machine share it.
+- **Komodo answers 429 or 5xx:** the command sends the request again with backoff, three attempts in all.
+- **`check` warns that the log no longer reaches the start:** the container has logged more than 5000 lines since; the check right after a deploy reads the start's records.
 - **`capture_timing` launches nothing:** the container's memory or `/dev/shm` is short, as its first lines say.
 - **A dev-container probe runs the main checkout's code:** in a worktree it needs `PYTHONPATH=src`.

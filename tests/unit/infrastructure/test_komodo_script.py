@@ -373,7 +373,12 @@ class TestKomodo:
 
         log = self._client().log()
 
-        assert (log.lines, log.begins, log.text) == ((), None, "")
+        assert (log.lines, log.begins, log.text, log.cut) == ((), None, "", False)
+
+    def test_a_log_of_the_cap_is_cut(self) -> None:
+        line = "2026-10-06T11:09:01.000000000Z x"
+        assert _mod.ContainerLog((line,) * 5000).cut
+        assert not _mod.ContainerLog((line,) * 4999).cut
 
     @respx.mock
     def test_a_failed_log_command_raises_with_its_error(self) -> None:

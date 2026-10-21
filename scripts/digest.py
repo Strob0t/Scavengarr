@@ -2,8 +2,9 @@
 log noise and errors (``prodctl.py digest``).
 
 Pure functions over what ``prodctl.py`` fetches: the container log of the
-window (JSON records), ``GET /metrics`` (since the process start) and the
-plugins' long-term record (``GET /api/v1/stats/plugins``). ``prodctl.py``
+window (JSON records; Komodo answers the log's last 5000 lines, and the first
+line names a shorter window), ``GET /metrics`` (since the process start) and
+the plugins' long-term record (``GET /api/v1/stats/plugins``). ``prodctl.py``
 masks everything it prints; this module carries no credentials and makes no
 request.
 """
@@ -378,15 +379,18 @@ def digest(
     metrics_text: str,
     plugin_record: Any,
     now: float,
+    log_s: float | None = None,
 ) -> dict[str, Any]:
     """The report's data: the sections over the window of *since_s*
-    seconds before *now* (the log) and the process (the metrics)."""
+    seconds before *now* (the log) and the process (the metrics). *log_s*:
+    the seconds the log reaches back, when that is less than *since_s*."""
     records = parse_records(log_text)
     samples = parse_metrics(metrics_text)
     first_day = datetime.fromtimestamp(now - since_s, UTC).date()
     return {
         "container": container,
         "since_s": since_s,
+        "log_s": log_s if log_s is not None and log_s < since_s else None,
         "log_records": len(records),
         "process": process(samples, now),
         "requests": requests(records),
@@ -539,8 +543,11 @@ def render(data: dict[str, Any]) -> str:
         head.append(f"up {_duration(uptime)} (the metrics count since the start)")
     elif not process_["version"]:
         head.append("no metrics")
+    window = f"the last {_duration(data['since_s'])}"
+    if data.get("log_s") is not None:
+        window += f" (the log reaches back {_duration(data['log_s'])} only)"
     lines = [
-        f"# {data['container']}: the last {_duration(data['since_s'])}",
+        f"# {data['container']}: {window}",
         "",
         "; ".join(head),
         "",

@@ -1,6 +1,10 @@
 """Container resources as the app sees them: cgroup limits and pressure, CPUs,
 memory, load, and the processes with the most memory (proportional set size).
 
+Run by the maintainer in the production container:
+
+    docker exec -i scavengarr python - < scripts/probes/resources.py
+
 Read-only; prints no environment and no command lines.
 """
 

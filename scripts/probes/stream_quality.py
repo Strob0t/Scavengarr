@@ -1,6 +1,8 @@
 """Stored stream qualities: production's resolutions counted per resolver.
 
-    probe stream_quality
+Run by the maintainer in the production container:
+
+    docker exec -i scavengarr python - < scripts/probes/stream_quality.py
 
 Reads the hoster resolver registry's snapshot (``hoster_state:v1``, which
 ``HosterStateStore`` writes every 30 s when something changed: the

@@ -1,10 +1,16 @@
 """HLS throughput from the production host: one connection, read-ahead, byte ranges,
 both.
 
-    probe hls_throughput [--hoster firestream] [--segments 10]
-                         [--in-flight 3[,4,...]]
-                         [--stream-id ID | --imdb [movie/|series/]ID]
-    probe hls_throughput --file [ID] [--hoster mixdrop]
+Run by the maintainer in the production container:
+
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/hls_throughput.py
+
+with ARGS
+
+    [--hoster firestream] [--segments 10] [--in-flight 3[,4,...]]
+    [--stream-id ID | --imdb [movie/|series/]ID]
+
+or ``--file [ID] [--hoster mixdrop]``.
 
 The newest stored HLS link of the hoster (the Redis backend: the probe scans
 the stream link keys; ``--stream-id`` names one) is fetched from its CDN

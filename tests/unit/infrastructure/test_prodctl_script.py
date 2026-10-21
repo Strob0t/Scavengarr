@@ -1,61 +1,113 @@
-"""Tests for scripts/prodctl.py and scripts/probes/ (no live Portainer)."""
+"""Tests for scripts/prodctl.py and scripts/probes/ (no live Komodo or app)."""
 
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib
 import json
 import py_compile
+import re
 import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
 import respx
 
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
-_PORTAINER = "http://portainer.test:9000"
-_DOCKER = f"{_PORTAINER}/api/endpoints/3/docker"
+_KOMODO = "http://komodo.test:9120"
+_PUBLIC = "https://addon.test"
+_STAMP = "2026-10-06T11:09:08.998479784Z"
 
 
-def _load() -> ModuleType:
-    sys.path.insert(0, str(_SCRIPTS))  # the script imports portainer
+def _load(name: str) -> ModuleType:
+    sys.path.insert(0, str(_SCRIPTS))  # the script imports komodo and digest
     try:
-        return importlib.import_module("prodctl")
+        return importlib.import_module(name)
     finally:
         sys.path.remove(str(_SCRIPTS))
 
 
-_mod = _load()
+_mod = _load("prodctl")
+_komodo = _load("komodo")
+# prodctl's clock in the commands' tests: a minute after the records
+_NOW = _mod.parse_time("2026-10-06T11:10:08Z")
 
 
-def _frame(text: str) -> bytes:
-    data = text.encode()
-    return bytes([1, 0, 0, 0]) + len(data).to_bytes(4, "big") + data
+def _record(stamp: str = _STAMP, **fields: object) -> str:
+    return f"{stamp} " + json.dumps({"timestamp": stamp[:19] + "Z", **fields})
 
 
-def _record(**fields: object) -> str:
-    return "2026-10-06T11:09:08.998479784Z " + json.dumps(
-        {"timestamp": "2026-10-06T11:09:08Z", **fields}
-    )
+# Docker's inspect object as Komodo answers it, the environment beside the
+# kept fields
+_INSPECT: dict[str, Any] = {
+    "RestartCount": 0,
+    "State": {
+        "Status": "running",
+        "OOMKilled": False,
+        "StartedAt": "2026-10-06T11:09:00.123456789Z",
+        "Health": {"Status": "healthy"},
+    },
+    "HostConfig": {"Memory": 2 * 2**30, "NanoCpus": 4_000_000_000},
+    "Config": {"Env": ["SCAVENGARR_CACHE_REDIS_PASSWORD=hunter2"]},
+}
+
+
+def _state(**changes: Any) -> Any:
+    fields: dict[str, Any] = {
+        "status": "running",
+        "health": "healthy",
+        "started_at": "2026-10-06T11:09:00.123456789Z",
+        "oom_killed": False,
+        "restarts": 0,
+        "memory": 2 * 2**30,
+        "nano_cpus": 4_000_000_000,
+        "cpu_quota": 0,
+        "cpu_period": 0,
+    }
+    return _komodo.ContainerState(**{**fields, **changes})
 
 
 @pytest.fixture
-def portainer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Fake credentials and a private request budget; the mocked Docker endpoint.
+def production(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Fake credentials, a private request budget and a fixed clock.
 
     The mock starts here, before the routes: a route added before
     ``respx.mock`` starts is part of its snapshot and outlives the test.
     """
-    monkeypatch.setattr(_mod, "credentials", lambda: (_PORTAINER, "key"))
+    found = _komodo.Credentials(
+        url=_KOMODO, key="k3y", secret="s3cr3t", server="host-1", base_url=_PUBLIC
+    )
+    monkeypatch.setattr(_mod, "credentials", lambda: found)
     monkeypatch.setattr(_mod, "_BUDGET", tmp_path / "budget.json")
+    monkeypatch.setattr(
+        _mod,
+        "time",
+        SimpleNamespace(time=lambda: _NOW, monotonic=time.monotonic, sleep=lambda _: 0),
+    )
     with respx.mock:
-        respx.get(f"{_PORTAINER}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
-        respx.get(f"{_DOCKER}/containers/json").respond(json=[])
         yield tmp_path
+
+
+def _komodo_reads(
+    *, inspect: dict[str, Any] | None = None, stdout: str = "", stderr: str = ""
+) -> respx.Route:
+    """Komodo's ``/read``: the inspect object or the log, by the type."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["type"] == "InspectContainer":
+            return httpx.Response(200, json=_INSPECT if inspect is None else inspect)
+        assert body["type"] == "GetContainerLog"
+        log = {"stdout": stdout, "stderr": stderr, "success": True}
+        return httpx.Response(200, json=log)
+
+    return respx.post(f"{_KOMODO}/read").mock(side_effect=answer)
 
 
 class TestSeconds:
@@ -118,43 +170,94 @@ class TestSelectLines:
         assert lines == [self._TEXT.splitlines()[2]]
 
 
+class TestWindow:
+    _LOG = _komodo.ContainerLog(
+        (
+            "2026-10-06T11:00:00.000000000Z a",
+            "2026-10-06T11:05:00.000000000Z b",
+            "2026-10-06T11:10:00.000000000Z c",
+        )
+    )
+
+    def test_since_keeps_the_lines_from_the_start_on(self) -> None:
+        start = _mod.parse_time("2026-10-06T11:04:00Z")
+        assert _mod.since(self._LOG, start) == list(self._LOG.lines[1:])
+        assert _mod.since(self._LOG, _NOW) == []
+
+    def test_a_log_beginning_after_the_start_names_its_first_line(self) -> None:
+        early = _mod.parse_time("2026-10-06T10:00:00Z")
+        late = _mod.parse_time("2026-10-06T11:30:00Z")
+        assert _mod.reach(self._LOG, early) == _mod.parse_time("2026-10-06T11:00:00Z")
+        assert _mod.reach(self._LOG, late) is None
+        assert _mod.reach(_komodo.ContainerLog(()), early) is None
+
+
 class TestStatsLine:
-    def test_cores_memory_processes_and_network(self) -> None:
-        sample = {
-            "cpu_stats": {
-                "cpu_usage": {"total_usage": 3_000},
-                "system_cpu_usage": 10_000,
-                "online_cpus": 4,
-            },
-            "precpu_stats": {
-                "cpu_usage": {"total_usage": 1_000},
-                "system_cpu_usage": 6_000,
-            },
-            "memory_stats": {
-                "usage": 300 * 2**20,
-                "limit": 2**30,
-                "stats": {"inactive_file": 200 * 2**20},
-            },
-            "pids_stats": {"current": 7},
-            "networks": {"eth0": {"rx_bytes": 2048, "tx_bytes": 512}},
-        }
-        assert _mod.stats_line("app", sample) == (
-            "app: CPU 2.000 of 4 cores | memory 100.0 MiB of 1.0 GiB | processes 7"
-            " | network rx 2.0 KiB tx 512 B"
+    _FIRST = {"process_cpu_seconds_total": 100.0}
+    _SECOND = {
+        "process_cpu_seconds_total": 110.0,
+        "process_resident_memory_bytes": 300 * 2**20,
+        "process_open_fds": 87.0,
+    }
+
+    def test_cores_memory_and_files_against_the_limits(self) -> None:
+        assert _mod.stats_line(_state(), self._FIRST, self._SECOND, 5.0) == (
+            "scavengarr app process: CPU 2.000 of 4 cores | memory 300.0 MiB of"
+            " 2.0 GiB | open files 87"
         )
 
+    def test_an_idle_app_shows_its_load(self) -> None:
+        """``stats`` once printed "CPU 0.00" for an idle app (0.0035 cores,
+        rounded to two decimals), which read as a missing sample."""
+        second = {**self._SECOND, "process_cpu_seconds_total": 100.02}
+        line = _mod.stats_line(_state(), self._FIRST, second, 5.0)
+        assert line.startswith("scavengarr app process: CPU 0.004 of 4 cores | ")
 
-class TestProbes:
-    def test_a_probe_is_found_by_name_or_path(self, tmp_path: Path) -> None:
-        own = tmp_path / "mine.py"
-        own.write_text("print(1)\n")
-        assert "asyncio" in _mod.probe_source("tasks")
-        assert _mod.probe_source(str(own)) == "print(1)\n"
+    def test_without_limits_or_samples(self) -> None:
+        line = _mod.stats_line(_state(memory=0, nano_cpus=0), {}, {}, 5.0)
+        assert line == (
+            "scavengarr app process: CPU ? cores (no limit) | memory ? (no limit)"
+            " | open files ?"
+        )
 
-    def test_an_unknown_probe_names_the_known_ones(self) -> None:
-        with pytest.raises(SystemExit, match="known: .*resources"):
-            _mod.probe_source("nope")
+    def test_the_process_counters_of_one_read(self) -> None:
+        text = (
+            "# HELP process_cpu_seconds_total Total user and system CPU time\n"
+            "process_cpu_seconds_total 12.5\n"
+            "process_resident_memory_bytes 3.145728e+08\n"
+            "process_open_fds 87.0\n"
+            'scavengarr_hls_proxy_total{kind="segment"} 3.0\n'
+        )
+        assert _mod.process_counters(text) == {
+            "process_cpu_seconds_total": 12.5,
+            "process_resident_memory_bytes": 314572800.0,
+            "process_open_fds": 87.0,
+        }
 
+
+# The probes that run inside the production container, by the maintainer's
+# docker exec on the Docker host (the table in docs/how-to/operations.md)
+_CONTAINER_PROBES = (
+    "anime_ids",
+    "capture_state",
+    "capture_timing",
+    "domains",
+    "hls_throughput",
+    "links",
+    "redis_cache",
+    "resources",
+    "sto_linkout",
+    "stream_quality",
+    "tasks",
+    "vidhide_segments",
+)
+
+
+def _docstring(path: Path) -> str:
+    return ast.get_docstring(ast.parse(path.read_text())) or ""
+
+
+class TestProbeFiles:
     @pytest.mark.parametrize(
         "path", sorted((_SCRIPTS / "probes").glob("*.py")), ids=lambda p: p.stem
     )
@@ -164,68 +267,179 @@ class TestProbes:
         assert source.startswith('"""'), "probes start with a docstring"
         assert "from __future__ import annotations" in source
 
+    @pytest.mark.parametrize("name", _CONTAINER_PROBES)
+    def test_a_container_probe_names_its_docker_exec(self, name: str) -> None:
+        doc = _docstring(_SCRIPTS / "probes" / f"{name}.py")
+        assert "docker exec -i scavengarr python -" in doc
+        assert f"< scripts/probes/{name}.py" in doc
 
-class TestHttpErrors:
-    """A Portainer error ends with the masked message, not a traceback that
-    names Portainer's address, port and the request's path."""
+    @pytest.mark.parametrize(
+        "path", sorted((_SCRIPTS / "probes").glob("*.py")), ids=lambda p: p.stem
+    )
+    def test_no_probe_names_the_removed_probe_command(self, path: Path) -> None:
+        doc = _docstring(path)
+        names = "|".join(p.stem for p in (_SCRIPTS / "probes").glob("*.py"))
+        assert "prodctl.py probe" not in doc
+        assert not re.search(rf"(``|^\s*)probe ({names})\b", doc, re.MULTILINE)
 
-    def test_a_403_on_the_logs_call_prints_the_host_only(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+
+class TestParser:
+    def test_insecure_is_a_top_level_flag(self) -> None:
+        assert _mod.parser().parse_args(["--insecure", "check"]).insecure
+        assert not _mod.parser().parse_args(["ps"]).insecure
+
+    @pytest.mark.parametrize(
+        "argv",
+        [["check", "--insecure"], ["logs", "-c", "other"], ["probe", "tasks"]],
+        ids=["insecure-after-the-command", "container", "probe"],
+    )
+    def test_the_removed_options_are_refused(self, argv: list[str]) -> None:
+        with pytest.raises(SystemExit):
+            _mod.parser().parse_args(argv)
+
+
+class TestErrors:
+    """An error ends with the masked message, not a traceback, and names
+    neither Komodo's host nor production's."""
+
+    def test_a_komodo_refusal_prints_its_reason(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        portainer = "http://192.0.2.7:9443"
-        docker = f"{portainer}/api/endpoints/3/docker"
-        monkeypatch.setattr(_mod, "credentials", lambda: (portainer, "key"))
-        monkeypatch.setattr(_mod, "_BUDGET", tmp_path / "budget.json")
-        with respx.mock:
-            respx.get(f"{portainer}/api/endpoints").respond(json=[{"Id": 3, "Type": 1}])
-            respx.get(f"{docker}/containers/json").respond(json=[])
-            respx.get(f"{docker}/containers/scavengarr/logs").respond(403)
+        respx.post(f"{_KOMODO}/read").respond(403, json={"error": "invalid api key"})
 
-            assert _mod.main(["logs", "--since", "5m"]) == 1
+        assert _mod.main(["logs", "--since", "5m"]) == 1
 
         captured = capsys.readouterr()
         assert captured.out == ""
-        assert "403 Forbidden" in captured.err
-        assert "http://<ip>:9443/…" in captured.err
-        assert "192.0.2.7" not in captured.err
-        assert "/containers/" not in captured.err
+        assert (
+            captured.err
+            == "logs failed: GetContainerLog answered 403: invalid api key\n"
+        )
+
+    def test_a_transport_error_names_no_host(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.post(f"{_KOMODO}/read").mock(
+            side_effect=httpx.ReadTimeout("timed out reading http://komodo.test:9120")
+        )
+
+        assert _mod.main(["ps"]) == 1
+
+        err = capsys.readouterr().err
+        assert err == "ps failed: timed out reading http://<host>:9120\n"
+
+    def test_a_public_endpoint_error_names_no_host(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get(f"{_PUBLIC}/metrics").respond(404)
+
+        assert _mod.main(["metrics"]) == 1
+
+        err = capsys.readouterr().err
+        assert "404 Not Found" in err
+        assert "https://<host>/…" in err
+        assert "addon.test" not in err
 
 
 class TestCommands:
-    def test_logs_print_masked_lines_and_a_count(
-        self, portainer: Path, capsys: pytest.CaptureFixture[str]
+    def test_ps_prints_the_containers_state_without_its_environment(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        log = "\n".join(
+        reads = _komodo_reads()
+
+        assert _mod.main(["ps"]) == 0
+
+        out = capsys.readouterr().out
+        assert out == (
+            "scavengarr | running (healthy) | started 2026-10-06 11:09:00 UTC"
+            " | restarts 0 | OOM-killed no\n"
+        )
+        assert "hunter2" not in out
+        assert reads.call_count == 1
+        assert (production / "budget.json").exists()
+
+    def test_stats_reads_two_metrics_samples_5_s_apart(
+        self,
+        production: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _komodo_reads()
+        samples = iter(
             [
+                "process_cpu_seconds_total 100.0\n",
+                "process_cpu_seconds_total 110.0\n"
+                "process_resident_memory_bytes 3.145728e+08\n"
+                "process_open_fds 87.0\n",
+            ]
+        )
+        respx.get(f"{_PUBLIC}/metrics").mock(
+            side_effect=lambda _: httpx.Response(200, text=next(samples))
+        )
+        clock = iter([10.0, 15.0])
+        sleeps: list[float] = []
+        monkeypatch.setattr(
+            _mod,
+            "time",
+            SimpleNamespace(monotonic=lambda: next(clock), sleep=sleeps.append),
+        )
+
+        assert _mod.main(["stats"]) == 0
+
+        assert capsys.readouterr().out.splitlines() == [
+            "scavengarr app process: CPU 2.000 of 4 cores | memory 300.0 MiB of"
+            " 2.0 GiB | open files 87",
+            "[the app's Python process: Chromium's processes are not in it]",
+        ]
+        assert sleeps == [5.0]
+
+    def test_logs_print_masked_lines_and_a_count(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        old = _record("2026-10-06T10:00:00.000000000Z", level="info", event="old", n=1)
+        stdout = "\n".join(
+            [
+                old,
                 _record(level="info", event="http_request", path="/api/v1/healthz"),
                 _record(level="info", event="resolved", url="https://cdn.x.io/a?t=1"),
             ]
         )
-        logs = respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
-            content=_frame(log + "\n")
-        )
+        _komodo_reads(stdout=stdout + "\n", stderr=_record(level="error", event="e"))
 
         assert _mod.main(["logs", "--since", "5m"]) == 0
 
-        out = capsys.readouterr().out.splitlines()
-        assert out == [
+        assert capsys.readouterr().out.splitlines() == [
             "11:09:08 info resolved url=https://cdn.x.io/…",
-            "[1 of 1 matching lines]",
+            "11:09:08 error e",
+            "[2 of 2 matching lines]",
         ]
-        assert logs.calls.last.request.url.params["timestamps"] == "1"
-        assert (portainer / "budget.json").exists()
+
+    def test_logs_name_how_far_back_a_cut_log_reaches(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Komodo answers the log's last 5000 lines: about 4 h of it."""
+        lines = [
+            f"2026-10-06T{8 + n // 3600:02d}:{n // 60 % 60:02d}:{n % 60:02d}"
+            f".000000000Z line {n}"
+            for n in range(5000)
+        ]
+        _komodo_reads(stdout="\n".join(lines))
+
+        assert _mod.main(["logs", "--since", "6h", "--limit", "1"]) == 0
+
+        assert capsys.readouterr().out.splitlines() == [
+            "09:23:19 line 4999",
+            "[1 of 5000 matching lines]",
+            "[the log reaches back to 2026-10-06 08:00:00 UTC only: Komodo answers"
+            " its last 5000 lines]",
+        ]
 
     def test_logs_cut_records_unless_asked_for_the_whole(
-        self, portainer: Path, capsys: pytest.CaptureFixture[str]
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A traceback's last lines name the error."""
         log = _record(level="error", event="crash", exception="x" * 500 + "KeyError")
-        respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
-            content=_frame(log + "\n")
-        )
+        _komodo_reads(stdout=log + "\n")
 
         _mod.main(["logs", "--since", "5m"])
         cut = capsys.readouterr().out.splitlines()[0]
@@ -235,80 +449,60 @@ class TestCommands:
         assert len(cut) == 400
         assert whole.endswith("KeyError")
 
-    def test_a_probe_runs_in_the_container_and_passes_its_exit_code(
-        self, portainer: Path, capsys: pytest.CaptureFixture[str]
+    def test_metrics_and_state_come_from_the_public_url(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        create = respx.post(f"{_DOCKER}/containers/stremio/exec").respond(
-            json={"Id": "e1"}
-        )
-        respx.post(f"{_DOCKER}/exec/e1/start").respond(
-            content=_frame("from 10.9.8.7\n")
-        )
-        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 2})
-
-        code = _mod.main(["probe", "-c", "stremio", "--env", "A=1", "tasks", "ps"])
-
-        assert code == 2
-        body = json.loads(create.calls.last.request.content)
-        assert body["Cmd"][0:2] == ["python", "-c"]
-        assert body["Cmd"][3:] == ["ps"]
-        assert body["Env"] == ["A=1"]
-        out = capsys.readouterr().out
-        assert "from <ip>" in out
-        assert "[exit 2 after" in out
-
-    def test_env_pairs_need_an_equals_sign(self) -> None:
-        with pytest.raises(SystemExit, match="KEY=VALUE"):
-            _mod.main(["probe", "--env", "oops", "tasks"])
-
-    def test_the_digest_reads_the_log_and_two_endpoints_in_one_exec(
-        self, portainer: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        logs = respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
-            content=_frame(
-                _record(
-                    level="error", event="crash", exception="x\nhttps://cdn.x.io/a?t=1"
-                )
-                + "\n"
+        respx.get(f"{_PUBLIC}/metrics").respond(
+            text=(
+                "# HELP scavengarr_up up\n"
+                "scavengarr_up 1.0\n"
+                'scavengarr_client{host="10.1.2.3"} 2.0\n'
+                "process_open_fds 9.0\n"
             )
         )
-        create = respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(
-            json={"Id": "e1"}
+        respx.get(f"{_PUBLIC}/api/v1/stats/metrics").respond(
+            json={"breakers": {"voe": "open"}, "loop_lag": 0.01}
         )
-        bodies = {
-            "/metrics": 'scavengarr_build_info{commit="abc",version="0.3.0"} 1.0\n',
-            "/api/v1/stats/plugins": {"error": "HTTP Error 404: Not Found"},
-        }
-        respx.post(f"{_DOCKER}/exec/e1/start").respond(
-            content=_frame(json.dumps(bodies) + "\n")
+
+        assert _mod.main(["metrics", "--grep", "scavengarr"]) == 0
+        assert capsys.readouterr().out.splitlines() == [
+            "scavengarr_up 1.0",
+            'scavengarr_client{host="<ip>"} 2.0',
+        ]
+        assert _mod.main(["state", "--keys", "breakers"]) == 0
+        assert json.loads(capsys.readouterr().out) == {"breakers": {"voe": "open"}}
+
+    def test_the_digest_reads_the_log_and_two_endpoints(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        reads = _komodo_reads(
+            stdout=_record(
+                level="error", event="crash", exception="x\nhttps://cdn.x.io/a?t=1"
+            )
+            + "\n"
         )
-        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
+        metrics = respx.get(f"{_PUBLIC}/metrics").respond(
+            text='scavengarr_build_info{commit="abc",version="0.3.0"} 1.0\n'
+        )
+        respx.get(f"{_PUBLIC}/api/v1/stats/plugins").respond(404)
 
         assert _mod.main(["digest", "--since", "2h"]) == 0
 
         out = capsys.readouterr().out
-        assert out.startswith("# scavengarr: the last 2.0 h\n")
+        # The log's one line is a minute old
+        assert out.startswith(
+            "# scavengarr: the last 2.0 h (the log reaches back 1 min only)\n"
+        )
         assert "version 0.3.0, commit abc" in out
         assert "The long-term record is not available" in out
         assert "| crash: https://cdn.x.io/… | 1 |" in out
-        assert logs.call_count == 1 and create.call_count == 1
-        body = json.loads(create.calls.last.request.content)
-        assert body["Cmd"][3:] == ["/metrics", "/api/v1/stats/plugins"]
+        assert reads.call_count == 1 and metrics.call_count == 1
 
         assert _mod.main(["digest", "--json"]) == 0
         data = json.loads(capsys.readouterr().out)
         assert data["since_s"] == 86400
+        assert data["log_s"] == pytest.approx(59, abs=1)
         assert data["errors"]["count"] == 1
-
-    def test_a_failed_endpoint_ends_metrics_and_state(self, portainer: Path) -> None:
-        respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(json={"Id": "e1"})
-        respx.post(f"{_DOCKER}/exec/e1/start").respond(
-            content=_frame(json.dumps({"/metrics": {"error": "refused"}}) + "\n")
-        )
-        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
-
-        with pytest.raises(SystemExit, match="/metrics failed: refused"):
-            _mod.main(["metrics"])
 
 
 class TestStreamAnswers:
@@ -356,13 +550,37 @@ class TestStreamAnswers:
 
 
 class TestCheck:
-    _ADDON = "https://addon.test/api/v1/stremio"
+    _ADDON = f"{_PUBLIC}/api/v1/stremio"
     _CODES = {
         "series/tt0388629:5:2": "S05E02",
         "series/kitsu:12:1089": "S22E04",
         "series/tt9335498:2:1": "S02E01",
         "movie/tt0816692": "Interstellar.2014",
     }
+    _RECORDS = (
+        _record(
+            level="warning",
+            event="config_unknown_keys",
+            keys=["stremio.title_year_penalty"],
+        ),
+        _record(
+            level="info",
+            event="hoster_state_restored",
+            resolutions=32,
+            redirects=36,
+            breakers=6,
+        ),
+        _record(level="info", event="plugin_history_restored", plugins=17, days=68),
+        _record(level="info", event="app_startup_complete", version="0.3.0"),
+        _record(
+            level="info",
+            event="http_request",
+            request_id="r1",
+            path="/api/v1/stremio/stream/series/tt0388629:5:2.json",
+            duration_ms=412.5,
+            client_host="10.0.0.9",
+        ),
+    )
 
     @pytest.fixture(autouse=True)
     def _fixed_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -381,55 +599,18 @@ class TestCheck:
     def _stream(description: str) -> dict[str, str]:
         return {"name": "Scavengarr\n1080p", "description": description, "url": "x"}
 
-    def _mock_production(self, *, healthy: bool = True, dns: float = 1.0) -> None:
-        status = "Up 2 hours (healthy)" if healthy else "Up 2 hours (unhealthy)"
-        # /metrics in one exec: the readiness probe's gauge per check
-        metrics = (
-            f'scavengarr_network_ok{{check="cache"}} 1.0\n'
-            f'scavengarr_network_ok{{check="dns"}} {dns}\n'
-        )
-        respx.post(f"{_DOCKER}/containers/scavengarr/exec").respond(json={"Id": "e1"})
-        respx.post(f"{_DOCKER}/exec/e1/start").respond(
-            content=_frame(json.dumps({"/metrics": metrics}) + "\n")
-        )
-        respx.get(f"{_DOCKER}/exec/e1/json").respond(json={"ExitCode": 0})
-        # the same pattern as the fixture's route replaces it (ps lists ?all=1)
-        respx.get(f"{_DOCKER}/containers/json").respond(
-            json=[{"Names": ["/scavengarr"], "State": "running", "Status": status}]
-        )
-        respx.get(f"{_DOCKER}/containers/scavengarr/json").respond(
-            json={"State": {"StartedAt": "2026-10-06T11:09:00.123456789Z"}}
-        )
-        log = "\n".join(
-            [
-                _record(
-                    level="warning",
-                    event="config_unknown_keys",
-                    keys=["stremio.title_year_penalty"],
-                ),
-                _record(
-                    level="info",
-                    event="hoster_state_restored",
-                    resolutions=32,
-                    redirects=36,
-                    breakers=6,
-                ),
-                _record(
-                    level="info", event="plugin_history_restored", plugins=17, days=68
-                ),
-                _record(level="info", event="app_startup_complete", version="0.3.0"),
-                _record(
-                    level="info",
-                    event="http_request",
-                    request_id="r1",
-                    path="/api/v1/stremio/stream/series/tt0388629:5:2.json",
-                    duration_ms=412.5,
-                    client_host="10.0.0.9",
-                ),
-            ]
-        )
-        respx.get(f"{_DOCKER}/containers/scavengarr/logs").respond(
-            content=_frame(log + "\n")
+    def _mock_production(
+        self, *, healthy: bool = True, dns: float = 1.0, log: list[str] | None = None
+    ) -> None:
+        inspect = json.loads(json.dumps(_INSPECT))
+        inspect["State"]["Health"]["Status"] = "healthy" if healthy else "unhealthy"
+        _komodo_reads(inspect=inspect, stdout="\n".join(log or self._RECORDS) + "\n")
+        # the readiness probe's gauge per check
+        respx.get(f"{_PUBLIC}/metrics").respond(
+            text=(
+                f'scavengarr_network_ok{{check="cache"}} 1.0\n'
+                f'scavengarr_network_ok{{check="dns"}} {dns}\n'
+            )
         )
 
     def _mock_streams(self, codes: dict[str, str]) -> None:
@@ -440,20 +621,19 @@ class TestCheck:
             )
 
     def test_a_clean_deploy_passes(
-        self,
-        portainer: Path,
-        capsys: pytest.CaptureFixture[str],
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         self._mock_production()
         self._mock_streams(self._CODES)
 
-        code = _mod.main(["check", "--base", self._ADDON, "--insecure"])
+        # --base defaults to PRODCTL_BASE_URL's addon
+        code = _mod.main(["--insecure", "check"])
 
         out = capsys.readouterr().out
         assert code == 0, out
         assert out.endswith("PASS: 10 checks, 0 failed, 1 warnings\n")
         rows = [
-            "| container               | PASS   | running, Up 2 hours (healthy) |",
+            "| container               | PASS   | running, healthy, restarts 0 |",
             "| startup                 | PASS   | version 0.3.0 at 11:09:08 UTC |",
             "| unknown keys            | WARN   | stremio.title_year_penalty |",
             "| hoster_state_restored   | PASS   | resolutions 32, redirects 36,"
@@ -471,9 +651,7 @@ class TestCheck:
         assert "10.0.0.9" not in out
 
     def test_a_wrong_episode_or_an_unhealthy_container_fails(
-        self,
-        portainer: Path,
-        capsys: pytest.CaptureFixture[str],
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         self._mock_production(healthy=False, dns=0.0)
         self._mock_streams({**self._CODES, "series/tt0388629:5:2": "S05E03"})
@@ -483,7 +661,7 @@ class TestCheck:
         out = capsys.readouterr().out
         assert code == 1
         assert (
-            "| container               | FAIL   | running, Up 2 hours (unhealthy) |"
+            "| container               | FAIL   | running, unhealthy, restarts 0 |"
             in out
         )
         assert (
@@ -497,77 +675,48 @@ class TestCheck:
         )
         assert out.endswith("FAIL: 10 checks, 3 failed, 1 warnings\n")
 
-
-class TestCpuCores:
-    def test_the_sample_interval_gives_the_cores_in_use(self) -> None:
-        sample = {
-            "cpu_stats": {
-                "cpu_usage": {"total_usage": 3_000},
-                "system_cpu_usage": 10_000,
-                "online_cpus": 4,
-            },
-            "precpu_stats": {
-                "cpu_usage": {"total_usage": 1_000},
-                "system_cpu_usage": 6_000,
-            },
-        }
-        assert _mod.cpu_cores(sample) == (2.0, 4)
-
-    def test_an_empty_sample_has_no_figure(self) -> None:
-        assert _mod.cpu_cores({}) == (None, 1)
-
-
-# One-shot reads of production through Portainer (stream=false), the CPU
-# fields only: Docker's read carries its previous sample about 1 s before
-_IDLE_FRAME = {
-    "cpu_stats": {
-        "cpu_usage": {"total_usage": 189_449_619_000},
-        "system_cpu_usage": 4_841_142_920_000_000,
-        "online_cpus": 4,
-    },
-    "precpu_stats": {
-        "cpu_usage": {"total_usage": 189_446_136_000},
-        "system_cpu_usage": 4_841_138_990_000_000,
-        "online_cpus": 4,
-    },
-}
-
-
-class TestCpuFigure:
-    """``stats`` printed "CPU 0.00" for an idle app (0.0035 cores, rounded
-    to two decimals), which read as a missing sample."""
-
-    def test_an_idle_app_shows_its_load(self) -> None:
-        line = _mod.stats_line("app", _IDLE_FRAME)
-        assert line.startswith("app: CPU 0.004 of 4 cores | ")
-
-    def test_a_loaded_app(self) -> None:
-        frame = {
-            "cpu_stats": {
-                "cpu_usage": {"total_usage": 2_350_000_000},
-                "system_cpu_usage": 5_000_000_000,
-                "online_cpus": 4,
-            },
-            "precpu_stats": {
-                "cpu_usage": {"total_usage": 1_000_000_000},
-                "system_cpu_usage": 1_000_000_000,
-            },
-        }
-        # 1.35e9 ns of the container over 4.0e9 ns of the system, 4 CPUs
-        assert _mod.stats_line("app", frame).startswith("app: CPU 1.350 of 4 cores")
-
-    @pytest.mark.parametrize(
-        "precpu",
-        [
-            {},
-            {"cpu_usage": {"total_usage": 189_446_136_000}},
-            # the same sample twice: no interval
-            _IDLE_FRAME["cpu_stats"],
-        ],
-        ids=["empty", "no-system-usage", "no-interval"],
-    )
-    def test_a_frame_without_a_previous_sample_has_no_figure(
-        self, precpu: dict[str, object]
+    def test_a_log_cut_after_the_start_warns_on_the_starts_records(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        frame = {"cpu_stats": _IDLE_FRAME["cpu_stats"], "precpu_stats": precpu}
-        assert _mod.stats_line("app", frame).startswith("app: CPU ? of 4 cores | ")
+        """5000 lines that begin after the container's start: its startup
+        records are gone, which is no failure of the deploy."""
+        filler = [f"2026-10-06T11:09:05.000000000Z filler {n}" for n in range(4999)]
+        self._mock_production(log=[*filler, self._RECORDS[-1]])
+        self._mock_streams(self._CODES)
+
+        code = _mod.main(["check"])
+
+        out = capsys.readouterr().out
+        assert code == 0, out
+        detail = (
+            "the log no longer reaches the container's start"
+            " (it begins at 11:09:05 UTC)"
+        )
+        for name in (
+            "startup                ",
+            "unknown keys           ",
+            "hoster_state_restored  ",
+            "plugin_history_restored",
+        ):
+            assert f"| {name} | WARN   | {detail} |" in out
+        assert out.endswith("PASS: 10 checks, 0 failed, 4 warnings\n")
+
+    def test_the_records_before_the_start_do_not_count(
+        self, production: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A restart keeps the container's log: the restore records of the
+        run before it pass nothing."""
+        before = "2026-10-06T10:00:00.000000000Z"
+        log = [
+            _record(before, level="info", event="hoster_state_restored", breakers=1),
+            _record(before, level="info", event="plugin_history_restored", days=1),
+            *self._RECORDS[3:],
+        ]
+        self._mock_production(log=log)
+        self._mock_streams(self._CODES)
+
+        assert _mod.main(["check"]) == 1
+
+        out = capsys.readouterr().out
+        assert "| hoster_state_restored   | FAIL   | no record since the start |" in out
+        assert "| startup                 | PASS   |" in out
