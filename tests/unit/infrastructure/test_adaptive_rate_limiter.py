@@ -20,11 +20,6 @@ class TestTokenBucketAdaptive:
         bucket.record_throttle()
         assert bucket.rate == pytest.approx(5.0)  # 10 * 0.5
 
-    def test_record_timeout_reduces_by_25_percent(self) -> None:
-        bucket = TokenBucket(rate=10.0, adaptive=True, min_rate=0.5, max_rate=50.0)
-        bucket.record_timeout()
-        assert bucket.rate == pytest.approx(7.5)  # 10 * 0.75
-
     def test_rate_does_not_exceed_max(self) -> None:
         bucket = TokenBucket(rate=48.0, adaptive=True, min_rate=0.5, max_rate=50.0)
         bucket.record_success()  # 48 * 1.1 = 52.8 → capped at 50
@@ -35,16 +30,10 @@ class TestTokenBucketAdaptive:
         bucket.record_throttle()  # 0.8 * 0.5 = 0.4 → floored at 0.5
         assert bucket.rate == pytest.approx(0.5)
 
-    def test_timeout_does_not_go_below_min(self) -> None:
-        bucket = TokenBucket(rate=0.6, adaptive=True, min_rate=0.5, max_rate=50.0)
-        bucket.record_timeout()  # 0.6 * 0.75 = 0.45 → floored at 0.5
-        assert bucket.rate == pytest.approx(0.5)
-
     def test_non_adaptive_ignores_feedback(self) -> None:
         bucket = TokenBucket(rate=10.0, adaptive=False)
         bucket.record_success()
         bucket.record_throttle()
-        bucket.record_timeout()
         assert bucket.rate == 10.0  # unchanged
 
     def test_multiple_successes_compound(self) -> None:
@@ -113,12 +102,3 @@ class TestDomainRateLimiterAdaptive:
         limiter.record_throttle("https://example.com/page")
         bucket = limiter._buckets["example"]
         assert bucket.rate == 10.0  # unchanged
-
-    def test_record_timeout_on_known_domain(self) -> None:
-        limiter = DomainRateLimiter(default_rps=10.0, adaptive=True, max_rate=50.0)
-        # Manually create a bucket to test timeout
-        limiter._buckets["example"] = TokenBucket(
-            rate=10.0, adaptive=True, min_rate=0.5, max_rate=50.0
-        )
-        limiter.record_timeout("https://example.com/page")
-        assert limiter._buckets["example"].rate == pytest.approx(7.5)

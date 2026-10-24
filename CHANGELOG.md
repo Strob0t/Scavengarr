@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: The Rate Limit's Unused Timeout Feedback Is Gone
+
+- `TokenBucket.record_timeout()` and `DomainRateLimiter.record_timeout()` would lower a site's adaptive rate by a quarter on a timeout, but nothing has called them since the adaptive limiter came: `RetryTransport` feeds back answers and 429/503 only, so production has never lowered a rate on a timeout, while the docs said it did.
+- Both methods and their three tests are gone, and the code follows production: every request to a site shares its bucket, and one that fell on timeouts would slow them all for one slow site.
+- The description of `http.rate_limit_adaptive`, its generated row in `docs/reference/configuration.md` and the note on `http.rate_limit_rps` no longer name a timeout; the note also names the answers that raise the rate (any but a 429, a 503 or a challenge) and that link validation's checks pass the bucket.
+
 ### Changed: serienfans and filmfans Resolve Their Link-outs at the Grab
 
 - serienfans and filmfans list their hoster links as `/external/<hash>` link-outs on their own host, and their searches followed every returned result's link-out to its target. The site lets about one through per 2 s and answers the rest with 429, so a Torznab search spent minutes on them (on the dev machine 359 s for one series search, 78 retried requests), then validated the filecrypt containers they led to, and could outlast its client's timeout.

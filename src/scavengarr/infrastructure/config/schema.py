@@ -684,7 +684,7 @@ class AppConfig(BaseModel):
         ),
         description=(
             "Enable AIMD adaptive rate limiting per domain. "
-            "Rate increases on success, halves on 429/503, reduces on timeout."
+            "Rate increases on success, halves on 429/503."
         ),
     )
     rate_limit_min_rps: float = Field(

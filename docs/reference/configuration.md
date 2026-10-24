@@ -111,7 +111,7 @@ Unprefixed `CACHE_*` variables are not read.
 | `SCAVENGARR_HTTP_API_RATE_LIMIT_RPM` (or `SCAVENGARR_API_RATE_LIMIT_RPM`) | int | `120` | API rate limit per IP (requests/minute). 0 = unlimited. |
 | `SCAVENGARR_HTTP_FOLLOW_REDIRECTS` | bool | `true` | Whether HTTP client follows redirects. |
 | `SCAVENGARR_HTTP_HTTP2` | bool | `false` | Offer HTTP/2 on outgoing connections (several requests to one host share a connection). Off by default: not faster per se, measure it. |
-| `SCAVENGARR_HTTP_RATE_LIMIT_ADAPTIVE` (or `SCAVENGARR_RATE_LIMIT_ADAPTIVE`) | bool | `true` | Enable AIMD adaptive rate limiting per domain. Rate increases on success, halves on 429/503, reduces on timeout. |
+| `SCAVENGARR_HTTP_RATE_LIMIT_ADAPTIVE` (or `SCAVENGARR_RATE_LIMIT_ADAPTIVE`) | bool | `true` | Enable AIMD adaptive rate limiting per domain. Rate increases on success, halves on 429/503. |
 | `SCAVENGARR_HTTP_RATE_LIMIT_MAX_RPS` (or `SCAVENGARR_RATE_LIMIT_MAX_RPS`) | float | `50.0` | Maximum adaptive rate per domain (rps). |
 | `SCAVENGARR_HTTP_RATE_LIMIT_MIN_RPS` (or `SCAVENGARR_RATE_LIMIT_MIN_RPS`) | float | `0.5` | Minimum adaptive rate per domain (rps). |
 | `SCAVENGARR_HTTP_RATE_LIMIT_RPS` (or `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND`) | float | `5.0` | Default per-domain rate limit (requests/second). 0 = unlimited. |
@@ -257,8 +257,9 @@ The facts a setting's description leaves out, one line per setting:
 - `http.timeout_resolve_seconds`: bounds one hoster resolution (the resolver's whole `resolve()`) and the registry's redirect and content-type requests.
 - `http.http2`: off by default because the plugin searches used more CPU with it on the production host (h2 runs in Python) and were not faster.
 - `http.user_agent`: httpx plugins and several hoster resolvers send their own browser User-Agent; a value of your own must keep a contact URL, since Wikidata answers 403 without one.
-- `http.rate_limit_rps`: the starting rate per site; with `rate_limit_adaptive` it rises 10 % with each answer up to `rate_limit_max_rps`, halves on 429 or 503 and drops by a quarter on a timeout, never below `rate_limit_min_rps`.
+- `http.rate_limit_rps`: the starting rate per site; with `rate_limit_adaptive` it rises 10 % with each answer other than a 429, a 503 or a challenge, up to `rate_limit_max_rps`, and halves on a 429 or 503, never below `rate_limit_min_rps`; a timeout changes nothing.
 - `http.rate_limit_rps`: one bucket per second-level label, so `www.example.com` and `example.org` share one.
+- `http.rate_limit_rps`: link validation's checks pass the bucket and feed nothing back ([Link validation](../current/link-validation.md#concurrency)).
 - `http.api_rate_limit_rpm`: not counted are the HLS proxy (`/api/v1/stremio/proxy/…`), `/api/v1/stremio/play/…` and the health endpoints (`healthz`, `readyz`, `stremio/health`); [Rate limiting](torznab-api.md#rate-limiting) describes the answer.
 - `validate_download_links`: `false` passes every result unchecked, and each CrawlJob then holds the result's primary link only; see [Link validation](../current/link-validation.md).
 - `validation_max_concurrent`: `stremio.auto_tune_all` overwrites it at startup ([Auto-tune](#auto-tune)).

@@ -19,13 +19,16 @@ class TokenBucket:
     """Token-bucket rate limiter with optional AIMD adaptive rate.
 
     When *adaptive* is ``True``, the rate adjusts automatically based on
-    feedback from :meth:`record_success`, :meth:`record_throttle`, and
-    :meth:`record_timeout`.  The algorithm mirrors TCP congestion control:
+    feedback from :meth:`record_success` and :meth:`record_throttle`.  The
+    algorithm mirrors TCP congestion control:
 
     - **Success**: rate +10% (additive increase), capped at *max_rate*.
     - **429/503**: rate halved (multiplicative decrease), floored at
       *min_rate*.
-    - **Timeout**: rate −25%, floored at *min_rate*.
+
+    A timeout feeds nothing back: every request to the domain shares the
+    bucket, and one that fell on timeouts would slow them all for one slow
+    site.
 
     Args:
         rate: Tokens replenished per second (initial rate).
@@ -93,16 +96,6 @@ class TokenBucket:
         self._rate = max(self._min_rate, self._rate * 0.5)
         log.debug(
             "rate_limit_throttle", old_rps=round(old, 2), new_rps=round(self._rate, 2)
-        )
-
-    def record_timeout(self) -> None:
-        """Record a timeout — reduce rate by 25% (×0.75)."""
-        if not self._adaptive:
-            return
-        old = self._rate
-        self._rate = max(self._min_rate, self._rate * 0.75)
-        log.debug(
-            "rate_limit_timeout", old_rps=round(old, 2), new_rps=round(self._rate, 2)
         )
 
 
@@ -179,9 +172,3 @@ class DomainRateLimiter:
         domain = self._get_domain(url)
         if domain and domain in self._buckets:
             self._buckets[domain].record_throttle()
-
-    def record_timeout(self, url: str) -> None:
-        """Record a timeout for the URL's domain."""
-        domain = self._get_domain(url)
-        if domain and domain in self._buckets:
-            self._buckets[domain].record_timeout()
