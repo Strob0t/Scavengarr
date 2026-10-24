@@ -84,6 +84,10 @@ class TestParseLanguage:
             ("Movie.2010.German.Subbed.1080p.WEB.x264-GRP", "de-sub"),
             ("Movie.2010.English.German.Subbed.1080p.WEB.x264-GRP", "de-sub"),
             ("Movie.2010.Japanese.German.Subbed.1080p.WEB.x264-GRP", "de-sub"),
+            # ... also behind another subtitle language (guessit: [en, de])
+            ("Movie.2010.English.EngSub.GerSub.1080p.WEB.x264-GRP", "de-sub"),
+            ("Movie.2010.Japanese.EngSub.GerSub.1080p.WEB-GRP", "de-sub"),
+            ("Movie.2010.1080p.WEB.x264.EngSub.GerSub-GRP", "de-sub"),
             # Neither: as before, the subtitle's language first
             ("Movie.2010.English.EngSub.1080p.WEB.x264-GRP", "en-sub"),
         ],
