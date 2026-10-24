@@ -175,6 +175,95 @@ class TestFormatStream:
         assert hints is not None
         assert "filename" not in hints
 
+    @pytest.mark.parametrize(
+        ("release_name", "quality", "shown"),
+        [
+            # The measurement sets the quality, whatever the release name says
+            (
+                "Movie.2024.German.DL.1080p.WEB-GRP",
+                StreamQuality.HD_720P,
+                "Movie.2024.German.DL.720p.WEB-GRP",
+            ),
+            (
+                "Movie.2024.German.720p.WEB-GRP",
+                StreamQuality.SD,
+                "Movie.2024.German.SD.WEB-GRP",
+            ),
+            (
+                "Movie 2024 German 4K WEB",
+                StreamQuality.HD_1080P,
+                "Movie 2024 German 1080p WEB",
+            ),
+            (
+                "Movie.2024.German.480p.WEB",
+                StreamQuality.HD_1080P,
+                "Movie.2024.German.1080p.WEB",
+            ),
+            # A token that agrees stays as the site wrote it
+            (
+                "Movie.2024.German.1080i.HDTV",
+                StreamQuality.HD_1080P,
+                "Movie.2024.German.1080i.HDTV",
+            ),
+            (
+                "Movie.2024.German.2160p.WEB",
+                StreamQuality.UHD_4K,
+                "Movie.2024.German.2160p.WEB",
+            ),
+            (
+                "Movie.2024.German.576p.DVD",
+                StreamQuality.SD,
+                "Movie.2024.German.576p.DVD",
+            ),
+            # No resolution token: none is added
+            (
+                "Movie.2024.German.DL.WEB-GRP",
+                StreamQuality.HD_720P,
+                "Movie.2024.German.DL.WEB-GRP",
+            ),
+            # No measured or named resolution class: the name stays
+            (
+                "Movie.2024.German.1080p.WEB",
+                StreamQuality.UNKNOWN,
+                "Movie.2024.German.1080p.WEB",
+            ),
+            (
+                "Movie.2024.German.1080p.HDTS",
+                StreamQuality.TS,
+                "Movie.2024.German.1080p.HDTS",
+            ),
+            # Digits that are no resolution token
+            (
+                "Movie.1080.German.720p.WEB",
+                StreamQuality.HD_720P,
+                "Movie.1080.German.720p.WEB",
+            ),
+        ],
+    )
+    def test_release_name_shows_the_ranked_quality(
+        self, release_name: str, quality: StreamQuality, shown: str
+    ) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            release_name=release_name,
+            quality=quality,
+        )
+        stream = format_stream(ranked)
+        assert stream.description.split("\n")[0] == shown
+        assert stream.behavior_hints is not None
+        # Subtitle addons match the site's release name
+        assert stream.behavior_hints["filename"] == release_name
+
+    def test_a_site_title_keeps_its_quality(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            title="Movie 2024 1080p",
+            quality=StreamQuality.HD_720P,
+        )
+        assert format_stream(ranked).description.split("\n")[0] == "Movie 2024 1080p"
+
 
 # ---------------------------------------------------------------------------
 # deduplicate_by_hoster

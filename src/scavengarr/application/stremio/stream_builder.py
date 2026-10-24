@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import replace
 from typing import Any
@@ -39,6 +40,41 @@ _QUALITY_LABELS: dict[StreamQuality, str] = {
     StreamQuality.CAM: "CAM",
 }
 
+# A release name's resolution token, as guessit reads its screen size
+_RESOLUTION_TOKEN_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:(2160|1080|720|576|480|360)[pi]|4k)(?![a-z0-9])"
+)
+_TOKEN_QUALITY: dict[str, StreamQuality] = {
+    "2160": StreamQuality.UHD_4K,
+    "1080": StreamQuality.HD_1080P,
+    "720": StreamQuality.HD_720P,
+}
+_RESOLUTION_CLASSES = frozenset(
+    {
+        StreamQuality.UHD_4K,
+        StreamQuality.HD_1080P,
+        StreamQuality.HD_720P,
+        StreamQuality.SD,
+    }
+)
+
+
+def _with_quality(release_name: str, quality: StreamQuality) -> str:
+    """*release_name* with *quality*'s label in place of a resolution token
+    that contradicts it: the measurement sets the quality, whatever the
+    release name says. A token that agrees stays as written (1080i, 2160p),
+    and a name without one gets none."""
+    if quality not in _RESOLUTION_CLASSES:
+        return release_name
+
+    def replaced(match: re.Match[str]) -> str:
+        height = match[1] or "2160"
+        if _TOKEN_QUALITY.get(height, StreamQuality.SD) is quality:
+            return match[0]
+        return _QUALITY_LABELS[quality]
+
+    return _RESOLUTION_TOKEN_RE.sub(replaced, release_name)
+
 
 def format_stream(
     ranked: RankedStream,
@@ -67,7 +103,10 @@ def format_stream(
     quality_label = _QUALITY_LABELS.get(ranked.quality)
     name = f"{_ADDON_NAME}\n{quality_label}" if quality_label else _ADDON_NAME
 
-    title = ranked.release_name or ranked.title or reference_title
+    if ranked.release_name:
+        title = _with_quality(ranked.release_name, ranked.quality)
+    else:
+        title = ranked.title or reference_title
     if title and not ranked.release_name:
         if season is not None and episode is not None:
             # Sites title the series; the stream was filtered to this episode

@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: A Stream's Release Name Shows Its Measured Quality
+
+- A stream whose site named a 1080p release but whose hoster serves a single 720p variant showed "720p" in the name column and "1080p" in the description's release name, and was listed below German 720p streams with a hoster bonus: it read as a German 1080p ranked below 720p.
+- The measurement sets the quality, whatever the release name says (the maintainer's decision): `format_stream()` (`application/stremio/stream_builder.py`) puts the name column's label (4K, 1080p, 720p, SD) in place of a release name's resolution token that contradicts the ranked quality. A token that agrees stays as written (1080i, 2160p), a name without one gets none, an unknown, TS or CAM quality changes nothing, and `behaviorHints.filename` keeps the site's release name for subtitle add-ons. The order is unchanged: it already followed the measurement.
+- A pattern in the application finds the token (`_with_quality()`): the replacement needs the token's place in the name, which a quality carried from the converter would not give, and the application imports no infrastructure.
+- Tests: `test_stremio_stream_builder.py` (contradicting tokens replaced, agreeing ones kept, no token added, unknown and TS kept, digits that are no token, a site title kept, `filename` unchanged). `docs/current/stremio-addon.md` says so.
+
 ### Fixed: A German Dub with English Subtitles Ranks as German
 
 - `_language_from_guessit()` (`infrastructure/stremio/release_parser.py`) read guessit's subtitle language before the audio, so a release named "German.DL.EngSub" or "German.DL.ENG.SUB" was an English Sub (score 200) and ranked below every German stream, though its audio is German.

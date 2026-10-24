@@ -2,7 +2,7 @@
 
 > **Purpose:** The Stremio addon answers a Stremio player's request for the streams of a movie or an episode with the links Scavengarr's plugins find, resolved by its hoster resolvers and ranked.
 > **Status:** current
-> **As of:** a565dcaa
+> **As of:** 572c1fcd
 
 ## Purpose
 
@@ -333,6 +333,8 @@ Each stream carries:
 
 The description's lines are the site's own title (the release name, else the site's title, else the reference title with the year), then `language · size`, then `HOSTER · plugin`.
 A series title gets ` SxxEyy` unless it is a release name, and the site's own title shows a wrong match that the reference title would hide.
+The measurement sets the quality, whatever the release name says: a release name's resolution token (`2160p`, `1080p`, `1080i`, `720p`, `576p`, `480p`, `360p`, `4K`) that contradicts the stream's ranked quality shows the name column's label instead ("Movie.2024.German.DL.1080p.WEB-GRP" measured at 720p shows as "Movie.2024.German.DL.720p.WEB-GRP"; `_with_quality()` in `application/stremio/stream_builder.py`).
+A token that agrees stays as the site wrote it (`1080i`, `2160p`), a name without one gets none, and a ranked quality outside the resolution classes (unknown, TS, CAM) changes nothing; `filename` keeps the site's release name unchanged.
 
 Stremio's binge watching plays the first stream of the next episode whose `bingeGroup` equals the current stream's exactly.
 Scavengarr sets it to `scavengarr|<language code>` (`scavengarr|de`, `scavengarr|de-sub`, `scavengarr|unknown`), so a German dub continues in German with the next episode's best stream, whatever its hoster or quality.
