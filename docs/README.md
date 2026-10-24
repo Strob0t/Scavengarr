@@ -35,9 +35,9 @@ The `how-to` guides work with the `current` documents and look up the `reference
 ## The state
 
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
-Open in the hoster resolvers and the browser: the production proof that Filemoon's captcha pass stays warm, read from the maintainer's use.
+Open in the HTTP stack: the adaptive rate limit's timeout feedback, which never ran, leaves the code and the configuration reference.
 Open in the observability: the two weeks of readings of the stall watchdog ([`add-stall-watchdog`](../openspec/changes/add-stall-watchdog/proposal.md), group 4), and with them the maintainer's choice of its exit switch, off until then.
-The plugins have no open row; their ideas wait in the backlog for their trigger.
+The plugins, the hoster resolvers and the browser have no open row; their ideas wait in the backlog for their trigger.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
 
 ## Start here
