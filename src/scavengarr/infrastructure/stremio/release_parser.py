@@ -152,35 +152,39 @@ def parse_language(
     return None
 
 
+def _language_codes(value: object) -> list[str]:
+    """The language codes of a guessit field: one Language or a list."""
+    langs = value if isinstance(value, list) else [value] if value else []
+    return [code for lang in langs if (code := _language_code(lang))]
+
+
 def _language_from_guessit(release_name: str) -> StreamLanguage | None:
-    """Extract language info from a release name via guessit."""
+    """Extract language info from a release name via guessit.
+
+    German audio wins over any subtitle language ("German.DL.EngSub" is a
+    German Dub), German subtitles over a foreign audio
+    ("English.German.Subbed" is a German Sub); otherwise the subtitle's
+    language comes first, then the audio's.
+    """
     guess = guess_release(release_name)
+    audio = _language_codes(guess.get("language"))
+    subs = _language_codes(guess.get("subtitle_language"))
 
-    # Check subtitle_language first (subs take priority as they're more specific)
-    sub_langs = guess.get("subtitle_language")
-    if sub_langs:
-        lang_obj = sub_langs if not isinstance(sub_langs, list) else sub_langs[0]
-        code = _language_code(lang_obj)
-        if code:
-            return StreamLanguage(
-                code=f"{code}-sub",
-                label=_label_for(code, is_dubbed=False),
-                is_dubbed=False,
-            )
-
-    # Check audio language
-    audio_langs = guess.get("language")
-    if audio_langs:
-        lang_obj = audio_langs if not isinstance(audio_langs, list) else audio_langs[0]
-        code = _language_code(lang_obj)
-        if code:
-            return StreamLanguage(
-                code=code,
-                label=_label_for(code, is_dubbed=True),
-                is_dubbed=True,
-            )
-
-    return None
+    if "de" in audio:
+        code, is_dubbed = "de", True
+    elif "de" in subs:
+        code, is_dubbed = "de", False
+    elif subs:
+        code, is_dubbed = subs[0], False
+    elif audio:
+        code, is_dubbed = audio[0], True
+    else:
+        return None
+    return StreamLanguage(
+        code=code if is_dubbed else f"{code}-sub",
+        label=_label_for(code, is_dubbed=is_dubbed),
+        is_dubbed=is_dubbed,
+    )
 
 
 def _language_from_link_string(link_language: str) -> StreamLanguage | None:

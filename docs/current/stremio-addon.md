@@ -2,7 +2,7 @@
 
 > **Purpose:** The Stremio addon answers a Stremio player's request for the streams of a movie or an episode with the links Scavengarr's plugins find, resolved by its hoster resolvers and ranked.
 > **Status:** current
-> **As of:** 8d215b5f
+> **As of:** a565dcaa
 
 ## Purpose
 
@@ -309,6 +309,7 @@ Hoster names are resolver names (`HosterResolverRegistry.canonical_hoster`):
 - A placeholder label such as `unknown` falls through to the URL.
 
 A stream's language comes from its release name (guessit), else from the plugin's label for the link (`parse_language()`), else from the plugin's default language.
+In a release name, German audio wins over any subtitle language ("German.DL.EngSub" is `de`), German subtitles win over a foreign audio ("English.German.Subbed" is `de-sub`), and otherwise the subtitle's language comes before the audio's ("English.EngSub" is `en-sub`).
 `parse_language()` reads English and German words: "German Sub", "Ger-Sub" and "Japanisch mit deutschen Untertiteln" are `de-sub`, "Englisch" is `en`, and "Original", "Originalversion" and "OV" are `ov` (the original audio, whichever language it is), which ranks with the score of an unknown language unless the scores name it.
 An unrecognised label falls back to the plugin's default language.
 

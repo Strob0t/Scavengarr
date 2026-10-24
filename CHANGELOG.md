@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A German Dub with English Subtitles Ranks as German
+
+- `_language_from_guessit()` (`infrastructure/stremio/release_parser.py`) read guessit's subtitle language before the audio, so a release named "German.DL.EngSub" or "German.DL.ENG.SUB" was an English Sub (score 200) and ranked below every German stream, though its audio is German.
+- German audio now wins over any subtitle language, German subtitles over a foreign audio ("English.German.Subbed" stays `de-sub`), and otherwise the subtitle's language comes first as before; every audio and subtitle language guessit names counts, not only the first.
+- Tests: `test_release_parser.py` (German audio with English, `mul` and no subtitles; German subtitles over German, English and Japanese audio; English audio with English subtitles; forced subs without an audio language keeping the plugin's default). `docs/current/stremio-addon.md` says so.
+
 ### Added: Stuck Requests Are Logged
 
 - A request that hung while the event loop ran left no trace until it ended, if it ended.

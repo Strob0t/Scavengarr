@@ -71,6 +71,39 @@ class TestParseLanguage:
         assert result.code == "en-sub"
         assert result.is_dubbed is False
 
+    @pytest.mark.parametrize(
+        ("release_name", "code"),
+        [
+            # German audio with English subtitles: a German Dub, never an
+            # English Sub ranked below every German stream
+            ("Movie.2010.German.DL.EngSub.1080p.WEB.x264-GRP", "de"),
+            ("Movie.2010.German.DL.ENG.SUB.1080p.WEB.x264-GRP", "de"),
+            ("Movie.2010.German.DL.Subbed.1080p.WEB.x264-GRP", "de"),
+            ("Show.S01E01.GERMAN.DL.MULTi.SUBS.1080p.WEB.h264-GRP", "de"),
+            # German subtitles: a German Sub, whichever audio they translate
+            ("Movie.2010.German.Subbed.1080p.WEB.x264-GRP", "de-sub"),
+            ("Movie.2010.English.German.Subbed.1080p.WEB.x264-GRP", "de-sub"),
+            ("Movie.2010.Japanese.German.Subbed.1080p.WEB.x264-GRP", "de-sub"),
+            # Neither: as before, the subtitle's language first
+            ("Movie.2010.English.EngSub.1080p.WEB.x264-GRP", "en-sub"),
+        ],
+    )
+    def test_german_audio_and_german_subtitles_come_first(
+        self, release_name: str, code: str
+    ) -> None:
+        result = parse_language(release_name=release_name)
+        assert result is not None
+        assert result.code == code
+        assert result.is_dubbed is (code == "de")
+
+    def test_forced_subs_without_an_audio_language_keep_the_default(self) -> None:
+        # guessit reads no audio language here, only "mul" subtitles
+        result = parse_language(
+            release_name="Movie.2010.German.Forced.Subs.DL.1080p.WEB.x264-GRP",
+            plugin_default_language="de",
+        )
+        assert result == StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+
     def test_fallback_to_link_language_german_dub(self) -> None:
         result = parse_language(link_language="German Dub")
         assert result is not None
