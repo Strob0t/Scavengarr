@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Link Checks No Longer Wait for a Site's Rate Limit
+
+- The same search's validation spent its first 231 s without a 429 of its own: other requests drew 39 retried 429s from filecrypt.cc meanwhile, each halving the site's shared token bucket down to its floor of 0.5 per second, which only an answer other than a 429, a 503 or a challenge raises again. So the validation's 130 links, 129 of them valid, waited for the bucket's token one by one.
+- A link check (`LINK_CHECK`) now passes `RetryTransport`'s rate limit too: it takes no token and feeds no answer back, bounded by the validator's own 4 at a time per host and its stop at a host's first 429. Plugin and resolver requests keep the bucket and its feedback.
+- Tests: `test_retry_transport.py` (a link check takes no token and reports nothing, a plain request on the same transport does both), `test_link_validator.py` (130 links on a site whose bucket has no token left at 0.5 per second end within 5 s).
+
 ### Fixed: Link Validation No Longer Waits Out a Rate Limit
 
 - A serienfans Torznab search answered after 632.7 s, 365 s of them in its link validation: its 130 links on filecrypt.cc drew 25 retried 429s there, and the shared client's `RetryTransport` waited out each `Retry-After` of up to 10 s inside `validate_batch()`, far beyond the validator's 3 s timeout.

@@ -519,6 +519,33 @@ class TestRateLimitedHosts:
         assert all(result.values())
         assert route.call_count <= http_link_validator._MAX_CONCURRENT_PER_HOST
 
+    async def test_a_batch_on_a_site_at_its_rate_floor_ends_at_once(self) -> None:
+        """Other requests' 429s held the shared filecrypt bucket at its floor
+        of 0.5 per second during a validation (39 of them in its first
+        231 s, while its own links answered): its 130 links, 129 of them
+        valid, waited for the bucket's token one by one."""
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.route(host="files.example").respond(200)
+        limiter = DomainRateLimiter(default_rps=0.5, burst=1)
+        await limiter.acquire("https://files.example/drained")  # no token left
+        transport = RetryTransport(
+            wrapped=httpx.MockTransport(router.async_handler),
+            rate_limiter=limiter,
+            max_retries=2,
+            backoff_base=0.5,
+            max_backoff=10.0,
+        )
+        urls = [f"https://files.example/Container/{i}" for i in range(130)]
+        async with httpx.AsyncClient(transport=transport) as client:
+            validator = HttpLinkValidator(
+                client, timeout_seconds=3.0, max_concurrent=30
+            )
+            async with asyncio.timeout(5):
+                result = await validator.validate_batch(urls)
+
+        assert all(result.values())
+        assert route.call_count == 130
+
 
 class _TrackingStream(httpx.AsyncByteStream):
     """Response body that records whether anyone read it."""

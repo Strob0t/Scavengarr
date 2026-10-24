@@ -390,3 +390,28 @@ class TestLinkCheck:
         assert resp.status_code == 200
         assert route.call_count == 2
         m.sleep.assert_awaited_once_with(10.0)
+
+    @pytest.mark.asyncio()
+    async def test_a_link_check_passes_the_rate_limit(self) -> None:
+        """A link check neither waits for the site's token nor feeds its
+        answer back: other requests' 429s held the shared filecrypt bucket at
+        its 0.5 rps floor, and a validation's 130 links waited for it one by
+        one. Other requests still take their token and report back."""
+        router = respx.MockRouter(assert_all_called=False)
+        router.head("https://example.com/file").respond(429)
+        router.get("https://example.com/page").respond(200)
+        transport = _respx_transport(router)
+        limiter = transport._rate_limiter
+        with (
+            patch.object(limiter, "acquire", AsyncMock()) as acquire,
+            patch.object(limiter, "record_throttle") as throttle,
+            patch.object(limiter, "record_success") as success,
+        ):
+            await transport.handle_async_request(_link_check())
+            acquire.assert_not_awaited()
+            throttle.assert_not_called()
+
+            await transport.handle_async_request(_make_request())
+
+        acquire.assert_awaited_once()
+        success.assert_called_once()

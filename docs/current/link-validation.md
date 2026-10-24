@@ -83,7 +83,10 @@ The check reads the status only: a hoster's "file not found" page served with 20
 ### Concurrency
 
 - At most `validation_max_concurrent` URLs are checked at once, HEAD and the fallback GET under one slot; per host at most 4 (`_MAX_CONCURRENT_PER_HOST`).
-- HEAD and GET are link checks (the request extension `LINK_CHECK` of `RetryTransport`): the shared HTTP client's transport sends each once, so a 429 or 503 comes back at once instead of being waited out (`Retry-After` up to `http.retry_max_backoff`, 10 s, per retry); the per-site rate limit still applies.
+- HEAD and GET are link checks (the request extension `LINK_CHECK` of `RetryTransport`): the shared HTTP client's transport sends each once and past its per-site rate limit, so a 429 or 503 comes back at once instead of being waited out (`Retry-After` up to `http.retry_max_backoff`, 10 s, per retry), and none of their answers is fed back to the rate limit.
+- The rate limit's bucket per site is shared with every other request: each 429 or 503 halves its rate down to `http.rate_limit_min_rps` (0.5 per second), and only an answer other than a 429, a 503 or a challenge raises it again, by 10 %.
+- So other requests' 429s can hold a site's bucket at its floor for minutes: during one validation they drew 39 retried 429s from its site in 231 s, while its 130 links waited for the bucket's token one by one.
+- The validator's own limits bound its checks instead: 4 at a time per host, and none to a host for 60 s after its first 429.
 - For N unchecked URLs, concurrency C and timeout T the batch takes from about `ceil(N/C)` HEAD round trips (every HEAD succeeds) to about `ceil(N/C) * 2T` (every URL needs the GET and times out).
 - In Torznab, N is the links of one chunk of `limit` results.
 
