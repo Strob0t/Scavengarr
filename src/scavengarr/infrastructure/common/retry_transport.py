@@ -3,6 +3,9 @@
 A 403 or 503 that is a Cloudflare challenge (``cf-mitigated: challenge``,
 or a challenge page) is the edge talking, not the origin: it is returned
 at once, neither retried nor fed back to the rate limiter.
+
+A request with the ``LINK_CHECK`` extension goes out once: its 429 or 503
+comes back at once instead of being waited out.
 """
 
 from __future__ import annotations
@@ -23,6 +26,10 @@ _DEFAULT_RETRYABLE = frozenset({429, 503})
 _CACHED_STATUSES = frozenset({"HIT", "STALE", "UPDATING"})
 # Statuses a Cloudflare challenge page comes with
 _CHALLENGE_STATUSES = frozenset({403, 503})
+# Request extension of link validation: whether a URL answers is all it
+# asks, and waiting out a site's Retry-After (up to max_backoff, per retry)
+# outlasts its short timeout many times over
+LINK_CHECK = "scavengarr.link_check"
 
 
 async def _is_challenge(response: httpx.Response) -> bool:
@@ -88,13 +95,15 @@ class RetryTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """Send *request* through the wrapped transport with rate limiting.
 
-        On retryable status codes, retries with exponential backoff.
+        On retryable status codes, retries with exponential backoff, except
+        for a link check (``LINK_CHECK``), which goes out once.
         Feeds back success/throttle signals to the adaptive rate limiter.
         """
         url_str = str(request.url)
         last_response: httpx.Response | None = None
+        max_retries = 0 if request.extensions.get(LINK_CHECK) else self._max_retries
 
-        for attempt in range(1 + self._max_retries):
+        for attempt in range(1 + max_retries):
             # Proactive: per-domain rate limiting
             await self._rate_limiter.acquire(url_str)
 
@@ -121,7 +130,7 @@ class RetryTransport(httpx.AsyncBaseTransport):
             self._rate_limiter.record_throttle(url_str)
 
             # Last attempt — return whatever we got
-            if attempt == self._max_retries:
+            if attempt == max_retries:
                 return response
 
             # Read + close the retryable response before retrying

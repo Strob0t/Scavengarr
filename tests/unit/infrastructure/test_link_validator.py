@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+import respx
 
+from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
+from scavengarr.infrastructure.common.retry_transport import LINK_CHECK, RetryTransport
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.validation import http_link_validator
 from scavengarr.infrastructure.validation.http_link_validator import (
@@ -430,6 +434,90 @@ class TestUnreachableHosts:
         assert await validator.validate("https://host.example/b") is False
 
         assert client.head.await_count == 2
+
+
+class TestRateLimitedHosts:
+    """A 429 is a host asking for fewer requests, not a dead link: it counts
+    as valid, and the host's other links count as valid for a while without
+    a request. A serienfans search's 130 filecrypt links drew 25 retried
+    429s inside its validation, each waited out up to 10 s, and the answer
+    came after 632.7 s."""
+
+    async def test_a_429_counts_as_an_answering_host(self) -> None:
+        client = _mock_client(status_code=429)
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://busy.example/a") is True
+        client.stream.assert_not_called()
+
+    async def test_a_429_to_the_get_fallback_counts_too(self) -> None:
+        client = _mock_client(status_code=405, get_status_code=429)
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://busy.example/a") is True
+
+    async def test_the_host_is_not_asked_again_for_a_while(self) -> None:
+        client = _mock_client(status_code=429)
+        validator = HttpLinkValidator(client)
+
+        assert await validator.validate("https://busy.example/a") is True
+        assert await validator.validate("https://busy.example/b") is True
+
+        assert client.head.await_count == 1
+
+    async def test_the_presumption_ends_and_was_not_cached(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [1000.0]
+        monkeypatch.setattr(http_link_validator.time, "monotonic", lambda: now[0])
+        client = _mock_client(status_code=429)
+        validator = HttpLinkValidator(client)
+        await validator.validate("https://busy.example/a")
+
+        now[0] += http_link_validator._RATE_LIMITED_HOST_TTL + 1
+        client.head = AsyncMock(return_value=MagicMock(status_code=404))
+        client.stream = _get_stream(404)
+
+        assert await validator.validate("https://busy.example/b") is False
+        # nothing was checked behind the 429: its link is asked again too
+        assert await validator.validate("https://busy.example/a") is False
+
+    async def test_head_and_get_are_link_checks(self) -> None:
+        """The shared client's transport sends a link check once: no
+        ``Retry-After`` is waited out inside the validation."""
+        client = _mock_client(status_code=405, get_status_code=200)
+        await HttpLinkValidator(client).validate("https://example.com/file")
+
+        assert client.head.await_args.kwargs["extensions"] == {LINK_CHECK: True}
+        assert client.stream.call_args.kwargs["extensions"] == {LINK_CHECK: True}
+
+    async def test_a_batch_on_a_rate_limiting_host_ends_at_once(self) -> None:
+        """Through the shared client's transport with production's settings:
+        130 links on a host that answers every request 429 with a
+        ``Retry-After`` of 10 s."""
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.route(host="files.example").respond(
+            429, headers={"Retry-After": "10"}
+        )
+        transport = RetryTransport(
+            wrapped=httpx.MockTransport(router.async_handler),
+            rate_limiter=DomainRateLimiter(
+                default_rps=10.0, burst=10, adaptive=True, min_rate=0.5, max_rate=50.0
+            ),
+            max_retries=2,
+            backoff_base=0.5,
+            max_backoff=10.0,
+        )
+        urls = [f"https://files.example/Container/{i}" for i in range(130)]
+        async with httpx.AsyncClient(transport=transport) as client:
+            validator = HttpLinkValidator(
+                client, timeout_seconds=3.0, max_concurrent=30
+            )
+            async with asyncio.timeout(5):
+                result = await validator.validate_batch(urls)
+
+        assert all(result.values())
+        assert route.call_count <= http_link_validator._MAX_CONCURRENT_PER_HOST
 
 
 class _TrackingStream(httpx.AsyncByteStream):

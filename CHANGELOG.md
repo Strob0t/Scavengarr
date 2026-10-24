@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Link Validation No Longer Waits Out a Rate Limit
+
+- A serienfans Torznab search answered after 632.7 s, 365 s of them in its link validation: its 130 links on filecrypt.cc drew 25 retried 429s there, and the shared client's `RetryTransport` waited out each `Retry-After` of up to 10 s inside `validate_batch()`, far beyond the validator's 3 s timeout.
+- HEAD and the GET fallback are link checks now: they carry the request extension `LINK_CHECK`, which `RetryTransport` sends once, so a 429 or 503 comes back at once. Every other request, a plugin's own search among them, still waits it out and retries.
+- A 429 counts as valid without the GET fallback, and the host's other links count as valid for 60 s without a request (`_RATE_LIMITED_HOST_TTL`), none of them cached; `link_host_rate_limited` logs the mark. `link_head_result` and `link_get_fallback_result` lose their `valid` field, since the status alone no longer decides it.
+- Tests: `test_retry_transport.py` (a link check's 429 and 503 come back at once, other requests on the same transport still retry), `test_link_validator.py` (a 429 counts, on the GET fallback too, the host is not asked again for 60 s, nothing presumed is cached, HEAD and GET carry the extension, and 130 links on a host answering 429 with a `Retry-After` of 10 s end within 5 s through the shared client's transport with production's settings, after at most 4 requests), `test_httpx_base.py` (a plugin's request through the same shared client still waits out a 429).
+
 ### Changed: A Stream's Release Name Shows Its Measured Quality
 
 - A stream whose site named a 1080p release but whose hoster serves a single 720p variant showed "720p" in the name column and "1080p" in the description's release name, and was listed below German 720p streams with a hoster bonus: it read as a German 1080p ranked below 720p.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +18,8 @@ from scavengarr.domain.plugins.base import (
 )
 from scavengarr.domain.ports.browser_fetcher import Redirect
 from scavengarr.domain.ports.plugin_history import ChallengeFlag, challenge_flag
+from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
+from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 
@@ -871,6 +873,37 @@ class TestSharedHttpClient:
             "User-Agent": "CustomAgent/1.0",
             "X-Requested-With": "XMLHttpRequest",
         }
+
+    @pytest.mark.asyncio
+    async def test_a_plugin_request_still_waits_out_a_429(self) -> None:
+        """Link validation's requests go out once (``LINK_CHECK``); a
+        plugin's own request through the same shared client still waits out
+        a 429 and retries."""
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.get("https://example.com/search").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "2"}),
+                httpx.Response(200, text="<html>results</html>"),
+            ]
+        )
+        transport = RetryTransport(
+            wrapped=httpx.MockTransport(router.async_handler),
+            rate_limiter=DomainRateLimiter(default_rps=0.0),
+            max_retries=2,
+        )
+        shared = httpx.AsyncClient(transport=transport)
+        HttpxPluginBase.set_shared_http_client(shared)
+        try:
+            with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+                m.sleep = AsyncMock()
+                resp = await _TestPlugin()._safe_fetch("https://example.com/search")
+        finally:
+            await shared.aclose()
+
+        assert resp is not None
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        m.sleep.assert_awaited_once_with(2.0)
 
     @pytest.mark.asyncio
     async def test_safe_fetch_no_overrides_with_own_client(self) -> None:

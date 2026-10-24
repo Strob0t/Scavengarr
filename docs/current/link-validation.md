@@ -2,7 +2,7 @@
 
 > **Purpose:** Link validation checks the download links of the plugins' results in parallel, because sites often list dead, expired or blocked download URLs.
 > **Status:** current
-> **As of:** bdd3f0c4
+> **As of:** 7904c659
 
 ## Purpose
 
@@ -35,15 +35,20 @@ flowchart TD
     CACHE -- yes --> USE[use it]
     CACHE -- no --> HOST{host marked unreachable?}
     HOST -- yes --> BAD
-    HOST -- no --> HEAD[HEAD, redirects followed]
+    HOST -- no --> BUSY{host marked rate-limited?}
+    BUSY -- yes --> LIVE[valid, unchecked, not cached]
+    BUSY -- no --> HEAD[HEAD, redirects followed]
     HEAD -- connect error --> MARK[mark the host unreachable] --> BAD
     HEAD -- below 400 --> GOOD[valid]
-    HEAD -- 400 or more, timeout, other error --> GET[streamed GET, body not read]
+    HEAD -- 429 --> RL[mark the host rate-limited] --> LIVE
+    HEAD -- another status of 400 or more, timeout, other error --> GET[streamed GET, body not read]
     GET -- below 400 --> GOOD
+    GET -- 429 --> RL
     GET -- otherwise --> BAD
     GOOD --> APPLY[per result: valid links in order, promote an alternative, drop a result without one]
     BAD --> APPLY
     USE --> APPLY
+    LIVE --> APPLY
     APPLY --> OUT
 ```
 
@@ -60,8 +65,9 @@ The valid links become the CrawlJob's links ([Torznab and CrawlJobs](torznab-and
 ### HEAD, then GET
 
 `HEAD` comes first because it downloads no body.
-A status of 400 or more, a read timeout or another error falls back to a `GET` that is streamed: only the status is read and the body, possibly the whole file, never is.
+A status of 400 or more other than 429, a read timeout or another error falls back to a `GET` that is streamed: only the status is read and the body, possibly the whole file, never is.
 Both follow redirects with the validator's timeout, and a status below 400 counts as valid.
+A 429 counts as valid too: the host answered and asks for fewer requests ([Rate-limited hosts](#rate-limited-hosts)).
 
 | Hoster | HEAD | GET | Outcome |
 |---|---|---|---|
@@ -70,13 +76,14 @@ Both follow redirects with the validator's timeout, and a status below 400 count
 | Dead or expired link | 404 | 404 | Invalid. |
 | Slow host | timeout | timeout | Invalid. |
 | Host down (refused, connect timeout) | fails | not sent | Invalid, and the host is skipped for a while. |
+| Rate-limiting host (filecrypt.cc) | 429 | not sent | Valid, unchecked, and the host's other links count as valid for a while without a request. |
 
 The check reads the status only: a hoster's "file not found" page served with 200 passes.
 
 ### Concurrency
 
 - At most `validation_max_concurrent` URLs are checked at once, HEAD and the fallback GET under one slot; per host at most 4 (`_MAX_CONCURRENT_PER_HOST`).
-- The shared HTTP client adds its per-site rate limit and its 429/503 retries, so many links on one hoster take longer.
+- HEAD and GET are link checks (the request extension `LINK_CHECK` of `RetryTransport`): the shared HTTP client's transport sends each once, so a 429 or 503 comes back at once instead of being waited out (`Retry-After` up to `http.retry_max_backoff`, 10 s, per retry); the per-site rate limit still applies.
 - For N unchecked URLs, concurrency C and timeout T the batch takes from about `ceil(N/C)` HEAD round trips (every HEAD succeeds) to about `ceil(N/C) * 2T` (every URL needs the GET and times out).
 - In Torznab, N is the links of one chunk of `limit` results.
 
@@ -85,6 +92,13 @@ The check reads the status only: a hoster's "file not found" page served with 20
 When a HEAD cannot even connect (`ConnectError`, `ConnectTimeout`), no GET follows: the host and the URL are skipped for 60 s (`_UNREACHABLE_HOST_MIN_TTL`), doubling with every further connection failure up to 15 minutes (`_UNREACHABLE_HOST_MAX_TTL`), and the host's first answer resets it.
 Search results carry hundreds of links on dead hosters, and one connection attempt per link would send bursts that home routers take for a port scan and answer by blocking the machine, every other request included.
 The short start keeps a passing network fault from hiding live hosters for long.
+
+### Rate-limited hosts
+
+A 429 to HEAD or to the GET fallback counts as valid, and no further request follows: the host answered and only asks for fewer requests.
+The host is marked for 60 s (`_RATE_LIMITED_HOST_TTL`), and its other links count as valid during that time without a request.
+None of these outcomes is cached, since nothing was checked: the first validation after the mark asks the host again.
+A search's links often sit on one link-protection host such as filecrypt.cc, which answers a burst with 429s; one serienfans search, whose 130 links all sat there, waited out 25 of its `Retry-After` answers of up to 10 s in its validation, which took 365 s of the 632.7 s answer.
 
 ### Result cache
 
@@ -112,17 +126,19 @@ With `stremio.auto_tune_all`, the default, startup overwrites `validation_max_co
 | `links_filtered` | INFO | `total`, `valid`, `invalid`, `pre_validated`; only when a result was dropped |
 | `alternative_link_promoted` | INFO | `title`, `failed`, `promoted` |
 | `link_host_unreachable` | INFO | `host`, `url`, `skip_s` |
+| `link_host_rate_limited` | INFO | `host`, `url`, `skip_s` |
 | `link_validation_timeout`, `link_validation_http_error`, `link_validation_unexpected_error` | WARNING | `url`, `timeout` or `error` |
 | `no_download_links_to_validate` | WARNING | none |
-| `link_head_result`, `link_get_fallback_result` | DEBUG | `url`, `status_code`, `valid` |
+| `link_head_result`, `link_get_fallback_result` | DEBUG | `url`, `status_code` |
 | `link_head_timeout`, `link_head_http_error`, `link_head_failed`, `link_head_connect_failed` | DEBUG | `url`, `error` |
-| `link_host_unreachable_skipped` | DEBUG | `url`, `host` |
+| `link_host_unreachable_skipped`, `link_host_rate_limited_skipped` | DEBUG | `url`, `host` |
 
 Metrics are described in [Metrics](../reference/metrics.md).
 
 ## Limits
 
 - A hoster's "file not found" page served with 200 counts as valid.
+- A link on a host that answered 429 counts as valid unchecked, so a dead one there reaches the CrawlJob.
 - The outcomes live in memory: a restart checks every link again.
 - An exception inside the validator never propagates; every failure counts as an invalid link.
 
@@ -135,4 +151,5 @@ Metrics are described in [Metrics](../reference/metrics.md).
 - `src/scavengarr/infrastructure/validation/http_link_validator.py` (`HttpLinkValidator`), `src/scavengarr/infrastructure/torznab/search_engine.py` (`HttpxSearchEngine`).
 - `src/scavengarr/domain/ports/search_engine.py` (`SearchEnginePort`).
 - `src/scavengarr/application/use_cases/torznab_search.py`, `src/scavengarr/application/stremio/plugin_search.py` (the callers), `src/scavengarr/interfaces/composition.py` (the wiring, auto-tune).
-- Tests: `tests/unit/infrastructure/test_link_validator.py`, `tests/unit/infrastructure/test_search_engine.py`.
+- `src/scavengarr/infrastructure/common/retry_transport.py` (`RetryTransport`, `LINK_CHECK`).
+- Tests: `tests/unit/infrastructure/test_link_validator.py`, `tests/unit/infrastructure/test_retry_transport.py`, `tests/unit/infrastructure/test_search_engine.py`.
