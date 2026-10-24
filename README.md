@@ -75,7 +75,7 @@ flowchart LR
 2. **Plugin search.** All matching plugins search in parallel. Each plugin runs its own multi-stage scrape (search page → detail pages → links); the answer goes out at its budget with what is known, a plugin still searching then finishes in the background for the next request, and sites that keep failing are skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
 4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 63 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
-5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
+5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha, a download quota or a slow link-out are resolved only when you grab the release.
 
 ---
 
@@ -100,7 +100,7 @@ flowchart LR
 - Category filtering (movies, TV) and pagination
 - Validated download links: dead links are removed before the results reach your apps
 - JDownloader `.crawljob` bundles for releases with several links
-- Grab-time resolution: links behind a captcha or a download quota are resolved only when a release is grabbed
+- Grab-time resolution: links behind a captcha, a download quota or a site's slow link-outs are resolved only when a release is grabbed
 
 ### Sources and hosters
 

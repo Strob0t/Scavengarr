@@ -968,8 +968,8 @@ class TestSearchAbstract:
 class TestOwnLinkResolutionBound:
     @pytest.mark.asyncio
     async def test_redirects_bounded_by_max_concurrent(self) -> None:
-        """Up to 1000 results must not open hundreds of redirect requests
-        to the plugin's own (usually Cloudflare-protected) host at once."""
+        """Hundreds of link-outs must not open as many redirect requests to
+        the plugin's own (usually Cloudflare-protected) host at once."""
         plugin = _TestPlugin()
         plugin._max_concurrent = 2
         in_flight = 0
@@ -984,17 +984,15 @@ class TestOwnLinkResolutionBound:
             return "https://hoster.example/" + url.rsplit("/", 1)[-1]
 
         plugin._resolve_redirect = _redirect  # type: ignore[method-assign]
-        results = [
-            SearchResult(
-                title=f"r{i}", download_link=f"https://example.com/external/{i}"
-            )
+        links = [
+            {"hoster": "", "link": f"https://example.com/external/{i}"}
             for i in range(10)
         ]
 
-        resolved = await plugin._resolve_result_links(results)
+        resolved = await plugin._resolve_own_links(links)
 
         assert len(resolved) == 10
-        assert resolved[3].download_link == "https://hoster.example/3"
+        assert resolved[3]["link"] == "https://hoster.example/3"
         assert peak == 2
 
 

@@ -2,7 +2,7 @@
 
 > **Purpose:** A plugin knows how to search one site and returns normalised `SearchResult` objects.
 > **Status:** current
-> **As of:** 7a6eb282
+> **As of:** 47a786e6
 
 ## Purpose
 
@@ -114,7 +114,7 @@ Shared helpers:
 - `_fetch_text()`, a GET that loads the URL through the browser when the site answers with a Cloudflare challenge, and then goes on in httpx with the browser's session (its cookies and User-Agent);
 - `_fetch_search_page()`, the search page's GET or POST in the raising mode (see [Failures of the site](#failures-of-the-site));
 - `_safe_fetch()` and `_safe_parse_json()`, which log and return `None` instead of raising (`_safe_fetch(raising=True)` is the raising mode);
-- `_resolve_redirect()`, `_resolve_own_links()` and `_resolve_result_links()`, which replace link-outs on the plugin's own host by their off-site targets;
+- `_resolve_redirect()` and `_resolve_own_links()`, which replace link-outs on the plugin's own host by their off-site targets, and `_resolve_link_out()`, which does it for one link-out at a grab (`GrabResolvingPlugin`);
 - `mirror_group`, for sites that front one database (see [Plugin selection](#plugin-selection-for-a-stremio-request));
 - `domain_list_url` and `domain_marker`, for a site that publishes an official list of its addresses;
 - the app's cache (`set_cache()`), for what a plugin keeps across requests under a key of its own.
@@ -238,6 +238,7 @@ Each entry is one broadcast with the broadcaster's own files: a result links the
 
 Some sites list hoster links as link-outs on their own host (`/redirect/<hash>`, `/external/<hash>`, sto's `/r?t=<token>`).
 The httpx base follows a link-out to its first off-site `Location` and drops a link that never leaves the site.
+serienfans and filmfans let only about one link-out through per 2 s, so their searches keep the link-outs and a grab resolves one release's (`resolve_download()`, [Grab-time resolution](torznab-and-crawljobs.md#grab-time-resolution)).
 sto redirects a link-out only when it is opened from the episode page that lists it, so it sends that page as `Referer`.
 
 When none of an episode's link-outs leaves the site, sto gates them for the session.

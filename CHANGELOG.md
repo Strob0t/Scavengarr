@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: serienfans and filmfans Resolve Their Link-outs at the Grab
+
+- serienfans and filmfans list their hoster links as `/external/<hash>` link-outs on their own host, and their searches followed every returned result's link-out to its target. The site lets about one through per 2 s and answers the rest with 429, so a Torznab search spent minutes on them (on the dev machine 359 s for one series search, 78 retried requests), then validated the filecrypt containers they led to, and could outlast its client's timeout.
+- The searches now return the link-outs as the result's links, passed to the job unvalidated (`validated_links`: behind Cloudflare the validator cannot follow them), and both plugins implement `GrabResolvingPlugin`: a grab follows one release's link-outs to their first off-site `Location` (`_resolve_link_out()` of `HttpxPluginBase`, which replaces `_resolve_result_links()`). The same search took 17.9 s with 73 items; six grabs resolved their two or three link-outs to filecrypt containers in 0.1 to 10.5 s, and a second grab served the stored links.
+- Accepted trade-off: a dead link-out shows at the grab (502 when none of a release's leaves the site), not at the search. The Stremio addon does not search download plugins, so nothing changes there.
+- Tests: `test_serienfans_plugin.py` and `test_filmfans_plugin.py` (the search requests no link-out and passes them as validated, season packs and episodes; a grab follows a 302, a dead link-out gives none, a link on another host is kept), and `test_httpx_base.py` checks the redirect bound through `_resolve_own_links()`. `docs/current/torznab-and-crawljobs.md`, `docs/current/plugins.md`, `docs/current/known-issues.md`, `docs/how-to/new-plugin.md` and the README say so.
+
 ### Fixed: Link Checks No Longer Wait for a Site's Rate Limit
 
 - The same search's validation spent its first 231 s without a 429 of its own: other requests drew 39 retried 429s from filecrypt.cc meanwhile, each halving the site's shared token bucket down to its floor of 0.5 per second, which only an answer other than a 429, a 503 or a challenge raises again. So the validation's 130 links, 129 of them valid, waited for the bucket's token one by one.
@@ -18,6 +25,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 - HEAD and the GET fallback are link checks now: they carry the request extension `LINK_CHECK`, which `RetryTransport` sends once, so a 429 or 503 comes back at once. Every other request, a plugin's own search among them, still waits it out and retries.
 - A 429 counts as valid without the GET fallback, and the host's other links count as valid for 60 s without a request (`_RATE_LIMITED_HOST_TTL`), none of them cached; `link_host_rate_limited` logs the mark. `link_head_result` and `link_get_fallback_result` lose their `valid` field, since the status alone no longer decides it.
 - Tests: `test_retry_transport.py` (a link check's 429 and 503 come back at once, other requests on the same transport still retry), `test_link_validator.py` (a 429 counts, on the GET fallback too, the host is not asked again for 60 s, nothing presumed is cached, HEAD and GET carry the extension, and 130 links on a host answering 429 with a `Retry-After` of 10 s end within 5 s through the shared client's transport with production's settings, after at most 4 requests), `test_httpx_base.py` (a plugin's request through the same shared client still waits out a 429).
+
 
 ### Changed: A Stream's Release Name Shows Its Measured Quality
 
