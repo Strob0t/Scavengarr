@@ -2,7 +2,7 @@
 
 > **Purpose:** The open defects of the current release, one line each, with where each is tracked.
 > **Status:** current
-> **As of:** 9d2fc4c7
+> **As of:** 8d215b5f
 
 ## Purpose
 
@@ -17,6 +17,7 @@ A fixed defect leaves this list in the commit that fixes it, and the CHANGELOG e
 | FSST 1080p does not decode in Stremio Web | A desktop browser reports "Error occurred when decoding" for the address-bound stream (H.264 1080p, AAC 5.1), which now goes through the file proxy; it has not been tried again, and the cause is not confirmed. | [Decision 0006](../target/decisions/0006-direct-streams-proxied.md) |
 | s.to link-outs are rationed for VPN addresses | For a VPN address s.to's gate is the tier `turnstile_altcha`, and one pass (about 20 s in the browser on the production host) unlocks 3 link-outs, so a Torznab search returns most episodes' s.to link-outs unresolved. | [Plugins](plugins.md), [the backlog](../backlog.md) |
 | Playmate fails in tsaridas/stremio-docker's web player | The image's nginx answers Playmate's disguised HLS segments (`…_000.css`, `…_001.js`) as web player files with 404, so Playmate streams fail there with error 81. | none |
+| Stremio can title a fresh season's episodes unlike its streams | Stremio lists the episodes with Cinemeta's titles from TheTVDB, which can title or order a fresh season's episodes unlike IMDb and the releases, while the streams follow the request's numbers as the sites and the releases count them, so an episode can play under another title in Stremio. | [Stremio addon](stremio-addon.md#limits) |
 | animeloads rations captchas per address | After about 30 captchas within about 40 min every answer is rejected for at least 10 min, so an anonymous grab (one captcha per episode) succeeds only a few times per hour and the rest end in HTTP 502; a login (`SCAVENGARR_ANIMELOADS_USERNAME`, `SCAVENGARR_ANIMELOADS_PASSWORD`) needs one captcha per release. | [Browser and challenges](browser-and-challenges.md) |
 | kinox keeps no hoster link | Every mirror's `/redirect/<hash>` opens a three-step image captcha with honeypot fields, also in a real browser, so kinox returns no results until the site drops it. | [Plugin domains](plugin-domains.md), [ideas backlog](../backlog.md) |
 | Some hosters have no resolver | rubyvidhub.com answers Cloudflare 522, embedrise.com plays only a placeholder `video.mp4` that answers 404, and frdl.to uses vidmoly's ad-tracker redirect; JDownloader has plugins for the last two (`EmbedriseCom`, `FreedlInk`). | none |

@@ -2,7 +2,7 @@
 
 > **Purpose:** The Stremio addon answers a Stremio player's request for the streams of a movie or an episode with the links Scavengarr's plugins find, resolved by its hoster resolvers and ranked.
 > **Status:** current
-> **As of:** 9d2fc4c7
+> **As of:** 8d215b5f
 
 ## Purpose
 
@@ -465,6 +465,7 @@ The anime ids log `anime_id_translated`, `anime_kitsu_number`, `anime_id_lookup_
 - The Anime Kitsu addon is a community service behind Cloudflare: while it is down, the titles not in the cache fall back to the id list, which places no long-running series.
 - Until the id list is in memory (right after a start, and for an hour after a failed download) an IMDb request goes without the Kitsu number, and its episode reference carries an unchecked position.
 - A site that splits a title differently from TheTVDB (split cours as separate seasons, recap seasons) can answer nothing for an episode, since the episode filter drops the other seasons.
+- Stremio lists a series' episodes with Cinemeta's titles, which come from TheTVDB and can title or order a fresh season's episodes unlike IMDb and the releases; the streams follow the request's numbers as the sites and the releases count them, so a viewer gets the episode the releases number there under another title in Stremio.
 - A stale entry answers once more while its refresh runs, so a link that died since can leave that answer without a stream.
 - A partial entry answers without the plugins that missed the answer budget until a completion has run, and the answer says so (`X-Search-Complete: false`).
 - Stremio Web plays the streams only through a streaming server (CORS), Android has `Referer` bugs with some hosters, and iOS plays them only with the KSPlayer engine.
