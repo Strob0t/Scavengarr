@@ -188,8 +188,8 @@ async def _file_video_size(
     ``_SNIFF_BYTES`` where its ``moov`` starts, before the check's
     *deadline* (``time.monotonic()``). A failed read measures nothing.
 
-    The checked bytes are left-stripped; a box under 150 MiB starts with a
-    zero byte, which ``lstrip()`` keeps.
+    The checked bytes are left-stripped; a box under 144 MiB starts with a
+    byte below 0x09, which ``lstrip()`` keeps.
     """
     size = _mp4.video_size(answer.head)
     total = _total_size(answer.content_range)

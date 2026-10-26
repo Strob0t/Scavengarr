@@ -321,7 +321,7 @@ The playback check also reads both from the stream in the 4 KiB it fetches anywa
 A measured quality replaces the site's (`apply_resolution()` in `application/stremio/stream_builder.py`), since a hoster can serve another copy than the one the site labels, and it settles a guess, so the stream shows its label.
 A measured size shows only where the site gave none.
 When a measurement changes a quality, the answer is sorted again with the same weights.
-A media playlist, variants or a video track past the 4 KiB read and a server that answers without `Content-Range` measure nothing, and the site's values stay.
+A media playlist and variants or a video track past the 4 KiB read measure nothing, a server that answers without a `Content-Range` total measures no size (and no `moov` behind the media data), and the site's values stay.
 Cached answers take the measurement from the resolver's cache.
 With `stremio.verify_streams` off nothing is measured, except by the resolvers that check anyway (`needs_playback_check`).
 
