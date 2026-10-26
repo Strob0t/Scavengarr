@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: An MP4 File's Header Measures Its Quality
+
+- The playback check measured a quality for HLS streams only (the largest `RESOLUTION` of a master playlist); a file got its size but no quality, so a stream whose site named none showed no label, whatever it played. It now reads an MP4 file's track headers (`tkhd`; `infrastructure/hoster_resolvers/_mp4.py`) and ranks and labels the stream by them like a playlist's resolution: from the 4 KiB it fetches anyway when the file's `moov` box comes first, else from one more 4 KiB `Range` read where the `moov` starts behind the media data, within the check's 6 s and only for a file that starts with `ftyp` and whose total the first answer named. That read failing logs `playback_check_moov_unread` and measures nothing; the stream stays playable.
+- Not measured: a video track behind an audio track's tables (past the 4 KiB of the `moov`), a file that is no MP4 (Matroska), a server without a `Content-Range` total. The box layouts are the standard's, tested on built boxes; no hoster's file was read from the development machine.
+- Tests: `test_mp4_header.py` (fast-start and moov-at-the-end files, a 64-bit media data size, version 1 track headers, an audio track first, cut headers, a file without `ftyp`), `test_check_playable.py` (no second read for a fast-start file, the second read's range and headers, a failed, foreign or late answer measures nothing, the registry's quality from a file).
+
 ### Fixed: Streams Show the Quality Their Site States, and No Guessed One
 
 - A badge that names its resolution among other words lost it: the badge table knew whole values only ("HD", "1080P"), so link badges such as "HD-1080p" and "1080p/5.1" left the stream without a quality and its name without a label. A badge now names its quality as a whole in any spelling ("Full HD", "Blu-Ray"), else by its best part that names one ("HD-1080p" is 1080p, "4K/UHD" 4K; `parse_quality()` of `infrastructure/stremio/release_parser.py`).

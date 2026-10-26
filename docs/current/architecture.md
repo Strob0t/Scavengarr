@@ -147,6 +147,7 @@ Hoster resolvers:
 | `infrastructure/hoster_resolvers/pass_keeper.py` | `PassKeeper` | Filemoon's captcha pass, kept by one capture once it has gone. |
 | `infrastructure/hoster_resolvers/_browser.py` | `capture_stream` | The capture of a player's stream in the stealth browser, shared by the capture resolvers. |
 | `infrastructure/hoster_resolvers/_verify.py` | `verify_video_url`, `check_playable` | The checks that a resolved video URL answers and plays. |
+| `infrastructure/hoster_resolvers/_mp4.py` | `video_size`, `moov_offset` | An MP4 file's video size from its header boxes, for the playback check. |
 | `infrastructure/hoster_resolvers/_video_extract.py` | `extract_video_url`, `unpack_p_a_c_k` | The video URL extraction of the XFS players. |
 | `infrastructure/hoster_resolvers/_domain.py` | `extract_domain` | A URL's second-level domain: the hoster's name, and a CDN's in logs. |
 | `infrastructure/hoster_resolvers/_voe_domains.py` | `VOE_DOMAINS` | VOE's rotating mirror domains. |

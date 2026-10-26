@@ -226,7 +226,7 @@ uvicorn's own access log is off (`access_log=False`): it repeated each request w
 A playback the shutdown bound cancels logs Uvicorn's cancel line as a warning and no `Exception in ASGI application`; the stop's last lines are written before the process ends ([Shutdown](architecture.md#shutdown)).
 
 Log lines name a CDN by its second-level domain (`cdn=dropcdn`, `extract_domain()`), never by its URL: the path and the query of a video URL carry tokens and the client's address.
-That holds for the HLS proxy's CDN errors (`hls_proxy_cdn_error`, `hls_proxy_network_error`), a body the CDN cut (`hls_proxy_file_cut`, `hls_proxy_segment_cut`) and its resumes (`hls_proxy_file_resumed`, `hls_proxy_segment_resumed` with `how=range` or `how=restart`), the fetches ahead (`hls_readahead_retried`, `hls_readahead_failed`), `/play`'s redirect (`stremio_play_resolved`), the playback check (`playback_check_failed`) and the resolvers' results.
+That holds for the HLS proxy's CDN errors (`hls_proxy_cdn_error`, `hls_proxy_network_error`), a body the CDN cut (`hls_proxy_file_cut`, `hls_proxy_segment_cut`) and its resumes (`hls_proxy_file_resumed`, `hls_proxy_segment_resumed` with `how=range` or `how=restart`), the fetches ahead (`hls_readahead_retried`, `hls_readahead_failed`), `/play`'s redirect (`stremio_play_resolved`), the playback check (`playback_check_failed`, `playback_check_moov_unread`) and the resolvers' results.
 Third-party records show URLs by their origin only (`_shorten_urls` in `infrastructure/logging/setup.py`).
 httpx's line for each outgoing request, written at `logging.level: DEBUG` only, reads `HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`, and the same holds for URLs in their tracebacks.
 

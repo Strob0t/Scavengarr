@@ -317,11 +317,11 @@ A stream's quality comes from its release name (guessit) or the site's quality b
 A badge names its quality as a whole in any spelling ("Full HD"), else by its best part that names one ("HD-1080p" is 1080p, "4K/UHD" 4K, "1080p/5.1" 1080p; `parse_quality()` in `infrastructure/stremio/release_parser.py`).
 A word that names no resolution (`HD`, `WEBRIP`, `WEB-DL`, `BDRIP`, `BluRay`) is a guess: it ranks the stream as before (`HD` as 720p, `BDRIP` as 1080p) but shows no label (`RankedStream.quality_guessed`), and inside a composite badge ("HD/Deutsch") it counts for nothing.
 A plugin passes a quality only where its site states one; a link without one has an unknown quality.
-The playback check also reads both from the stream in the 4 KiB it fetches anyway: the largest `RESOLUTION` of an HLS master playlist and a file's total size.
+The playback check also reads both from the stream in the 4 KiB it fetches anyway: the largest `RESOLUTION` of an HLS master playlist or an MP4 file's video track, and a file's total size; an MP4 file whose `moov` box follows its media data gets one more 4 KiB read for it ([CDN checks](hoster-resolvers.md#cdn-checks)).
 A measured quality replaces the site's (`apply_resolution()` in `application/stremio/stream_builder.py`), since a hoster can serve another copy than the one the site labels, and it settles a guess, so the stream shows its label.
 A measured size shows only where the site gave none.
 When a measurement changes a quality, the answer is sorted again with the same weights.
-A media playlist, variants past the first 4 KiB and a server that answers without `Content-Range` measure nothing, and the site's values stay.
+A media playlist, variants or a video track past the 4 KiB read and a server that answers without `Content-Range` measure nothing, and the site's values stay.
 Cached answers take the measurement from the resolver's cache.
 With `stremio.verify_streams` off nothing is measured, except by the resolvers that check anyway (`needs_playback_check`).
 

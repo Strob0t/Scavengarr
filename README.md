@@ -88,7 +88,7 @@ flowchart LR
 - Hoster links resolved to direct video URLs (MP4 and HLS), with the playback headers Stremio needs
 - HLS streams play through Scavengarr's HLS proxy (the CDN's headers on every request, three segments fetched ahead for CDNs that throttle a connection), and files that a hoster binds to the resolving address through its file proxy
 - Playback check: resolved URLs that return an error page or no video are dropped before you see them
-- Ranking by language (German audio first by default), quality and hoster reliability; quality and size are read from the stream itself (an HLS playlist's resolution, a file's length) where the site names none
+- Ranking by language (German audio first by default), quality and hoster reliability; quality and size are read from the stream itself (an HLS playlist's or an MP4 file's resolution, a file's length) where the site names none
 - One working stream per hoster and language (dub and sub both stay): if a hoster's best link is dead, its next link is tried
 - Autoplay of the next episode (Stremio's binge watching keeps the language of the current stream)
 - Answer budget: a request answers 30 s after its start with what is known, earlier at 5 resolved streams or when everything is done, at the latest after 60 s (defaults), so Stremio always gets an answer in time; plugins still searching then finish in the background, and the next request for the title gets their streams

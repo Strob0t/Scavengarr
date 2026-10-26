@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
@@ -10,6 +12,7 @@ import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.hoster_resolvers import _mp4
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
@@ -72,11 +75,13 @@ async def _first_bytes(
     url: str,
     headers: dict[str, str],
     timeout: float,
+    start: int = 0,
 ) -> _Answer:
-    """Fetch the first ``_SNIFF_BYTES`` of *url* with a Range GET (redirects
-    followed); the body is read below status 400 only. A failed request
-    (timeout, reset) raises ``httpx.HTTPError``."""
-    headers = {**headers, "Range": f"bytes=0-{_SNIFF_BYTES - 1}"}
+    """Fetch ``_SNIFF_BYTES`` of *url* from byte *start* with a Range GET
+    (redirects followed); the body is read below status 400 only. A failed
+    request (timeout, reset) raises ``httpx.HTTPError``."""
+    end = start + _SNIFF_BYTES - 1
+    headers = {**headers, "Range": f"bytes={start}-{end}"}
     async with http_client.stream(
         "GET", url, headers=headers, follow_redirects=True, timeout=timeout
     ) as resp:
@@ -152,7 +157,8 @@ async def verify_video_url(
 @dataclass(frozen=True)
 class PlaybackCheck:
     """What the playback check saw: whether a player could play the stream,
-    the largest resolution of an HLS master playlist and a file's size."""
+    the largest resolution of an HLS master playlist or an MP4 file's
+    video, and a file's size."""
 
     playable: bool
     width: int | None = None
@@ -170,6 +176,47 @@ def _total_size(content_range: str | None) -> int | None:
     return int(match[1]) if match else None
 
 
+async def _file_video_size(
+    http_client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    answer: _Answer,
+    deadline: float,
+) -> tuple[int, int] | None:
+    """The video size an MP4 file's header names: from the checked bytes
+    when its ``moov`` comes first, else from one more read of
+    ``_SNIFF_BYTES`` where its ``moov`` starts, before the check's
+    *deadline* (``time.monotonic()``). A failed read measures nothing.
+
+    The checked bytes are left-stripped; a box under 150 MiB starts with a
+    zero byte, which ``lstrip()`` keeps.
+    """
+    size = _mp4.video_size(answer.head)
+    total = _total_size(answer.content_range)
+    if size is not None or total is None:
+        return size
+    offset = _mp4.moov_offset(answer.head, total)
+    left = deadline - time.monotonic()
+    if offset is None or left <= 0:
+        return None
+    try:
+        async with asyncio.timeout(left):
+            moov = await _first_bytes(http_client, url, headers, left, start=offset)
+    except (httpx.HTTPError, TimeoutError) as exc:
+        log.info(
+            "playback_check_moov_unread",
+            cdn=extract_domain(url),
+            error=type(exc).__name__,
+        )
+        return None
+    # A CDN that ignores the range answers from the file's start
+    if moov.status != 206 or not (moov.content_range or "").startswith(
+        f"bytes {offset}-"
+    ):
+        return None
+    return _mp4.video_size(moov.head)
+
+
 async def check_playable(
     http_client: httpx.AsyncClient,
     stream: ResolvedStream,
@@ -181,13 +228,16 @@ async def check_playable(
     such as mixdrop's answer other agents with 403.  An error status, an
     HTML page, or (for HLS) a body that is no playlist means the player
     would fail, so the stream is not playable. A playable stream comes with
-    what the bytes tell without another request: the largest variant of a
-    master playlist and the total size of a file's range answer.
+    what the bytes tell: the largest variant of a master playlist, the total
+    size of a file's range answer and an MP4 file's video size
+    (``_file_video_size``: one more read for a ``moov`` at the end, within
+    the check's 6 s).
 
     A failed request (timeout, reset) raises ``httpx.HTTPError``: it says
     nothing about the stream.
     """
     headers = {"User-Agent": DEFAULT_USER_AGENT, **stream.headers}
+    deadline = time.monotonic() + _PLAYBACK_CHECK_TIMEOUT_S
     answer = await _first_bytes(
         http_client, stream.video_url, headers, _PLAYBACK_CHECK_TIMEOUT_S
     )
@@ -197,12 +247,16 @@ async def check_playable(
         reason = "html"
     elif stream.is_hls and not answer.head.startswith(b"#EXTM3U"):
         reason = "no playlist"
-    else:
-        variant = _largest_variant(answer.head) if stream.is_hls else None
-        width, height = variant or (None, None)
+    elif stream.is_hls:
+        width, height = _largest_variant(answer.head) or (None, None)
         # A playlist's range answer sizes the playlist, not the video
-        size = None if stream.is_hls else _total_size(answer.content_range)
-        return PlaybackCheck(True, width, height, size)
+        return PlaybackCheck(True, width, height)
+    else:
+        video = await _file_video_size(
+            http_client, stream.video_url, headers, answer, deadline
+        )
+        width, height = video or (None, None)
+        return PlaybackCheck(True, width, height, _total_size(answer.content_range))
     log.info(
         "playback_check_failed",
         cdn=extract_domain(stream.video_url),
