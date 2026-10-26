@@ -763,20 +763,21 @@ class TestMovie2k:
 
     def test_series_page_lists_every_episode(self) -> None:
         """Episodes are ``<table data-episode-id="base64(tt…-s1e1-…)">`` with
-        ``<a href="#" onclick="return loadMirror('<url>')">`` mirrors."""
+        ``<a href="#" onclick="return loadMirror('<url>')">`` mirrors, which
+        show no quality image."""
         detail = _detail("movie2k", self._BASE, "detail-the-last-of-us")
         assert detail.episodes_listed
         assert detail.stream_links[:2] == [
             {
                 "hoster": "vidoza.net",
                 "link": "https://vidoza.net/n1318q60i9gh.html",
-                "quality": "HD",
+                "quality": "",
                 "label": "1x1 vidoza.net",
             },
             {
                 "hoster": "vinovo.to",
                 "link": "https://vinovo.to/d/kgv90ek1s821qg",
-                "quality": "HD",
+                "quality": "",
                 "label": "1x1 vinovo.to",
             },
         ]

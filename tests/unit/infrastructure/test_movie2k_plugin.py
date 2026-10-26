@@ -11,7 +11,9 @@ import httpx
 import pytest
 import respx
 
+from scavengarr.domain.entities.stremio import StreamQuality
 from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "movie2k.py"
 
@@ -636,6 +638,35 @@ class TestMovie2kPluginSearch:
         assert first.metadata["country"] == "USA"
         assert first.metadata["runtime"] == "126"
         assert first.metadata["imdb_url"] == "https://www.imdb.com/title/tt0371746"
+
+    @pytest.mark.asyncio
+    async def test_link_without_quality_image_has_no_quality(self) -> None:
+        """A link the site gives no quality gets none: no default, and not
+        the first link's either."""
+        plug = _make_plugin()
+        mock_client = AsyncMock()
+        search_html = '<h2><a href="/stream/iron-man--abc123">Iron Man</a></h2>'
+        no_image = '<div>Qualität: <img alt="HD"></div>'
+        assert _DETAIL_HTML.count(no_image) == 1
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _mock_response(search_html),
+                _mock_response(_DETAIL_HTML.replace(no_image, "")),
+            ]
+        )
+        plug._client = mock_client
+
+        results = await plug.search("Iron Man")
+
+        links = results[0].download_links or []
+        assert links[1]["link"] == "https://vidoza.net/abc123.html"
+        assert links[1]["quality"] == ""
+        streams = convert_search_results(results)
+        assert [s.quality for s in streams] == [
+            StreamQuality.HD_1080P,
+            StreamQuality.UNKNOWN,
+            StreamQuality.HD_1080P,
+        ]
 
     @pytest.mark.asyncio
     async def test_anime_film_is_a_movie(self) -> None:

@@ -318,7 +318,8 @@ class _DetailPageParser:
                 quality = alt
 
         domain = _domain_from_url(url)
-        stream = {"hoster": domain, "link": url, "quality": quality or "HD"}
+        # No image, no quality: a default would show as a measured one
+        stream = {"hoster": domain, "link": url, "quality": quality}
         episode = _episode_of(link)
         if episode is not None:
             self.episodes_listed = True
@@ -506,7 +507,6 @@ class Movie2kPlugin(HttpxPluginBase):
         metadata: dict[str, str] = {
             "year": year,
             "genres": ", ".join(genres),
-            "quality": links[0].get("quality", ""),
             "imdb_rating": parser.imdb_rating,
             "imdb_url": parser.imdb_url,
             "runtime": parser.runtime,

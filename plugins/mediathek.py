@@ -142,8 +142,6 @@ _ZDF_RE = re.compile(r"_\d+k_p(\d+)v\d+\.mp4$")
 _ZDF_HEIGHTS = {37: 1080, 36: 720, 15: 720, 35: 576, 34: 576, 13: 480, 11: 360, 9: 360}
 _ARTE_RE = re.compile(r"-A_([A-Z]{2})_\d_")
 _ARTE_HEIGHTS = {"SQ": 720, "EQ": 406, "HQ": 360}
-# The Filmliste's HD file without a marker: 720 lines or more
-_HD_FIELD_HEIGHT = 720
 
 
 def _last_sunday(year: int, month: int) -> dt.datetime:
@@ -161,7 +159,7 @@ def _broadcast_day(timestamp: int) -> dt.date:
     return (utc + dt.timedelta(hours=2 if summer else 1)).date()
 
 
-def _height(url: str, field: str) -> int | None:
+def _height(url: str) -> int | None:
     path = url.split("?", 1)[0]
     for pattern in _HEIGHT_RES:
         match = pattern.search(path)
@@ -173,17 +171,19 @@ def _height(url: str, field: str) -> int | None:
     match = _ARTE_RE.search(path)
     if match:
         return _ARTE_HEIGHTS.get(match.group(1))
-    if field == "url_video_hd" and path.lower().endswith(".mp4"):
-        return _HD_FIELD_HEIGHT
     return None
 
 
 def _quality(url: str, field: str) -> str | None:
     """The quality of the file *url* of the entry's *field* from its name,
-    ``None`` where the name tells none."""
-    height = _height(url, field)
+    ``None`` where the name tells none. The Filmliste's HD file without a
+    marker is "HD": 720 lines or more, which no height names."""
+    height = _height(url)
     if height is None:
-        return None
+        hd_file = field == "url_video_hd" and url.split("?", 1)[0].lower().endswith(
+            ".mp4"
+        )
+        return "HD" if hd_file else None
     for lines, label in ((2160, "2160p"), (1080, "1080p"), (720, "720p")):
         if height >= lines:
             return label
