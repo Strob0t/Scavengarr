@@ -14,48 +14,115 @@ from scavengarr.infrastructure.stremio.release_parser import (
 class TestParseQuality:
     def test_guessit_extracts_1080p_from_release_name(self) -> None:
         result = parse_quality(release_name="Iron.Man.2008.1080p.BluRay.x264-GROUP")
-        assert result == StreamQuality.HD_1080P
+        assert result.quality == StreamQuality.HD_1080P
 
     def test_guessit_extracts_720p_from_release_name(self) -> None:
         result = parse_quality(release_name="Movie.720p.WEB-DL")
-        assert result == StreamQuality.HD_720P
+        assert result.quality == StreamQuality.HD_720P
 
     def test_guessit_extracts_2160p_4k_from_release_name(self) -> None:
         result = parse_quality(release_name="Movie.2160p.UHD")
-        assert result == StreamQuality.UHD_4K
+        assert result.quality == StreamQuality.UHD_4K
 
     def test_fallback_to_link_quality_when_no_release_name(self) -> None:
         result = parse_quality(link_quality="1080p")
-        assert result == StreamQuality.HD_1080P
+        assert result.quality == StreamQuality.HD_1080P
 
     def test_fallback_to_quality_badge_when_no_release_name_or_link_quality(
         self,
     ) -> None:
         result = parse_quality(quality_badge="HD")
-        assert result == StreamQuality.HD_720P
+        assert result.quality == StreamQuality.HD_720P
 
     def test_returns_unknown_when_no_data_available(self) -> None:
         result = parse_quality()
-        assert result == StreamQuality.UNKNOWN
+        assert result.quality == StreamQuality.UNKNOWN
 
     def test_badge_cam(self) -> None:
         result = parse_quality(quality_badge="CAM")
-        assert result == StreamQuality.CAM
+        assert result.quality == StreamQuality.CAM
 
     def test_badge_ts(self) -> None:
         result = parse_quality(quality_badge="TS")
-        assert result == StreamQuality.TS
+        assert result.quality == StreamQuality.TS
 
     def test_badge_bdrip(self) -> None:
         result = parse_quality(quality_badge="BDRIP")
-        assert result == StreamQuality.HD_1080P
+        assert result.quality == StreamQuality.HD_1080P
 
     def test_guessit_priority_over_badge(self) -> None:
         result = parse_quality(
             release_name="Movie.720p.WEB-DL",
             quality_badge="HD",
         )
-        assert result == StreamQuality.HD_720P
+        assert result.quality == StreamQuality.HD_720P
+        assert not result.guessed
+
+
+class TestBadgeQuality:
+    """A badge's resolution, also inside a composite badge, and the words
+    that name none."""
+
+    @pytest.mark.parametrize(
+        ("badge", "expected"),
+        [
+            ("HD-1080p", StreamQuality.HD_1080P),
+            ("HD 720p", StreamQuality.HD_720P),
+            ("Full HD", StreamQuality.HD_1080P),
+            ("Full-HD", StreamQuality.HD_1080P),
+            ("4K/UHD", StreamQuality.UHD_4K),
+            ("2160p", StreamQuality.UHD_4K),
+            ("1080p/5.1", StreamQuality.HD_1080P),
+            ("SD-480p", StreamQuality.SD),
+            ("CAM", StreamQuality.CAM),
+            ("SD", StreamQuality.SD),
+        ],
+    )
+    def test_stated_quality(self, badge: str, expected: StreamQuality) -> None:
+        result = parse_quality(link_quality=badge)
+        assert result.quality == expected
+        assert not result.guessed
+
+    @pytest.mark.parametrize(
+        ("badge", "expected"),
+        [
+            ("HD", StreamQuality.HD_720P),
+            ("hd", StreamQuality.HD_720P),
+            ("WEBRIP", StreamQuality.HD_720P),
+            ("WEB-DL", StreamQuality.HD_720P),
+            ("BDRIP", StreamQuality.HD_1080P),
+            ("BluRay", StreamQuality.HD_1080P),
+        ],
+    )
+    def test_word_without_resolution_is_guessed(
+        self, badge: str, expected: StreamQuality
+    ) -> None:
+        # The class ranks the stream; no source named the resolution
+        result = parse_quality(quality_badge=badge)
+        assert result.quality == expected
+        assert result.guessed
+
+    def test_resolution_token_wins_over_guessed_word(self) -> None:
+        result = parse_quality(link_quality="HD-720p", quality_badge="HD")
+        assert result.quality == StreamQuality.HD_720P
+        assert not result.guessed
+
+    def test_composite_without_resolution_stays_unknown(self) -> None:
+        result = parse_quality(link_quality="HD/Deutsch")
+        assert result.quality == StreamQuality.UNKNOWN
+        assert not result.guessed
+
+    def test_number_without_unit_names_no_resolution(self) -> None:
+        result = parse_quality(link_quality="Stream 1080")
+        assert result.quality == StreamQuality.UNKNOWN
+
+    def test_release_name_resolution_is_stated(self) -> None:
+        result = parse_quality(release_name="Movie.2024.1080p.WEB", quality_badge="HD")
+        assert result.quality == StreamQuality.HD_1080P
+        assert not result.guessed
+
+    def test_unknown_is_not_guessed(self) -> None:
+        assert not parse_quality().guessed
 
 
 class TestParseLanguage:

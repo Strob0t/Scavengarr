@@ -63,6 +63,20 @@ class TestFormatStream:
         ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
         assert format_stream(ranked).name == "Scavengarr"
 
+    def test_guessed_quality_shows_no_label(self) -> None:
+        # "HD" ranks like 720p, but no source said 720p
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_720P,
+            quality_guessed=True,
+            release_name="Movie.2024.German.1080p.WEB",
+        )
+        stream = format_stream(ranked)
+        assert stream.name == "Scavengarr"
+        # Nor does a guess rewrite the site's release name
+        assert stream.description.split("\n")[0] == "Movie.2024.German.1080p.WEB"
+
     def test_description_lines(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
@@ -699,6 +713,28 @@ class TestMeasurements:
         merged = apply_resolution(ranked, ResolvedStream(self._VIDEO))
 
         assert merged is ranked
+
+    def test_guess_stays_one_without_a_measurement(self) -> None:
+        ranked = replace(
+            self._RANKED, quality=StreamQuality.HD_720P, quality_guessed=True
+        )
+
+        assert apply_resolution(ranked, ResolvedStream(self._VIDEO)).quality_guessed
+
+    @pytest.mark.parametrize(
+        "measured", [StreamQuality.HD_720P, StreamQuality.HD_1080P]
+    )
+    def test_measurement_settles_a_guess(self, measured: StreamQuality) -> None:
+        # A measurement that agrees with the guess confirms it
+        ranked = replace(
+            self._RANKED, quality=StreamQuality.HD_720P, quality_guessed=True
+        )
+        resolved = ResolvedStream(self._VIDEO, quality=measured)
+
+        merged = apply_resolution(ranked, resolved)
+
+        assert merged.quality is measured
+        assert not merged.quality_guessed
 
     def test_measured_size_fills_a_missing_one(self) -> None:
         resolved = ResolvedStream(self._VIDEO, size_bytes=1_500_000_000)

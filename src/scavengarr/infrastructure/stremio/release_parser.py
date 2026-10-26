@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from scavengarr.domain.entities.stremio import StreamLanguage, StreamQuality
 from scavengarr.infrastructure.stremio.release_guess import guess_release
@@ -44,6 +45,28 @@ _BADGE_TO_QUALITY: dict[str, StreamQuality] = {
     "CAMRIP": StreamQuality.CAM,
 }
 
+# Badges that name no resolution: their class ranks the stream, but no
+# source said it is 720p or 1080p ("HD" is any of them)
+_GUESSED_BADGES = frozenset({"HD", "WEBRIP", "WEBDL", "WEB-DL", "BDRIP", "BLURAY"})
+
+# Separators of a badge's spellings ("Full HD", "Blu-Ray") and of its parts
+# ("HD-1080p", "4K/UHD", "1080p/5.1")
+_BADGE_SEPARATORS_RE = re.compile(r"[\s._/-]+")
+_BADGE_TOKEN_RE = re.compile(r"[0-9A-Z]+")
+
+
+@dataclass(frozen=True)
+class ParsedQuality:
+    """A stream's quality class, and whether a word that names no
+    resolution guessed it (``_GUESSED_BADGES``): the class ranks the
+    stream, a label would claim a resolution no source named."""
+
+    quality: StreamQuality = StreamQuality.UNKNOWN
+    guessed: bool = False
+
+
+_UNKNOWN = ParsedQuality()
+
 # --- Language helpers ---
 
 # German labels too (s.to: "Englisch", "Japanisch mit deutschen Untertiteln")
@@ -56,9 +79,25 @@ _ORIGINAL_PATTERNS = re.compile(r"(?i)\b(original(?:version|fassung)?|ov)\b")
 _ORIGINAL = StreamLanguage(code="ov", label="Original", is_dubbed=False)
 
 
-def _quality_from_badge(badge: str) -> StreamQuality:
-    """Map a badge/link_quality string to StreamQuality (case-insensitive)."""
-    return _BADGE_TO_QUALITY.get(badge.strip().upper(), StreamQuality.UNKNOWN)
+def _quality_from_badge(badge: str) -> ParsedQuality:
+    """The quality a badge or link_quality string names (case-insensitive).
+
+    The whole badge in any spelling ("Full HD"), else the best part that
+    names a quality of its own ("HD-1080p" is 1080p, "4K/UHD" 4K): a word
+    without a resolution inside a composite badge ("HD/Deutsch") adds no
+    guess.
+    """
+    text = badge.strip().upper()
+    for whole in (text, _BADGE_SEPARATORS_RE.sub("", text)):
+        quality = _BADGE_TO_QUALITY.get(whole)
+        if quality is not None:
+            return ParsedQuality(quality, guessed=whole in _GUESSED_BADGES)
+    parts = (
+        _BADGE_TO_QUALITY.get(token, StreamQuality.UNKNOWN)
+        for token in _BADGE_TOKEN_RE.findall(text)
+        if token not in _GUESSED_BADGES
+    )
+    return ParsedQuality(max(parts, default=StreamQuality.UNKNOWN))
 
 
 def _language_code(lang_obj: object) -> str | None:
@@ -91,7 +130,7 @@ def parse_quality(
     release_name: str | None = None,
     quality_badge: str | None = None,
     link_quality: str | None = None,
-) -> StreamQuality:
+) -> ParsedQuality:
     """Determine quality from multiple sources.
 
     Priority: 1) guessit(release_name).screen_size, 2) link_quality, 3) quality_badge.
@@ -101,21 +140,16 @@ def parse_quality(
         guess = guess_release(release_name)
         screen_size = guess.get("screen_size")
         if screen_size and screen_size in _SCREEN_SIZE_TO_QUALITY:
-            return _SCREEN_SIZE_TO_QUALITY[screen_size]
+            return ParsedQuality(_SCREEN_SIZE_TO_QUALITY[screen_size])
 
-    # 2) Try link_quality
-    if link_quality:
-        q = _quality_from_badge(link_quality)
-        if q != StreamQuality.UNKNOWN:
-            return q
+    # 2) Try link_quality, 3) quality_badge
+    for badge in (link_quality, quality_badge):
+        if badge:
+            parsed = _quality_from_badge(badge)
+            if parsed.quality != StreamQuality.UNKNOWN:
+                return parsed
 
-    # 3) Try quality_badge
-    if quality_badge:
-        q = _quality_from_badge(quality_badge)
-        if q != StreamQuality.UNKNOWN:
-            return q
-
-    return StreamQuality.UNKNOWN
+    return _UNKNOWN
 
 
 def parse_language(

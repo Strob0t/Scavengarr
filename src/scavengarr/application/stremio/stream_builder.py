@@ -100,10 +100,15 @@ def format_stream(
     quality and hoster the next episode has). ``filename`` gives subtitle
     addons the release name to match.
     """
-    quality_label = _QUALITY_LABELS.get(ranked.quality)
+    # A guessed quality ranks the stream but claims no resolution
+    quality_label = (
+        None if ranked.quality_guessed else _QUALITY_LABELS.get(ranked.quality)
+    )
     name = f"{_ADDON_NAME}\n{quality_label}" if quality_label else _ADDON_NAME
 
-    if ranked.release_name:
+    if ranked.release_name and ranked.quality_guessed:
+        title = ranked.release_name
+    elif ranked.release_name:
         title = _with_quality(ranked.release_name, ranked.quality)
     else:
         title = ranked.title or reference_title
@@ -150,19 +155,25 @@ def apply_resolution(ranked: RankedStream, resolved: ResolvedStream) -> RankedSt
     """*ranked* with what its resolution measured, *ranked* itself when that
     changes nothing.
 
-    A measured quality replaces the site's badge: sites label a release once,
-    a hoster may serve another copy. A measured size shows only where the
-    site gave none.
+    A measured quality replaces the site's badge, a guessed one too: sites
+    label a release once, a hoster may serve another copy. A measured size
+    shows only where the site gave none.
     """
     quality = ranked.quality
+    guessed = ranked.quality_guessed
     if resolved.quality is not StreamQuality.UNKNOWN:
         quality = resolved.quality
+        guessed = False
     size = ranked.size
     if not size and resolved.size_bytes:
         size = format_size(resolved.size_bytes)
-    if quality is ranked.quality and size == ranked.size:
+    if (
+        quality is ranked.quality
+        and guessed is ranked.quality_guessed
+        and size == ranked.size
+    ):
         return ranked
-    return replace(ranked, quality=quality, size=size)
+    return replace(ranked, quality=quality, quality_guessed=guessed, size=size)
 
 
 def hoster_key(stream: RankedStream) -> tuple[str, str] | None:

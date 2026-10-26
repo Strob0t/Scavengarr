@@ -314,8 +314,10 @@ In a release name, German audio wins over any subtitle language ("German.DL.EngS
 An unrecognised label falls back to the plugin's default language.
 
 A stream's quality comes from its release name (guessit) or the site's quality badge, and its size from the site.
+A badge names its quality as a whole in any spelling ("Full HD"), else by its best part that names one ("HD-1080p" is 1080p, "4K/UHD" 4K, "1080p/5.1" 1080p; `parse_quality()` in `infrastructure/stremio/release_parser.py`).
+A word that names no resolution (`HD`, `WEBRIP`, `WEB-DL`, `BDRIP`, `BluRay`) is a guess: it ranks the stream as before (`HD` as 720p, `BDRIP` as 1080p) but shows no label (`RankedStream.quality_guessed`), and inside a composite badge ("HD/Deutsch") it counts for nothing.
 The playback check also reads both from the stream in the 4 KiB it fetches anyway: the largest `RESOLUTION` of an HLS master playlist and a file's total size.
-A measured quality replaces the site's (`apply_resolution()` in `application/stremio/stream_builder.py`), since a hoster can serve another copy than the one the site labels.
+A measured quality replaces the site's (`apply_resolution()` in `application/stremio/stream_builder.py`), since a hoster can serve another copy than the one the site labels, and it settles a guess, so the stream shows its label.
 A measured size shows only where the site gave none.
 When a measurement changes a quality, the answer is sorted again with the same weights.
 A media playlist, variants past the first 4 KiB and a server that answers without `Content-Range` measure nothing, and the site's values stay.
@@ -326,7 +328,7 @@ With `stremio.verify_streams` off nothing is measured, except by the resolvers t
 
 Each stream carries:
 
-- `name`: `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`), none for an unknown quality.
+- `name`: `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`), none for an unknown or guessed quality.
 - `description`: one short line per fact, since Stremio cuts long lines.
 - `url`: `/api/v1/stremio/play/{stream_id}` for a file, `/api/v1/stremio/proxy/{stream_id}/scavengarr.m3u8` for an HLS stream, `/api/v1/stremio/proxy/{stream_id}/file` for an address-bound file.
 - `behaviorHints`: `bingeGroup` on every stream, `filename` when the site gives a release name, `notWebReady: true`, and `proxyHeaders` for a file played through `/play`.
@@ -334,7 +336,7 @@ Each stream carries:
 The description's lines are the site's own title (the release name, else the site's title, else the reference title with the year), then `language · size`, then `HOSTER · plugin`.
 A series title gets ` SxxEyy` unless it is a release name, and the site's own title shows a wrong match that the reference title would hide.
 The measurement sets the quality, whatever the release name says: a release name's resolution token (`2160p`, `1080p`, `1080i`, `720p`, `576p`, `480p`, `360p`, `4K`) that contradicts the stream's ranked quality shows the name column's label instead ("Movie.2024.German.DL.1080p.WEB-GRP" measured at 720p shows as "Movie.2024.German.DL.720p.WEB-GRP"; `_with_quality()` in `application/stremio/stream_builder.py`).
-A token that agrees stays as the site wrote it (`1080i`, `2160p`), a name without one gets none, and a ranked quality outside the resolution classes (unknown, TS, CAM) changes nothing; `filename` keeps the site's release name unchanged.
+A token that agrees stays as the site wrote it (`1080i`, `2160p`), a name without one gets none, and a ranked quality outside the resolution classes (unknown, TS, CAM) or a guessed one changes nothing; `filename` keeps the site's release name unchanged.
 
 Stremio's binge watching plays the first stream of the next episode whose `bingeGroup` equals the current stream's exactly.
 Scavengarr sets it to `scavengarr|<language code>` (`scavengarr|de`, `scavengarr|de-sub`, `scavengarr|unknown`), so a German dub continues in German with the next episode's best stream, whatever its hoster or quality.

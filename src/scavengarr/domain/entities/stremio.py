@@ -61,11 +61,16 @@ class StreamLanguage:
 
 @dataclass(frozen=True)
 class RankedStream:
-    """A single stream link with quality and language metadata for ranking."""
+    """A single stream link with quality and language metadata for ranking.
+
+    ``quality_guessed``: a word that names no resolution ("HD", "WEBRIP")
+    gave the quality, which ranks the stream but shows no label.
+    """
 
     url: str
     hoster: str
     quality: StreamQuality = StreamQuality.UNKNOWN
+    quality_guessed: bool = False
     language: StreamLanguage | None = None
     size: str | None = None
     release_name: str | None = None

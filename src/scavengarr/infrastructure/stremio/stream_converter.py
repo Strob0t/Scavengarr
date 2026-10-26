@@ -112,7 +112,7 @@ def _convert_single_result(
             if not url:
                 continue
 
-            quality = parse_quality(
+            parsed = parse_quality(
                 release_name=result.release_name,
                 quality_badge=result.metadata.get("quality"),
                 link_quality=link.get("quality"),
@@ -129,7 +129,8 @@ def _convert_single_result(
                 RankedStream(
                     url=url,
                     hoster=hoster,
-                    quality=quality,
+                    quality=parsed.quality,
+                    quality_guessed=parsed.guessed,
                     language=language,
                     size=size,
                     release_name=result.release_name,
@@ -138,7 +139,7 @@ def _convert_single_result(
                 )
             )
     elif result.download_link:
-        quality = parse_quality(
+        parsed = parse_quality(
             release_name=result.release_name,
             quality_badge=result.metadata.get("quality"),
             link_quality=None,
@@ -154,7 +155,8 @@ def _convert_single_result(
             RankedStream(
                 url=result.download_link,
                 hoster=hoster,
-                quality=quality,
+                quality=parsed.quality,
+                quality_guessed=parsed.guessed,
                 language=language,
                 size=result.size,
                 release_name=result.release_name,
