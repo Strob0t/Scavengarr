@@ -10,6 +10,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 - A badge that names its resolution among other words lost it: the badge table knew whole values only ("HD", "1080P"), so link badges such as "HD-1080p" and "1080p/5.1" left the stream without a quality and its name without a label. A badge now names its quality as a whole in any spelling ("Full HD", "Blu-Ray"), else by its best part that names one ("HD-1080p" is 1080p, "4K/UHD" 4K; `parse_quality()` of `infrastructure/stremio/release_parser.py`).
 - A word that names no resolution (`HD`, `WEBRIP`, `WEB-DL`, `BDRIP`, `BluRay`) showed as one (`HD` as "720p"). It still ranks the stream as before, but the name shows no label (`RankedStream.quality_guessed`) and the release name keeps its token until a measurement settles the guess; inside a composite badge ("HD/Deutsch") such a word counts for nothing.
+- moflix names a mirror's quality only in its hoster label ("VEEV (1080p)"), whose bracket goes when the hoster name is normalised: the link carries the quality itself now (`test_moflix_plugin.py`, and `test_real_pages.py`: the captured mirrors convert to 1080p).
 - Tests: `test_release_parser.py` (composite badges, guessed words, a resolution token over a guessed word, a composite of a guessed word only), `test_stream_converter.py` (the guess reaches the stream), `test_stremio_stream_builder.py` (a guess shows no label and keeps the release name, a measurement settles it).
 
 ### Changed: The Rate Limit's Unused Timeout Feedback Is Gone

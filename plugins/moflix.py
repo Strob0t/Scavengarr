@@ -195,8 +195,12 @@ class MoflixPlugin(HttpxPluginBase):
             if src and not _is_premium(video):
                 hoster = video.get("name", "Mirror")
                 quality = video.get("quality", "")
-                label = f"{hoster} ({quality})" if quality else hoster
-                download_links.append({"hoster": label, "link": src})
+                link = {"hoster": hoster, "link": src}
+                if quality:
+                    # The hoster name drops the bracket when it is
+                    # normalised, so the link carries the quality itself
+                    link.update(hoster=f"{hoster} ({quality})", quality=quality)
+                download_links.append(link)
         if not download_links:
             self._log.debug("moflix_no_videos", title_id=title_id)
             return None

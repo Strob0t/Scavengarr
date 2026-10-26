@@ -219,6 +219,25 @@ class TestBuildSearchResult:
         assert sr.download_links[0]["link"] == "https://doods.to/e/abc123"
         assert sr.download_links[1]["hoster"] == "Mirror 2 (1080p/5.1)"
 
+    def test_link_quality_from_the_video(self, moflix_mod):
+        """The video's quality goes to the link's quality too: the label's
+        bracket is gone once the hoster name is normalised."""
+        p = moflix_mod.MoflixPlugin()
+        p.base_url = "https://moflix-stream.xyz"
+        video = {**DETAIL_MOVIE_RESPONSE["title"]["videos"][0], "quality": None}
+        detail = {
+            **DETAIL_MOVIE_RESPONSE["title"],
+            "videos": [video, DETAIL_MOVIE_RESPONSE["title"]["videos"][1]],
+        }
+
+        sr = p._build_search_result(SEARCH_RESPONSE["results"][0], detail)
+
+        assert sr is not None
+        links = sr.download_links or []
+        assert "quality" not in links[0]
+        assert links[0]["hoster"] == "Mirror 1"
+        assert links[1]["quality"] == "1080p/5.1"
+
     def test_series_category(self, moflix_mod):
         p = moflix_mod.MoflixPlugin()
         p.base_url = "https://moflix-stream.xyz"

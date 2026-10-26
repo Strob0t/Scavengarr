@@ -26,13 +26,14 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import EpisodeRef, StreamQuality
 from scavengarr.infrastructure.plugins import devideosrc
 from scavengarr.infrastructure.plugins.episode_index import (
     EpisodeRow,
     SeasonPageParser,
     locate,
 )
+from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PAGES = _ROOT / "tests" / "fixtures" / "html"
@@ -1049,6 +1050,10 @@ class TestMoflix:
         ]
         assert results[0].metadata["imdb_id"] == "tt15398776"
         assert not other_titles.called
+        # Each mirror's quality is the site's own, kept past the hoster name
+        assert {s.quality for s in convert_search_results(results)} == {
+            StreamQuality.HD_1080P
+        }
 
 
 class TestFilmo:
