@@ -69,6 +69,7 @@ Application and infrastructure meet only in the domain's ports and types, and in
 - Resolved streams must not be cached with the search results: every request asks the hoster resolver registry, which caches the outcomes with lifetimes of their own.
 - The registry's outcomes, redirects, last lookups and open circuit breakers must outlive a restart, restored before the app reports ready.
 - Background searches and resolutions must end at shutdown, before the cache closes.
+- A proxied file must be resumed from the next byte after every interruption of its CDN while its response runs, with at most three attempts at one offset, and a file whose CDN resets an idle connection must go through the file proxy ([0017](decisions/0017-idle-reset-files-resumed.md)).
 - The plugins' long-term record is the evidence for keeping, disabling or removing a plugin whose site died: the maintainer decides from it, no threshold does.
 - A CrawlJob must carry only the links that passed validation (with `validate_download_links` on), in a deterministic order; grab-time links are stored as the plugin returns them.
 - CrawlJob ids must be random UUID4s.
@@ -106,5 +107,6 @@ Application and infrastructure meet only in the domain's ports and types, and in
 - [`docs/current/architecture.md`](../current/architecture.md): the module map, the request flows, the composition and the shutdown order.
 - [`docs/target/decisions/0001-dependency-rule.md`](decisions/0001-dependency-rule.md): the decision behind the rule.
 - [`docs/target/decisions/0016-in-process-stall-monitor.md`](decisions/0016-in-process-stall-monitor.md): the stall monitor in the process, its exit switch off.
+- [`docs/target/decisions/0017-idle-reset-files-resumed.md`](decisions/0017-idle-reset-files-resumed.md): idle-reset files through the file proxy, resumed after every interruption.
 - `src/scavengarr/interfaces/composition.py`: the composition root.
 - `AGENTS.md` §3 and §5: the agents' summary of these rules and the typing rules.

@@ -6,6 +6,10 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Decided: Files of CDNs That Reset Idle Connections Go Through the File Proxy
+
+- The VEEV CDN resets a connection that stops reading while the player pauses (10 of 10 pauses of 30 to 300 s), and Stremio's streaming server does not reconnect inside a response, so the playback lost its sound after a pause. A new connection with `Range` at the offset answered 206 in 0.25 to 1.3 s in 10 of 10 cases. Decision [0017](docs/target/decisions/0017-idle-reset-files-resumed.md): a resolver flag `idle_reset` sends such a file through the file proxy, which resumes every proxied file after each interruption; the change is planned in `openspec/changes/resume-idle-reset-files/` (backlog row 168).
+
 ### Changed: An MP4 File's Header Measures Its Quality
 
 - The playback check measured a quality for HLS streams only (the largest `RESOLUTION` of a master playlist); a file got its size but no quality, so a stream whose site named none showed no label, whatever it played. It now reads an MP4 file's track headers (`tkhd`; `infrastructure/hoster_resolvers/_mp4.py`) and ranks and labels the stream by them like a playlist's resolution: from the 4 KiB it fetches anyway when the file's `moov` box comes first, else from one more 4 KiB `Range` read where the `moov` starts behind the media data, within the check's 6 s and only for a file that starts with `ftyp` and whose total the first answer named. That read failing logs `playback_check_moov_unread` and measures nothing; the stream stays playable.

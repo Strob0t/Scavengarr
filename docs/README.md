@@ -37,6 +37,7 @@ The `how-to` guides work with the `current` documents and look up the `reference
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
 Open in the HTTP stack: tests for the rate limiter's per-domain grouping and for the wiring of its settings, and two loose notes of the configuration reference.
 Open in the observability: the two weeks of readings of the stall watchdog ([`add-stall-watchdog`](../openspec/changes/add-stall-watchdog/proposal.md), group 4), and with them the maintainer's choice of its exit switch, off until then.
+Open in the Stremio addon: VEEV through the file proxy, which resumes a proxied file after every interruption of its CDN ([`resume-idle-reset-files`](../openspec/changes/resume-idle-reset-files/proposal.md)).
 Open in the hoster resolvers: the playback check's MP4 measurement picks its track without the track's handler, and some of its edge cases lack a test.
 The plugins and the browser have no open row; their ideas wait in the backlog for their trigger.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
@@ -120,6 +121,7 @@ One line per feature, with the document that describes it.
 | [`target/decisions/0014-resolver-state-snapshot.md`](target/decisions/0014-resolver-state-snapshot.md) | target | The resolver registry's state outlives a restart as one snapshot. |
 | [`target/decisions/0015-privacy-rule.md`](target/decisions/0015-privacy-rule.md) | target | Docs and commit texts tell nothing about what the maintainer watches. |
 | [`target/decisions/0016-in-process-stall-monitor.md`](target/decisions/0016-in-process-stall-monitor.md) | target | A thread in the process names a stalled loop, its exit switch off. |
+| [`target/decisions/0017-idle-reset-files-resumed.md`](target/decisions/0017-idle-reset-files-resumed.md) | target | Files of CDNs that reset idle connections go through the file proxy, which resumes them. |
 | [`target/decisions/_template.md`](target/decisions/_template.md) | target | The template of a decision record. |
 
 ## Features
