@@ -40,6 +40,8 @@ prometheus-client adds `process_*` (the Python process), `python_gc_*` and `pyth
 | `scavengarr_container_cpu_seconds_total` | counter |  |  | CPU time of the container (cgroup v2), Chromium included |
 | `scavengarr_container_memory_bytes` | gauge |  |  | Memory of the container (cgroup v2), page cache included |
 | `scavengarr_event_loop_lag_seconds` | histogram |  | 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120 | How late a 0.5 s event-loop timer fired |
+| `scavengarr_file_resume_seconds` | histogram | `hoster`, `reason` | 0.25, 0.5, 1, 2, 4, 7, 15, 33 | Resumes of proxied files: duration |
+| `scavengarr_file_resume_total` | counter | `hoster`, `reason`, `outcome` |  | Resumes of proxied files by outcome |
 | `scavengarr_hls_proxy_bytes_total` | counter | `kind` |  | Bytes the HLS proxy sent |
 | `scavengarr_hls_proxy_seconds` | histogram | `kind` | 0.05, 0.1, 0.25, 0.5, 1, 2, 4 | HLS proxy requests until the answer starts: duration |
 | `scavengarr_hls_proxy_total` | counter | `kind`, `outcome` |  | HLS proxy requests until the answer starts by outcome |
@@ -117,6 +119,8 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 - `hls_proxy` `kind`: `master` (the stream's playlist), `playlist`, `segment` or `file` (an address-bound direct file through the file proxy, mostly answered `206`).
 - Its outcome is the answer's HTTP status, and its duration ends when the answer starts (the time to the first byte for the player).
 - `hls_proxy_bytes_total` counts the bytes sent, an aborted transfer's bytes included.
+- `file_resume` times a proxied file's resume after its CDN interrupted it, from the interruption to the resumed answer: `hoster` is the link's resolver name (`other` for a name no resolver has), `reason` is `reset` (a transport error), `eof` (an end short of the promised length) or `stall` (no byte for `stremio.file_stall_timeout_seconds` once the body flowed).
+- Its outcomes: `resumed`, and `gave_up` (three attempts at one offset failed, and the player's connection aborted).
 - `hls_readahead` records the fetches of segments ahead of the player: `ok`, `failed`, `too_large` (over 16 MiB, left to the player), `throttled` (the CDN answered 429) or `cut` (dropped while in flight).
 - It also counts the answers: `hit` (served from memory), `miss` (fetched on demand, also a segment no playback lists: an init segment, a key) and `dropped` (fetched ahead, never asked for, or swept 60 s after the playback's last request).
 - `hit` over `hit` plus `miss` says how often the read-ahead was there in time.

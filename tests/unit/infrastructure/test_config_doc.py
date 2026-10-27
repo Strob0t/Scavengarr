@@ -39,8 +39,9 @@ def test_every_setting_has_a_row() -> None:
     assert "SCAVENGARR_VALIDATION_MAX_CONCURRENT" in names
     assert "SCAVENGARR_LOGGING_LEVEL" in names
     # The section and top-level keys the model has; four fewer since the
-    # unread stremio settings went (2026-10-10), two more with the watchdog
-    assert len(names) == 79
+    # unread stremio settings went (2026-10-10), two more with the watchdog,
+    # one more with the file proxy's stall timeout
+    assert len(names) == 80
     assert "SCAVENGARR_WATCHDOG_STALL_SECONDS" in names
 
 

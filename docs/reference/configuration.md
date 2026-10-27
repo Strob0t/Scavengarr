@@ -159,6 +159,7 @@ Unprefixed `CACHE_*` variables are not read.
 | `SCAVENGARR_STREMIO_AUTO_TUNE_ALL` | bool | `true` | Auto-tune ALL concurrency parameters (plugins, Playwright, probes, validation) based on detected container/host resources via cgroups. Supersedes max_concurrent_plugins_auto. |
 | `SCAVENGARR_STREMIO_DEFAULT_LANGUAGE_SCORE` | int | `100` | Score for unknown/undetected languages. |
 | `SCAVENGARR_STREMIO_EXPLORATION_PROBABILITY` | float | `0.15` | Chance to include a random mid-score plugin. |
+| `SCAVENGARR_STREMIO_FILE_STALL_TIMEOUT_SECONDS` | float | `10.0` | Seconds a file played through Scavengarr's proxy may send no byte once it flowed before the proxy asks its CDN again from the next byte; also the wait for a resumed answer's first byte. It must stay well under the 60 s a player's proxy waits for a byte: three attempts and their waits of 0, 1 and 2 s end within 33 s at 10 s. |
 | `SCAVENGARR_STREMIO_HOSTER_SCORES` | JSON object | `{"supervideo": 5, "voe": 4, "filemoon": 3, "streamtape": 2, "doodstream": 1}` | Hoster reliability bonus (tie-breaker). |
 | `SCAVENGARR_STREMIO_LANGUAGE_SCORES` | JSON object | `{"de": 1000, "de-sub": 500, "en-sub": 200, "en": 150}` | Language ranking scores (higher = preferred). |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLAYWRIGHT` | int | `5` | Upper bound for parallel Playwright plugin searches on the shared browser. The actual concurrency is dynamically capped at min(pw_plugin_count, this value) per request. |

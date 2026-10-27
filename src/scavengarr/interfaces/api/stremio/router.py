@@ -26,6 +26,8 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.stremio.hls_proxy import (
+    FileResume,
+    Refresh,
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
@@ -670,7 +672,8 @@ async def _proxy_file(
 
     When the CDN refuses the file (403, 404, 410: an expired URL), it is
     fetched once more from the link ``StremioLinks.after_refusal`` gives,
-    then 502, as for the stream's playlist.
+    then 502, as for the stream's playlist. A body the CDN interrupts goes
+    on by ``_file_resume``'s rules.
     """
     link = await _file_link(links, stream_id)
     if isinstance(link, JSONResponse):
@@ -685,6 +688,7 @@ async def _proxy_file(
             player=request.headers,
             head=head,
             on_sent=on_sent,
+            resume=_file_resume(state, telemetry, links, link),
         )
     except httpx.HTTPStatusError as exc:
         fresh = await links.after_refusal(link, exc.response.status_code)
@@ -698,6 +702,7 @@ async def _proxy_file(
                 player=request.headers,
                 head=head,
                 on_sent=on_sent,
+                resume=_file_resume(state, telemetry, links, fresh),
             )
         except httpx.HTTPError as again:
             return _cdn_error_response(stream_id, fresh.video_url, again)
@@ -708,6 +713,43 @@ async def _proxy_file(
         status_code=answer.status,
         headers={**_CORS_HEADERS, **answer.headers},
     )
+
+
+def _file_resume(
+    state: AppState,
+    telemetry: TelemetryPort,
+    links: StremioLinks,
+    link: CachedStreamLink,
+) -> FileResume:
+    """How a file of *link* goes on after its CDN interrupts it: the stall
+    timeout of ``stremio.file_stall_timeout_seconds``, a refused resume
+    resolved again through ``StremioLinks.after_refusal``, and the resumes
+    counted under the link's hoster when it names a resolver (``other``
+    otherwise: no free text in a label)."""
+    registry = getattr(state, "hoster_resolver_registry", None)
+    known = registry is not None and link.hoster in registry.supported_hosters
+    return FileResume(
+        stall_timeout=state.config.stremio.file_stall_timeout_seconds,
+        refresh=_refresher(links, link),
+        telemetry=telemetry,
+        hoster=link.hoster if known else "other",
+    )
+
+
+def _refresher(links: StremioLinks, link: CachedStreamLink) -> Refresh:
+    """A refused resume's new resolution of *link*: the new video URL and
+    its headers, ``None`` when the hoster gives no file."""
+    current = link
+
+    async def refresh(status: int) -> tuple[str, dict[str, str]] | None:
+        nonlocal current
+        fresh = await links.after_refusal(current, status)
+        if fresh is None or fresh.is_hls or not fresh.video_url:
+            return None
+        current = fresh
+        return fresh.video_url, _cdn_headers(fresh)
+
+    return refresh
 
 
 async def _stored_link(

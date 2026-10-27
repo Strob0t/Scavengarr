@@ -122,6 +122,15 @@ _STAGES: dict[StageName, _StageSpec] = {
         "HLS segments fetched ahead of the player",
         traced=False,
     ),
+    # A proxied file's resume after its CDN interrupted it, by hoster (a
+    # resolver name, else ``other``) and reason (reset, eof, stall); its
+    # outcome resumed or gave_up. Three attempts end within 33 s
+    "file_resume": _StageSpec(
+        ("hoster", "reason"),
+        (0.25, 0.5, 1.0, 2.0, 4.0, 7.0, 15.0, 33.0),
+        "Resumes of proxied files",
+        traced=False,
+    ),
     # The stealth browser's pages: the wait for one and the work on it, by
     # what the page is for (play, plugin, capture, background)
     "browser_page_wait": _StageSpec(

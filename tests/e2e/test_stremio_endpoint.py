@@ -18,6 +18,7 @@ Endpoints covered:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import replace
@@ -2242,6 +2243,61 @@ class TestProxyFileEndpoint:
         app.state.hoster_resolver_registry.resolve.assert_awaited_once_with(
             link.hoster_url, link.hoster, refresh=True
         )
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_the_file_resumes_by_the_settings_rules(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        mock_stream.return_value = _file_answer()
+        app = self._app(_make_file_link())
+        app.state.config.stremio = StremioConfig(file_stall_timeout_seconds=7.0)
+        app.state.hoster_resolver_registry.supported_hosters = ["mixdrop", "veev"]
+
+        resp = TestClient(app).get(self._FILE)
+
+        assert resp.status_code == 200
+        resume = mock_stream.await_args.kwargs["resume"]
+        assert resume.stall_timeout == 7.0
+        assert resume.hoster == "mixdrop"
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_hoster_no_resolver_names_is_counted_as_other(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """A label carries no free text: the link's hoster comes from a
+        plugin's page."""
+        mock_stream.return_value = _file_answer()
+        app = self._app(_make_file_link())
+        app.state.config.stremio = StremioConfig()
+        app.state.hoster_resolver_registry.supported_hosters = ["veev"]
+
+        TestClient(app).get(self._FILE)
+
+        assert mock_stream.await_args.kwargs["resume"].hoster == "other"
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_a_refused_resume_resolves_the_link_again(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        mock_stream.return_value = _file_answer()
+        link = _make_file_link()
+        new = ResolvedStream(
+            video_url="https://s-delivery.mxdcontent.example/v/abc.mp4?s=new",
+            headers={"Referer": "https://mixdrop.ag/", "User-Agent": "bound"},
+            address_bound=True,
+        )
+        app = self._app(link, new)
+        app.state.config.stremio = StremioConfig()
+        TestClient(app).get(self._FILE)
+        refresh = mock_stream.await_args.kwargs["resume"].refresh
+
+        renewed = asyncio.run(refresh(403))
+
+        assert renewed == (new.video_url, new.headers)
+        app.state.hoster_resolver_registry.resolve.assert_awaited_once_with(
+            link.hoster_url, link.hoster, refresh=True
+        )
+        assert asyncio.run(refresh(500)) is None
 
     @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
     def test_a_refusal_that_persists_is_502(self, mock_stream: AsyncMock) -> None:

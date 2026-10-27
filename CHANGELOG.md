@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: A Proxied File Goes On After Every Interruption of Its CDN
+
+- The file proxy resumed a file once per answer; a CDN that resets a connection the player left idle (a pause with a full buffer) cut every later pause. It now resumes after every interruption for as long as the answer runs: a reset or an end short of the promised length at once, and a body that sends no byte for `stremio.file_stall_timeout_seconds` (new setting, default 10 s, 1 to 30) once it flowed. The opening answer still waits up to 60 s for its first byte.
+- A resume asks for the rest of the span from the next byte with the transfer's headers and goes on only with a 206 from that byte; at one offset at most three attempts run, after waits of 0, 1 and 2 s, and the count starts again once bytes flow. A refused resume (403, 404, 410) resolves the hoster URL again once per offset. After the third failed attempt the player's connection aborts (`FileCut`), as before after the one resume. HLS segments keep their one resume.
+- New metrics `scavengarr_file_resume_total{hoster,reason,outcome}` and `scavengarr_file_resume_seconds{hoster,reason}` (`reason`: `reset`, `eof`, `stall`; `outcome`: `resumed`, `gave_up`); `hls_proxy_file_resumed` names the reason and the attempt, `hls_proxy_file_cut` the resumes.
+- Tests: `test_hls_proxy.py` (a local CDN that resets, ends early and stalls, the player getting exactly the file's bytes; resumes per interruption, three attempts with their waits, the count after bytes flow, a CDN that resets every new connection, one new resolution per refusal, the stall timeout for resumes and not for the opening answer's first byte), `test_stremio_endpoint.py` (the setting, the hoster label, the new resolution through the stored links), `test_stremio_config.py` (the setting's bounds).
+
 ### Decided: Files of CDNs That Reset Idle Connections Go Through the File Proxy
 
 - The VEEV CDN resets a connection that stops reading while the player pauses (10 of 10 pauses of 30 to 300 s), and Stremio's streaming server does not reconnect inside a response, so the playback lost its sound after a pause. A new connection with `Range` at the offset answered 206 in 0.25 to 1.3 s in 10 of 10 cases. Decision [0017](docs/target/decisions/0017-idle-reset-files-resumed.md): a resolver flag `idle_reset` sends such a file through the file proxy, which resumes every proxied file after each interruption; the change is planned in `openspec/changes/resume-idle-reset-files/` (backlog row 168).

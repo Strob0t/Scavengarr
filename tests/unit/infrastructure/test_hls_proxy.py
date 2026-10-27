@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import gc
 import gzip
+import socket
+import struct
 import time
 from collections.abc import AsyncIterator
 
@@ -17,6 +19,7 @@ from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.infrastructure.stremio.hls_proxy import (
     FileCut,
+    FileResume,
     SegmentCut,
     build_cdn_url,
     cdn_base_from_url,
@@ -26,6 +29,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     stream_file,
     stream_hls_segment,
 )
+from scavengarr.infrastructure.telemetry.metrics import Telemetry
 
 
 @pytest.fixture(autouse=True)
@@ -742,13 +746,17 @@ class TestStreamFile:
 
 
 class TestFileCut:
-    """A body the CDN ends before the promised length is resumed once from
-    the next byte; uvicorn refused the short answer before ("Response
-    content shorter than Content-Length", 9 times in 48 h of production,
+    """A body the CDN ends before the promised length is resumed from the
+    next byte; uvicorn refused the short answer before ("Response content
+    shorter than Content-Length", 9 times in 48 h of production,
     2026-10-07) and the player saw the file end early."""
 
     _URL = "https://s-delivery.mxdcontent.example/v/abc.mp4?s=tok"
     _PIECE = 65536  # the first piece goes out before the cut
+
+    @pytest.fixture(autouse=True)
+    def _no_waits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hls_proxy, "_FILE_RESUME_WAITS", (0.0, 0.0, 0.0))
 
     @staticmethod
     def _cdn(
@@ -887,19 +895,24 @@ class TestFileCut:
     async def test_a_resume_the_cdn_does_not_honour_cuts_the_transfer(
         self, status: int, headers: dict[str, str]
     ) -> None:
+        """Three attempts at the offset, each answered otherwise than with
+        the next byte, end the transfer."""
         answers = [
             httpx.Response(
                 200,
                 headers={"Content-Length": "100000"},
                 stream=_CutChunks([b"a" * self._PIECE]),
             ),
-            httpx.Response(status, headers=headers, stream=_Chunks([b"b" * 100000])),
+            *(
+                httpx.Response(status, headers=headers, stream=_Chunks([b"b" * 100000]))
+                for _ in range(3)
+            ),
         ]
 
         with pytest.raises(FileCut):
             await self._play(answers)
 
-    async def test_a_resume_that_ends_short_cuts_the_transfer(self) -> None:
+    async def test_a_resume_that_ends_short_is_resumed_again(self) -> None:
         answers = [
             httpx.Response(
                 200,
@@ -911,6 +924,37 @@ class TestFileCut:
                 headers={"Content-Range": "bytes 65536-99999/100000"},
                 stream=_Chunks([b"b" * 1000]),
             ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 66536-99999/100000"},
+                stream=_Chunks([b"c" * 33464]),
+            ),
+        ]
+
+        body, seen, sent, logs = await self._play(answers)
+
+        assert body == b"a" * self._PIECE + b"b" * 1000 + b"c" * 33464
+        assert sent == [100000]
+        assert [r.headers["Range"] for r in seen[1:]] == [
+            "bytes=65536-99999",
+            "bytes=66536-99999",
+        ]
+        resumed = [log for log in logs if log["event"] == "hls_proxy_file_resumed"]
+        assert [log["reason"] for log in resumed] == ["reset", "eof"]
+
+    async def test_a_cut_after_the_last_attempt_is_logged_once(self) -> None:
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": "100000"},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(
+                206,
+                headers={"Content-Range": "bytes 65536-99999/100000"},
+                stream=_Chunks([b"b" * 1000]),
+            ),
+            *(httpx.Response(500) for _ in range(3)),
         ]
         seen: list[httpx.Request] = []
         sent: list[int] = []
@@ -925,13 +969,14 @@ class TestFileCut:
 
         assert received == self._PIECE + 1000
         assert sent == [self._PIECE + 1000]
-        assert len(seen) == 2
+        assert len(seen) == 5
         cut = [log for log in logs if log["event"] == "hls_proxy_file_cut"]
         assert len(cut) == 1
         assert cut[0]["cdn"] == "mxdcontent"
         assert cut[0]["sent"] == self._PIECE + 1000
         assert cut[0]["expected"] == 100000
         assert cut[0]["resumed"] is True
+        assert cut[0]["resumes"] == 1
 
     async def test_a_chunked_answer_passes_no_content_length(self) -> None:
         """With Transfer-Encoding the CDN's Content-Length is not the body's
@@ -970,8 +1015,11 @@ class TestFileCut:
         with pytest.raises(FileCut):
             await self._play(answers)
 
-    async def test_a_file_reads_with_its_own_60_s_bound(self) -> None:
-        """A file's read timeout is not the segments' stall bound."""
+    async def test_the_opening_request_reads_60_s_and_a_resume_the_stall(
+        self,
+    ) -> None:
+        """The opening request's first byte can take about 30 s (Vinovo); a
+        resume reads with the stall timeout, the segments' bound neither."""
         answers = [
             httpx.Response(
                 200,
@@ -987,7 +1035,7 @@ class TestFileCut:
 
         _, seen, _, _ = await self._play(answers)
 
-        assert [r.extensions["timeout"]["read"] for r in seen] == [60.0, 60.0]
+        assert [r.extensions["timeout"]["read"] for r in seen] == [60.0, 10.0]
 
     async def test_an_empty_answer_is_not_resumed(self) -> None:
         answers = [
@@ -1019,6 +1067,387 @@ class TestFileCut:
 
         assert body == packed
         assert sent == [len(packed)]
+
+
+def _file_bytes(size: int) -> bytes:
+    """A file whose bytes differ from their neighbours' offsets: a byte
+    doubled or skipped at a resume changes it."""
+    return bytes((i * 31 + (i >> 8) * 7 + (i >> 16)) & 0xFF for i in range(size))
+
+
+class _FileServer:
+    """A local CDN for a file of *size* bytes that answers ranges; each
+    connection follows the next of *plans*: ``("rst", n)`` resets the
+    connection after n bytes, ``("fin", n)`` closes it after n bytes short
+    of the promised length, ``("stall", n)`` sends nothing more after n
+    bytes and keeps the connection open, ``("slow", n)`` waits n ms before
+    the first byte, ``("ok", 0)`` serves the whole span. The ranges asked
+    for are kept (``None``: no range)."""
+
+    def __init__(self, size: int, plans: list[tuple[str, int]]) -> None:
+        self._body = _file_bytes(size)
+        self._plans = plans
+        self.ranges: list[str | None] = []
+        self.url = ""
+        self._tasks: set[asyncio.Task[object]] = set()
+        self._server: asyncio.Server | None = None
+
+    async def __aenter__(self) -> _FileServer:
+        self._server = await asyncio.start_server(self._serve, "127.0.0.1", 0)
+        port = self._server.sockets[0].getsockname()[1]
+        self.url = f"http://127.0.0.1:{port}/v/file.mp4"
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        assert self._server is not None
+        self._server.close()
+        await self._server.wait_closed()
+
+    async def _serve(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        self._tasks.add(task)
+        request = (await reader.readuntil(b"\r\n\r\n")).decode()
+        asked = [
+            line.split("=", 1)[1].split("-", 1)[0]
+            for line in request.split("\r\n")
+            if line.lower().startswith("range:")
+        ]
+        how, count = self._plans[min(len(self.ranges), len(self._plans) - 1)]
+        self.ranges.append(f"bytes={asked[0]}-" if asked else None)
+        size = len(self._body)
+        first = int(asked[0]) if asked else 0
+        if asked:
+            head = (
+                b"HTTP/1.1 206 Partial Content\r\n"
+                b"Content-Range: bytes %d-%d/%d\r\n" % (first, size - 1, size)
+            )
+        else:
+            head = b"HTTP/1.1 200 OK\r\n"
+        writer.write(
+            head
+            + b"Content-Type: video/mp4\r\nContent-Length: %d\r\n\r\n" % (size - first)
+        )
+        await writer.drain()
+        if how == "slow":
+            await asyncio.sleep(count / 1000)
+        end = size if how in ("ok", "slow") else min(size, first + count)
+        writer.write(self._body[first:end])
+        await writer.drain()
+        if how == "rst":
+            sock = writer.get_extra_info("socket")
+            sock.setsockopt(
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+            )
+            writer.transport.abort()
+            return
+        if how == "stall":
+            await asyncio.sleep(30)
+        writer.close()
+
+
+class TestFileResume:
+    """A proxied file goes on from the next byte after every interruption of
+    its CDN for as long as the answer runs: the VEEV CDN resets a connection
+    that stops reading (10 of 10 pauses of 30 to 300 s), and a new range
+    answers in 0.25 to 1.3 s (decision 0017)."""
+
+    _URL = "https://s-eri-1.veevcdn.example/v/abc.mp4?t=tok"
+    _PIECE = 65536
+
+    @pytest.fixture(autouse=True)
+    def _no_waits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hls_proxy, "_FILE_RESUME_WAITS", (0.0, 0.0, 0.0))
+
+    @staticmethod
+    def _resumes(telemetry: Telemetry, reason: str, outcome: str) -> float:
+        value = telemetry.registry.get_sample_value(
+            "scavengarr_file_resume_total",
+            {"hoster": "veev", "reason": reason, "outcome": outcome},
+        )
+        return value or 0.0
+
+    async def _play(
+        self,
+        answers: list[httpx.Response],
+        resume: FileResume | None = None,
+    ) -> tuple[bytes, list[httpx.Request], list[dict[str, object]], Exception | None]:
+        """The body through the given CDN answers (as far as it went), the
+        requests the CDN saw, the log lines and the error the body raised."""
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return answers[len(seen) - 1]
+
+        received: list[bytes] = []
+        error: Exception | None = None
+        with structlog.testing.capture_logs() as logs:
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(handle)
+            ) as client:
+                answer = await stream_file(
+                    client,
+                    self._URL,
+                    {"Referer": "https://veev.example/", "User-Agent": "bound"},
+                    resume=resume,
+                )
+                try:
+                    async for chunk in answer.chunks:
+                        received.append(chunk)
+                except FileCut as exc:
+                    error = exc
+        return b"".join(received), seen, logs, error
+
+    def _cut(
+        self, first: int, total: int, stream: httpx.AsyncByteStream
+    ) -> httpx.Response:
+        return httpx.Response(
+            206,
+            headers={"Content-Range": f"bytes {first}-{total - 1}/{total}"},
+            stream=stream,
+        )
+
+    async def test_a_reset_an_early_end_and_a_stall_go_on_byte_for_byte(self) -> None:
+        """Against a real socket: each interruption is resumed from the next
+        byte, and the player gets exactly the file."""
+        size = 600_000
+        telemetry = Telemetry()
+        plans = [("rst", 150_000), ("fin", 150_000), ("stall", 150_000), ("ok", 0)]
+        async with _FileServer(size, plans) as server:
+            async with httpx.AsyncClient(timeout=10) as client:
+                answer = await stream_file(
+                    client,
+                    server.url,
+                    {},
+                    resume=FileResume(
+                        stall_timeout=0.3, telemetry=telemetry, hoster="veev"
+                    ),
+                )
+                body = b"".join([chunk async for chunk in answer.chunks])
+
+        assert answer.status == 200
+        assert body == _file_bytes(size)
+        assert server.ranges[0] is None
+        assert len(server.ranges) == 4
+        starts = [int(str(r).split("=")[1].rstrip("-")) for r in server.ranges[1:]]
+        assert starts == sorted(set(starts))
+        for reason in ("reset", "eof", "stall"):
+            assert self._resumes(telemetry, reason, "resumed") == 1
+
+    async def test_the_opening_answers_first_byte_is_not_bound_by_the_stall(
+        self,
+    ) -> None:
+        size = 200_000
+        async with _FileServer(size, [("slow", 600)]) as server:
+            async with httpx.AsyncClient(timeout=10) as client:
+                answer = await stream_file(
+                    client, server.url, {}, resume=FileResume(stall_timeout=0.3)
+                )
+                body = b"".join([chunk async for chunk in answer.chunks])
+
+        assert body == _file_bytes(size)
+        assert server.ranges == [None]
+
+    async def test_every_interruption_of_one_answer_is_resumed(self) -> None:
+        total = 4 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            self._cut(self._PIECE, total, _CutChunks([b"b" * self._PIECE])),
+            self._cut(2 * self._PIECE, total, _Chunks([b"c" * self._PIECE])),
+            self._cut(3 * self._PIECE, total, _Chunks([b"d" * self._PIECE])),
+        ]
+
+        body, seen, logs, error = await self._play(answers)
+
+        assert error is None
+        assert (
+            body
+            == b"a" * self._PIECE
+            + b"b" * self._PIECE
+            + b"c" * self._PIECE
+            + b"d" * self._PIECE
+        )
+        assert [r.headers["Range"] for r in seen[1:]] == [
+            f"bytes={self._PIECE}-{total - 1}",
+            f"bytes={2 * self._PIECE}-{total - 1}",
+            f"bytes={3 * self._PIECE}-{total - 1}",
+        ]
+        resumed = [log for log in logs if log["event"] == "hls_proxy_file_resumed"]
+        assert [log["reason"] for log in resumed] == ["reset", "reset", "eof"]
+        assert [log["attempt"] for log in resumed] == [1, 1, 1]
+
+    async def test_every_request_keeps_the_bound_headers(self) -> None:
+        total = 2 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            self._cut(self._PIECE, total, _Chunks([b"b" * self._PIECE])),
+        ]
+
+        _, seen, _, _ = await self._play(answers)
+
+        assert [r.headers["User-Agent"] for r in seen] == ["bound", "bound"]
+        assert [r.headers["Referer"] for r in seen] == ["https://veev.example/"] * 2
+        assert seen[1].headers["Accept-Encoding"] == "identity"
+
+    async def test_three_failed_attempts_cut_the_file_after_waits_of_0_1_2(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hls_proxy, "_FILE_RESUME_WAITS", (0.0, 1.0, 2.0))
+        waits: list[float] = []
+        real_sleep = asyncio.sleep
+
+        async def _sleep(delay: float, *args: object, **kwargs: object) -> None:
+            if delay:
+                waits.append(delay)
+            await real_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", _sleep)
+        telemetry = Telemetry()
+        total = 2 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            *(httpx.Response(500) for _ in range(3)),
+        ]
+
+        body, seen, logs, error = await self._play(
+            answers, FileResume(telemetry=telemetry, hoster="veev")
+        )
+
+        assert isinstance(error, FileCut)
+        assert body == b"a" * self._PIECE
+        assert len(seen) == 4
+        assert waits == [1.0, 2.0]
+        assert self._resumes(telemetry, "reset", "gave_up") == 1
+        assert self._resumes(telemetry, "reset", "resumed") == 0
+        assert [log["event"] for log in logs].count("hls_proxy_file_cut") == 1
+
+    async def test_the_count_starts_again_once_bytes_flow(self) -> None:
+        """Two failed attempts, bytes, then two more failed ones: four
+        failures in all, never three at one offset."""
+        total = 3 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(500),
+            httpx.Response(500),
+            self._cut(self._PIECE, total, _CutChunks([b"b" * self._PIECE])),
+            httpx.Response(500),
+            httpx.Response(500),
+            self._cut(2 * self._PIECE, total, _Chunks([b"c" * self._PIECE])),
+        ]
+
+        body, seen, _, error = await self._play(answers)
+
+        assert error is None
+        assert body == b"a" * self._PIECE + b"b" * self._PIECE + b"c" * self._PIECE
+        assert len(seen) == 7
+
+    async def test_a_cdn_that_resets_every_new_connection_ends_after_three(
+        self,
+    ) -> None:
+        total = 2 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            *(self._cut(self._PIECE, total, _CutChunks([])) for _ in range(3)),
+        ]
+
+        _, seen, _, error = await self._play(answers)
+
+        assert isinstance(error, FileCut)
+        assert len(seen) == 4
+
+    async def test_a_refused_resume_resolves_again_once(self) -> None:
+        refused: list[int] = []
+
+        async def _refresh(status: int) -> tuple[str, dict[str, str]] | None:
+            refused.append(status)
+            return "https://s-eri-2.veevcdn.example/v/abc.mp4?t=new", {
+                "Referer": "https://veev.example/",
+                "User-Agent": "bound-again",
+            }
+
+        total = 2 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            httpx.Response(403),
+            self._cut(self._PIECE, total, _Chunks([b"b" * self._PIECE])),
+        ]
+
+        body, seen, _, error = await self._play(answers, FileResume(refresh=_refresh))
+
+        assert error is None
+        assert body == b"a" * self._PIECE + b"b" * self._PIECE
+        assert refused == [403]
+        assert seen[2].url.host == "s-eri-2.veevcdn.example"
+        assert seen[2].headers["User-Agent"] == "bound-again"
+        assert seen[2].headers["Range"] == f"bytes={self._PIECE}-{total - 1}"
+
+    async def test_a_second_refusal_at_the_offset_counts_as_an_attempt(self) -> None:
+        refused: list[int] = []
+
+        async def _refresh(status: int) -> tuple[str, dict[str, str]] | None:
+            refused.append(status)
+            return "https://s-eri-2.veevcdn.example/v/abc.mp4?t=new", {}
+
+        total = 2 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            *(httpx.Response(403) for _ in range(4)),
+        ]
+
+        _, seen, _, error = await self._play(answers, FileResume(refresh=_refresh))
+
+        assert isinstance(error, FileCut)
+        assert refused == [403]
+        assert len(seen) == 5
+
+    async def test_a_resume_reads_with_the_stall_timeout(self) -> None:
+        total = 2 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            self._cut(self._PIECE, total, _Chunks([b"b" * self._PIECE])),
+        ]
+
+        _, seen, _, _ = await self._play(answers, FileResume(stall_timeout=7.0))
+
+        assert [r.extensions["timeout"]["read"] for r in seen] == [60.0, 7.0]
 
 
 class TestSegmentCut:

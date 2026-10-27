@@ -21,6 +21,7 @@ StageName = Literal[
     "hoster_pass_keep",
     "hls_proxy",
     "hls_readahead",
+    "file_resume",
     "browser_page_wait",
     "browser_page",
 ]

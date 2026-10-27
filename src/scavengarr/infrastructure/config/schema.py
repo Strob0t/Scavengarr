@@ -387,6 +387,20 @@ class StremioConfig(BaseModel):
         ),
     )
 
+    file_stall_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=30.0,
+        description=(
+            "Seconds a file played through Scavengarr's proxy may send no "
+            "byte once it flowed before the proxy asks its CDN again from the "
+            "next byte; also the wait for a resumed answer's first byte. It "
+            "must stay well under the 60 s a player's proxy waits for a byte: "
+            "three attempts and their waits of 0, 1 and 2 s end within 33 s "
+            "at 10 s."
+        ),
+    )
+
     allow_hls_transcoding: bool = Field(
         default=False,
         description=(
