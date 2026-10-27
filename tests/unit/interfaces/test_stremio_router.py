@@ -703,8 +703,8 @@ class TestPlayEndpoint:
 
 
 class TestProxyFileLink:
-    """The file route serves address-bound files only; the other links keep
-    their routes."""
+    """The file route serves address-bound and idle-reset files only; the
+    other links keep their routes."""
 
     _FILE = "/api/v1/stremio/proxy/abc123/file"
 
@@ -715,11 +715,18 @@ class TestProxyFileLink:
         return TestClient(_make_app(stream_link_repo=repo))
 
     @pytest.mark.parametrize(
-        ("is_hls", "address_bound"),
-        [(True, True), (True, False), (False, False)],
-        ids=["hls", "hls-without-flag", "file-without-flag"],
+        ("is_hls", "address_bound", "idle_reset"),
+        [
+            (True, True, False),
+            (True, False, True),
+            (True, False, False),
+            (False, False, False),
+        ],
+        ids=["hls", "hls-idle-reset", "hls-without-flag", "file-without-flag"],
     )
-    def test_other_links_are_refused(self, is_hls: bool, address_bound: bool) -> None:
+    def test_other_links_are_refused(
+        self, is_hls: bool, address_bound: bool, idle_reset: bool
+    ) -> None:
         link = CachedStreamLink(
             stream_id="abc123",
             hoster_url="https://mixdrop.ag/e/test",
@@ -728,6 +735,7 @@ class TestProxyFileLink:
             is_hls=is_hls,
             resolved_at=time.time(),
             address_bound=address_bound,
+            idle_reset=idle_reset,
         )
 
         resp = self._client(link).get(self._FILE)

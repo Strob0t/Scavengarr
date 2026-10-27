@@ -266,7 +266,8 @@ class CachedStreamLink:
     redirects to ``video_url`` and the HLS proxy fetches it (with
     ``video_headers``) while it is fresh (``resolved_at``), else they
     resolve the hoster URL again. An address-bound file (``address_bound``)
-    is fetched by the proxy as well.
+    and a file whose CDN resets idle connections (``idle_reset``) are
+    fetched by the proxy as well.
     """
 
     stream_id: str
@@ -278,6 +279,7 @@ class CachedStreamLink:
     is_hls: bool = False  # whether the stream is HLS
     resolved_at: float = 0.0  # time.time() of video_url's resolution; 0: none
     address_bound: bool = False  # the file plays through /proxy/<id>/file
+    idle_reset: bool = False  # the file plays through /proxy/<id>/file
 
 
 @dataclass(frozen=True)
@@ -299,6 +301,9 @@ class ResolvedStream:
     # The CDN binds the URL to the address that resolved it (the resolver's
     # ``address_bound``): a player fetches the file through Scavengarr
     address_bound: bool = False
+    # The CDN resets a connection that stops reading (the resolver's
+    # ``idle_reset``): the file goes through Scavengarr, which resumes it
+    idle_reset: bool = False
 
 
 @dataclass(frozen=True)

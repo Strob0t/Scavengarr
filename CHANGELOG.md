@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Changed: VEEV Plays Through the File Proxy
+
+- A resolver flag `idle_reset` marks a hoster whose CDN resets a connection that stops reading; the registry stamps it on the resolved stream and the stored link keeps it, like `address_bound`. VEEV declares it (its CDN reset 10 of 10 connections left idle for 30 to 300 s), so its files now play through `/api/v1/stremio/proxy/<id>/file`, which resumes them after a pause, instead of a `/play` redirect to the CDN ([0017](docs/target/decisions/0017-idle-reset-files-resumed.md)).
+- The proxy fetches a VEEV file with the browser `User-Agent` it was resolved with; the production host now carries the bytes of every VEEV playback, and a restart cuts a running one (the player asks again with a range). A link stored before the flag keeps `/play` until its hoster resolves again.
+- Tests: `test_veev_resolver.py` (the flag, and a VEEV resolution through the registry built as a `/proxy/<id>/file` stream), `test_hoster_registry.py`, `test_stream_link_cache.py` (the flag round-trips, an old record reads false), `test_stremio_stream_builder.py`, `test_stremio_router.py`, `test_stremio_endpoint.py` (the file route serves an idle-reset file with its bound headers).
+
 ### Changed: A Proxied File Goes On After Every Interruption of Its CDN
 
 - The file proxy resumed a file once per answer; a CDN that resets a connection the player left idle (a pause with a full buffer) cut every later pause. It now resumes after every interruption for as long as the answer runs: a reset or an end short of the promised length at once, and a body that sends no byte for `stremio.file_stall_timeout_seconds` (new setting, default 10 s, 1 to 30) once it flowed. The opening answer still waits up to 60 s for its first byte.

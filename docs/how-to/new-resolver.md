@@ -76,6 +76,7 @@ Create `src/scavengarr/infrastructure/hoster_resolvers/<name>.py`:
 Mark what the hoster's CDN needs:
 
 - `address_bound = True` when the CDN plays the URL only for the address that resolved it, so the file goes through the file proxy.
+- `idle_reset = True` when the CDN resets a connection that stops reading (a player's pause), so the file goes through the file proxy, which resumes it.
 - `needs_playback_check = True` when the resolver has no check of its own, so the registry checks its streams with `stremio.verify_streams` off too.
 - `ClientBoundResolverPort` (`bound_headers`, `resolve_for_client()`) when the CDN binds the URL to headers the player sends itself.
 

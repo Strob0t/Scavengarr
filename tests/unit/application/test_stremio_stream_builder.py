@@ -582,10 +582,32 @@ class TestBuildStreamFromResolved:
         )
         assert result.url.endswith(f"/proxy/{self._SID}/{HLS_MASTER}")
 
+    def test_an_idle_reset_file_goes_through_the_file_proxy(self) -> None:
+        """VEEV's CDN resets a connection the paused player left idle
+        (decision 0017): the proxy fetches the file with its bound headers
+        and resumes it, so the player needs no headers."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.veev.example/v.mp4",
+                headers={
+                    "User-Agent": DEFAULT_USER_AGENT,
+                    "Referer": "https://veev.to/",
+                },
+                idle_reset=True,
+            )
+        )
+        assert result.url == (
+            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}/{FILE_NAME}"
+        )
+        assert result.behavior_hints == {
+            "bingeGroup": "scavengarr|de",
+            "notWebReady": True,
+        }
+
     def test_a_client_bound_file_stays_on_play(self) -> None:
-        """VEEV binds the URL to the player's headers, not to the address:
-        /play resolves it for the player, which then fetches the CDN
-        itself."""
+        """A file bound to the player's headers whose CDN keeps idle
+        connections: /play resolves it for the player, which then fetches
+        the CDN itself."""
         result = self._build(
             ResolvedStream(
                 video_url="https://cdn.veev.example/v.mp4",
@@ -661,6 +683,20 @@ class TestStreamLinks:
             build_cache_link(
                 "sid", ranked, ResolvedStream(video_url="https://cdn.example/a.mp4")
             ).address_bound
+            is False
+        )
+
+    def test_the_link_carries_the_idle_reset_flag(self) -> None:
+        ranked = RankedStream(url="https://veev.to/e/a", hoster="veev")
+        resolved = ResolvedStream(
+            video_url="https://cdn.veev.example/a.mp4", idle_reset=True
+        )
+
+        assert build_cache_link("sid", ranked, resolved).idle_reset is True
+        assert (
+            build_cache_link(
+                "sid", ranked, ResolvedStream(video_url="https://cdn.example/a.mp4")
+            ).idle_reset
             is False
         )
 

@@ -43,6 +43,7 @@ The documents use these terms in this sense; the fixed terms of the [documentati
 | Plugin timeout | The time a plugin's search may run before it is cut (`stremio.plugin_timeout_seconds`). | [Decision 0007](../target/decisions/0007-plugin-timeout-of-30-s.md) |
 | Read-ahead | The HLS proxy's `SegmentReadAhead` fetches three segments ahead of the player per playback. | [Stremio addon](../current/stremio-addon.md#hls-proxy), [decision 0005](../target/decisions/0005-read-ahead-of-three-segments.md) |
 | Address-bound stream | A stream whose CDN plays only for the address that resolved it (`address_bound = True`), so the addon sends it through its file proxy instead of `/play`. | [Hoster resolvers](../current/hoster-resolvers.md#bound-cdns), [decision 0006](../target/decisions/0006-direct-streams-proxied.md) |
+| Idle-reset stream | A file whose CDN resets a connection that stops reading (`idle_reset = True`), so the addon sends it through its file proxy, which resumes it after every interruption. | [Hoster resolvers](../current/hoster-resolvers.md#bound-cdns), [decision 0017](../target/decisions/0017-idle-reset-files-resumed.md) |
 | Client-bound stream | A stream whose CDN binds the URL to headers the player sends itself (`ClientBoundResolverPort`), so `/play` resolves it with each player's values. | [Hoster resolvers](../current/hoster-resolvers.md#bound-cdns) |
 
 ## Hosters and resolvers

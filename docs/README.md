@@ -75,7 +75,7 @@ One line per feature, with the document that describes it.
 | Stremio addon | The manifest, the catalogs and the streams answer IMDb and `kitsu:` ids, with TMDB titles in each plugin's languages. | [Stremio addon](current/stremio-addon.md) |
 | Search cache and answer budget | Searches are cached per title, and a request answers at its budget with the results known by then. | [Stremio addon](current/stremio-addon.md#the-search-cache) |
 | Stream ranking | Streams are ranked by a weighted score, and each hoster and language keeps its best-ranked stream. | [Stremio addon](current/stremio-addon.md#ranking) |
-| HLS and file proxy | Streams bound to headers or to the resolving address play through Scavengarr's own proxy. | [Stremio addon](current/stremio-addon.md#hls-proxy) |
+| HLS and file proxy | Streams bound to headers or to the resolving address, and files whose CDN resets a paused connection, play through Scavengarr's own proxy. | [Stremio addon](current/stremio-addon.md#hls-proxy) |
 | Hoster resolvers | Individual, generic DDL and XFS resolvers turn a hoster link into a stream or a checked download. | [Hoster resolvers](current/hoster-resolvers.md), [resolver list](reference/resolvers.md) |
 | Circuit breakers | A plugin per category, or a hoster, is skipped after repeated failures until it recovers. | [Stremio addon](current/stremio-addon.md#circuit-breakers), [Hoster resolvers](current/hoster-resolvers.md#the-circuit-breaker) |
 | Shared browser and stealth pool | One Chromium serves the browser plugins and the captures, with a stealth context for protected pages. | [Browser and challenges](current/browser-and-challenges.md) |
@@ -230,7 +230,7 @@ Diagrams per current doc, each a Mermaid fence:
 | `current/architecture.md` | the Torznab search and the Stremio stream request as sequence diagrams; the composition order and the shutdown sequence (both halves: the app's drain and Uvicorn's wait) as flowcharts |
 | `target/architecture.md` | the layer graph with the allowed edges only, matching the rule table |
 | `current/stremio-addon.md` | the search cache entry's states (missing, fresh, stale, partial, refreshing) as a state diagram; the answer budget against the plugin timeout as a sequence; the `kitsu:` id translation as a flowchart |
-| `current/hoster-resolvers.md` | a link's outcome states (stream, dead, challenge with its cooldown steps, breaker open) as a state diagram; the dispatch (client-bound, address-bound → `/play` or `/proxy/<id>/file`) as a flowchart |
+| `current/hoster-resolvers.md` | a link's outcome states (stream, dead, challenge with its cooldown steps, breaker open) as a state diagram; the dispatch (client-bound, address-bound, idle-reset → `/play` or `/proxy/<id>/file`) as a flowchart |
 | `current/browser-and-challenges.md` | the page gate as a flowchart; the capture state's life cycle (restore, use, save, expire) as a state diagram |
 | `current/plugins.md` | the search stages as a sequence; the plugin selection for a Stremio request (score, mirror group, reachability) as a flowchart |
 | `current/plugin-domains.md` | the domain decision (configured domains, official list and marker, redirect, recheck) as a flowchart |

@@ -28,7 +28,7 @@ Every answer except the health route's carries `Access-Control-Allow-Origin: *`.
 | `catalog/{content_type}/{catalog_id}/search={query}.json` | GET | The titles a catalog search finds. |
 | `stream/{content_type}/{stream_id}.json` | GET | The resolved, ranked streams of a movie or an episode. |
 | `play/{stream_id}` | GET, HEAD | A 302 redirect to a file's video URL. |
-| `proxy/{stream_id}/{path}` | GET, HEAD | An HLS stream's playlists and segments, or an address-bound file. |
+| `proxy/{stream_id}/{path}` | GET, HEAD | An HLS stream's playlists and segments, or an address-bound or idle-reset file. |
 | `health` | GET | The addon's components and their state. |
 
 ### Manifest and catalogs
@@ -331,7 +331,7 @@ Each stream carries:
 
 - `name`: `Scavengarr` and the quality on a second line (`4K`, `1080p`, `720p`, `SD`, `TS`, `CAM`), none for an unknown or guessed quality.
 - `description`: one short line per fact, since Stremio cuts long lines.
-- `url`: `/api/v1/stremio/play/{stream_id}` for a file, `/api/v1/stremio/proxy/{stream_id}/scavengarr.m3u8` for an HLS stream, `/api/v1/stremio/proxy/{stream_id}/file` for an address-bound file.
+- `url`: `/api/v1/stremio/play/{stream_id}` for a file, `/api/v1/stremio/proxy/{stream_id}/scavengarr.m3u8` for an HLS stream, `/api/v1/stremio/proxy/{stream_id}/file` for an address-bound or idle-reset file.
 - `behaviorHints`: `bingeGroup` on every stream, `filename` when the site gives a release name, `notWebReady: true`, and `proxyHeaders` for a file played through `/play`.
 
 The description's lines are the site's own title (the release name, else the site's title, else the reference title with the year), then `language · size`, then `HOSTER · plugin`.
@@ -350,7 +350,7 @@ A proxied stream carries `notWebReady: true` and no `proxyHeaders`, since the pr
 
 ### Stream links
 
-Every answered stream points at Scavengarr and gets a `CachedStreamLink` (`domain/entities/stremio.py`): the hoster URL, the resolved video URL with its headers, whether it is HLS or address-bound, and `resolved_at`.
+Every answered stream points at Scavengarr and gets a `CachedStreamLink` (`domain/entities/stremio.py`): the hoster URL, the resolved video URL with its headers, whether it is HLS, address-bound or idle-reset, and `resolved_at`.
 The links are stored through `StreamLinkRepository` (`domain/ports/stream_link_repository.py`).
 The stream can thus resolve again when Stremio plays the kept stream object later: autoplay plays the next episode's stream about an hour after it was fetched, and "Continue Watching" days later.
 The link's id comes from the hoster URL (`stream_link_id()`): one link per stream, refreshed by every answer that has it and kept for `stremio.stream_link_ttl_seconds`.
@@ -361,7 +361,7 @@ A save that still raises (another repository) logs `stremio_stream_link_save_fai
 
 ### Play
 
-`/play/{stream_id}` is the URL of every resolved file that is not address-bound, and of every stream without a resolver (`StremioLinks` in `application/use_cases/stremio_links.py`):
+`/play/{stream_id}` is the URL of every resolved file that is neither address-bound nor idle-reset, and of every stream without a resolver (`StremioLinks` in `application/use_cases/stremio_links.py`):
 
 1. It looks up the stored link, and answers 404 when it is missing.
 2. It takes the stored video URL while it is fresh (resolved less than an hour ago), else it resolves the hoster URL again; concurrent requests for one link share one resolution, and the new video URL is saved.
@@ -427,11 +427,11 @@ A player loads the segments one after another over one connection, and a CDN tha
 
 ### File proxy
 
-The file proxy (`proxy/{stream_id}/file`) is a byte-range pass-through for the files of hosters whose CDN plays a URL only for the address that resolved it.
-Their resolvers declare `address_bound`, which the registry stamps on `ResolvedStream` and the stored link keeps.
+The file proxy (`proxy/{stream_id}/file`) is a byte-range pass-through for the files of hosters whose CDN plays a URL only for the address that resolved it, or resets a connection that stops reading.
+Their resolvers declare `address_bound` or `idle_reset` (VEEV, [0017](../target/decisions/0017-idle-reset-files-resumed.md)), which the registry stamps on `ResolvedStream` and the stored link keeps.
 The route shares the HLS proxy's path, so its rate-limit exemption and query masking apply.
 
-1. It looks up the current link as for a playlist (404 when it is missing, a video URL older than an hour resolved again), and answers 400 when the link is HLS or not address-bound.
+1. It looks up the current link as for a playlist (404 when it is missing, a video URL older than an hour resolved again), and answers 400 when the link is HLS or carries neither flag.
 2. It requests the video URL with the stored headers over the player's browser User-Agent and `Accept-Encoding: identity`, so the byte offsets hold, with the player's `Range` and `If-Range`.
 3. It follows redirects, shares the CDN semaphore with the HLS proxy (held until an answer's headers), and waits up to 60 s for the opening answer's first byte, since a CDN's first byte can take about 30 s.
 4. It answers with the CDN's status (200, 206 or 416), its `Content-Type`, `Content-Range`, `Accept-Ranges` and `Content-Encoding`, its `Content-Length` when that frames the body, and the CORS headers.
@@ -441,7 +441,7 @@ The route shares the HLS proxy's path, so its rate-limit exemption and query mas
 8. When the CDN refuses the file with 403, 404 or 410, the hoster URL resolves once more past the resolver's cache and the file is fetched from the new URL; it answers 502 when that fails, when the hoster gives no video anymore, or when the CDN cannot be reached.
 9. `HEAD` answers the status and the headers with no body.
 
-A link stored before its resolver declared `address_bound` plays through `/play` until its hoster resolves again.
+A link stored before its resolver declared `address_bound` or `idle_reset` plays through `/play` until its hoster resolves again.
 Each request is recorded on the HLS proxy's metrics with `kind="file"`, the bytes sent included, and the log lines name the CDN's domain only.
 A resume is recorded as `file_resume` by hoster and reason, `resumed` or `gave_up` ([metrics](../reference/metrics.md)).
 A player that pauses stops reading, and the CDN's connection sits idle meanwhile: the VEEV CDN and Vinovo's reset such a connection, and the resume after the pause carries the playback on.

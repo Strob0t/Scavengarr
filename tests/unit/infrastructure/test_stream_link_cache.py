@@ -153,6 +153,23 @@ class TestCacheStreamLinkRepository:
         assert result is not None
         assert result.address_bound is True
 
+    async def test_the_idle_reset_flag_round_trips(self, mock_cache: AsyncMock) -> None:
+        link = CachedStreamLink(
+            stream_id="file2",
+            hoster_url="https://veev.to/e/abc",
+            hoster="veev",
+            video_url="https://cdn.veev.example/v.mp4",
+            idle_reset=True,
+        )
+        mock_cache.get = AsyncMock(return_value=_serialize_link(link))
+        repo = CacheStreamLinkRepository(cache=mock_cache)
+
+        result = await repo.get("file2")
+
+        assert result is not None
+        assert result.idle_reset is True
+        assert result.address_bound is False
+
     async def test_a_record_from_before_the_binding_reads_unbound(
         self, mock_cache: AsyncMock
     ) -> None:
@@ -174,6 +191,7 @@ class TestCacheStreamLinkRepository:
 
         assert result is not None
         assert result.address_bound is False
+        assert result.idle_reset is False
 
     async def test_save_includes_hls_proxy_fields(self, mock_cache: AsyncMock) -> None:
         link = CachedStreamLink(

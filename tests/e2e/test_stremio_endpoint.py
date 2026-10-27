@@ -2340,6 +2340,44 @@ class TestProxyFileEndpoint:
         mock_stream.assert_not_awaited()
 
     @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
+    def test_an_idle_reset_file_is_served_with_its_bound_headers(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """A VEEV file (decision 0017): not address-bound, and fetched with
+        the User-Agent and Accept-Language its URL was resolved with."""
+        mock_stream.return_value = _file_answer(
+            206,
+            headers={
+                "content-type": "video/mp4",
+                "content-range": "bytes 0-1499/1500",
+                "content-length": "1500",
+            },
+        )
+        bound = {
+            "Referer": "https://veev.to/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
+            "Accept-Language": "de",
+        }
+        link = replace(
+            _make_file_link(address_bound=False),
+            hoster_url="https://veev.to/e/xyz",
+            hoster="veev",
+            video_url="https://s-gb-1.veevcdn.example/token",
+            video_headers=json.dumps(bound),
+            idle_reset=True,
+        )
+
+        resp = TestClient(self._app(link)).get(
+            self._FILE, headers={"Range": "bytes=0-"}
+        )
+
+        assert resp.status_code == 206
+        assert resp.content == b"\x00" * 1000 + b"\x01" * 500
+        args = mock_stream.await_args.args
+        assert args[1] == link.video_url
+        assert args[2] == bound
+
+    @patch(f"{_PROXY_MODULE}.stream_file", new_callable=AsyncMock)
     def test_a_record_from_before_the_flag_is_refused(
         self, mock_stream: AsyncMock
     ) -> None:

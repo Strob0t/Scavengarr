@@ -17,7 +17,7 @@ The stealth browser's captures and challenges are in [Browser and challenges](br
 ### Resolvers
 
 Every resolver implements `HosterResolverPort` (`domain/ports/hoster_resolver.py`): a `name` and `resolve(url)`, which returns a `ResolvedStream` or `None` for a link that is offline, deleted or cannot be extracted.
-`ResolvedStream` (`domain/entities/stremio.py`) holds the video URL, the headers its CDN needs, whether it is HLS, the quality, the size, whether its CDN binds it to the resolving address, and the time of its resolution (`resolved_at`).
+`ResolvedStream` (`domain/entities/stremio.py`) holds the video URL, the headers its CDN needs, whether it is HLS, the quality, the size, whether its CDN binds it to the resolving address or resets a connection that stops reading, and the time of its resolution (`resolved_at`).
 
 A resolver answers in one of three ways:
 
@@ -71,7 +71,9 @@ flowchart TD
     hls -- yes --> hls_proxy["The HLS proxy serves it"]
     hls -- no --> binding{"What does its CDN bind the URL to?"}
     binding -- "the resolving address" --> file_proxy["/proxy/{id}/file passes the bytes through"]
-    binding -- "the player's headers" --> per_player["/play resolves it again per player"]
+    binding -- "the player's headers" --> idle{"Does its CDN reset an idle connection?"}
+    idle -- yes --> file_proxy
+    idle -- no --> per_player["/play resolves it again per player"]
     binding -- nothing --> play["/play redirects to it"]
 ```
 
@@ -103,6 +105,11 @@ The registry offers both (`bound_headers(url)`, `resolve_for_client(url, hoster,
 
 A CDN that plays the URL only for the address that resolved it answers another address with an error: `error_wrong_ip` from DoodStream's, 403 from MixDrop's and Vinovo's, 410 from fsst's.
 Such a resolver sets `address_bound = True`, the registry stamps it on the stream where it classifies the answer, and the Stremio addon sends the file through `/api/v1/stremio/proxy/{stream_id}/file`, a byte-range pass-through, instead of `/play`.
+
+A CDN that resets a connection that stops reading cuts a file whenever the player pauses with a full buffer, since Stremio's streaming server does not reconnect inside a response.
+veevcdn reset 10 of 10 connections left idle for 30 to 300 s, and a new `Range` request at the offset answered 206.
+Such a resolver sets `idle_reset = True`, the registry stamps it like `address_bound`, and the file goes through the same file proxy, which resumes it after every interruption with the headers it was resolved with ([0017](../target/decisions/0017-idle-reset-files-resumed.md)).
+VEEV is client-bound and idle-reset: its streams play through the file proxy, which sends the browser values it resolved with, and `/play` resolves per player only for a link stored before the flag.
 
 ### CDN checks
 

@@ -124,7 +124,14 @@ def _unwrap(data: str, steps: list[int]) -> str:
 
 
 class VeevResolver:
-    """Resolves veev.to embeds to a direct MP4 URL via the player API."""
+    """Resolves veev.to embeds to a direct MP4 URL via the player API.
+
+    veevcdn resets a connection that stops reading (10 of 10 pauses of 30
+    to 300 s; a new ``Range`` request at the offset answered 206), so the
+    file goes through the file proxy, which resumes it (decision 0017).
+    """
+
+    idle_reset = True
 
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client

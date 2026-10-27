@@ -86,7 +86,7 @@ flowchart LR
 - Streams for movies and series episodes, looked up by IMDb (`tt…`), TMDB (`tmdb:…`) or Kitsu (`kitsu:…`, Stremio's anime catalogs) id
 - Anime episodes numbered the way the sites count them: an IMDb episode of a long-running anime carries its Kitsu number, and the anime plugins place it on the site's own season pages
 - Hoster links resolved to direct video URLs (MP4 and HLS), with the playback headers Stremio needs
-- HLS streams play through Scavengarr's HLS proxy (the CDN's headers on every request, three segments fetched ahead for CDNs that throttle a connection), and files that a hoster binds to the resolving address through its file proxy, which goes on from the next byte after every interruption of the CDN (a reset while the player pauses, an early end, a stall)
+- HLS streams play through Scavengarr's HLS proxy (the CDN's headers on every request, three segments fetched ahead for CDNs that throttle a connection), and through its file proxy the files that a hoster binds to the resolving address or whose CDN resets a paused connection; the file proxy goes on from the next byte after every interruption of the CDN (a reset while the player pauses, an early end, a stall)
 - Playback check: resolved URLs that return an error page or no video are dropped before you see them
 - Ranking by language (German audio first by default), quality and hoster reliability; quality and size are read from the stream itself (an HLS playlist's or an MP4 file's resolution, a file's length) where the site names none
 - One working stream per hoster and language (dub and sub both stay): if a hoster's best link is dead, its next link is tried

@@ -5,15 +5,15 @@
 - [x] 1.3 A refusal during a resume resolves again once and goes on from the new URL with its headers; a second refusal at the same offset counts as a failed attempt.
 - [x] 1.4 The stall bound applies after the first byte, the opening request keeps 60 s, a resume reads with the stall timeout; HLS segments keep their one resume.
 - [x] 1.5 Telemetry: `file_resume` by hoster and reason, `resumed` and `gave_up`.
-- [ ] 1.6 The flag: the registry stamps `idle_reset` for VEEV, the stored link keeps it (an old record reads false), the builder gives `/proxy/<id>/file`, the file route accepts it.
+- [x] 1.6 The flag: the registry stamps `idle_reset` for VEEV, the stored link keeps it (an old record reads false), the builder gives `/proxy/<id>/file`, the file route accepts it.
 - [x] 1.7 The setting `stremio.file_stall_timeout_seconds` (default 10, 1 to 30) reaches the file route.
 
 ## 2. Implementation
 
 - [x] 2.1 `hls_proxy.py`: `FileResume`, the resume per interruption in `_cdn_body`, the stall bound, the refresh, the telemetry.
 - [x] 2.2 `router.py`: the file route builds `FileResume` (setting, refresh from `after_refusal`, hoster label) and accepts `idle_reset`.
-- [ ] 2.3 The flag through `veev.py`, `registry.py`, `ResolvedStream`, `CachedStreamLink`, the link cache and the stream builder.
-- [ ] 2.4 Docs: `docs/current/stremio-addon.md`, `docs/current/hoster-resolvers.md`, `docs/how-to/new-resolver.md`, `AGENTS.md`, the generated `docs/reference/configuration.md` and `docs/reference/metrics.md`, the glossary, `CHANGELOG.md`.
+- [x] 2.3 The flag through `veev.py`, `registry.py`, `ResolvedStream`, `CachedStreamLink`, the link cache and the stream builder.
+- [x] 2.4 Docs: `docs/current/stremio-addon.md`, `docs/current/hoster-resolvers.md`, `docs/how-to/new-resolver.md`, `AGENTS.md`, the generated `docs/reference/configuration.md` and `docs/reference/metrics.md`, the glossary, `CHANGELOG.md`.
 
 ## 3. Rollout and proof
 

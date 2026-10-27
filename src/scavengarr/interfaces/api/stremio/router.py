@@ -791,13 +791,14 @@ async def _proxy_link(
 async def _file_link(
     links: StremioLinks, stream_id: str
 ) -> CachedStreamLink | JSONResponse:
-    """The current link of an address-bound file; 400 for an HLS stream or
-    a file the builder sends through ``/play`` (a record from before the
-    flag among them)."""
+    """The current link of an address-bound or idle-reset file; 400 for an
+    HLS stream or a file the builder sends through ``/play`` (a record from
+    before the flag among them)."""
     link = await _stored_link(links, stream_id, current=True)
     if isinstance(link, JSONResponse):
         return link
-    if not link.video_url or link.is_hls or not link.address_bound:
+    proxied = link.address_bound or link.idle_reset
+    if not link.video_url or link.is_hls or not proxied:
         log.warning("hls_proxy_not_a_file", stream_id=stream_id)
         return _error_json(400, "stream is not a proxied file")
     return link
