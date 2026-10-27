@@ -1081,7 +1081,8 @@ class _FileServer:
     connection after n bytes, ``("fin", n)`` closes it after n bytes short
     of the promised length, ``("stall", n)`` sends nothing more after n
     bytes and keeps the connection open, ``("slow", n)`` waits n ms before
-    the first byte, ``("ok", 0)`` serves the whole span. The ranges asked
+    the first byte, ``("late", n)`` waits n ms before the headers and then
+    sends nothing, ``("ok", 0)`` serves the whole span. The ranges asked
     for are kept (``None``: no range)."""
 
     def __init__(self, size: int, plans: list[tuple[str, int]]) -> None:
@@ -1129,6 +1130,9 @@ class _FileServer:
             )
         else:
             head = b"HTTP/1.1 200 OK\r\n"
+        if how == "late":
+            await asyncio.sleep(count / 1000)
+            count = 0
         writer.write(
             head
             + b"Content-Type: video/mp4\r\nContent-Length: %d\r\n\r\n" % (size - first)
@@ -1146,7 +1150,7 @@ class _FileServer:
             )
             writer.transport.abort()
             return
-        if how == "stall":
+        if how in ("stall", "late"):
             await asyncio.sleep(30)
         writer.close()
 
@@ -1448,6 +1452,35 @@ class TestFileResume:
         _, seen, _, _ = await self._play(answers, FileResume(stall_timeout=7.0))
 
         assert [r.extensions["timeout"]["read"] for r in seen] == [60.0, 7.0]
+
+    async def test_an_attempts_answer_and_first_byte_share_one_stall_timeout(
+        self,
+    ) -> None:
+        """A CDN whose resumes answer late and then send nothing: each
+        attempt ends one stall timeout after it began, not one for the
+        headers and another for the first byte, so the three attempts end
+        well before a player's proxy gives up."""
+        stall = 0.5
+        plans = [("stall", 150_000), ("late", 450)]
+        error: Exception | None = None
+        async with _FileServer(400_000, plans) as server:
+            async with httpx.AsyncClient(timeout=10) as client:
+                answer = await stream_file(
+                    client, server.url, {}, resume=FileResume(stall_timeout=stall)
+                )
+                started = time.monotonic()
+                try:
+                    async for _ in answer.chunks:
+                        pass
+                except FileCut as exc:
+                    error = exc
+                elapsed = time.monotonic() - started
+
+        assert isinstance(error, FileCut)
+        assert len(server.ranges) == 4
+        # the stall and three attempts of one stall timeout each (2.0 s);
+        # a stall timeout for the headers and one for the first byte: 3.35 s
+        assert elapsed < 2.8
 
 
 class TestSegmentCut:

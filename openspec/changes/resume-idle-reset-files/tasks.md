@@ -3,7 +3,7 @@
 - [x] 1.1 The file body against a local server: a reset after a pause, an early end (FIN) and a silent stall are each resumed from the next byte, the bytes identical to the file and none doubled or skipped.
 - [x] 1.2 Resumes run for every interruption of one response, not once; three failed attempts at one offset cut the transfer, with waits of 0, 1 and 2 s; the count starts again once bytes flow.
 - [x] 1.3 A refusal during a resume resolves again once and goes on from the new URL with its headers; a second refusal at the same offset counts as a failed attempt.
-- [x] 1.4 The stall bound applies after the first byte, the opening request keeps 60 s, a resume reads with the stall timeout; HLS segments keep their one resume.
+- [x] 1.4 The stall bound applies after the first byte, the opening request keeps 60 s, a resume attempt's answer and first byte share one stall timeout; HLS segments keep their one resume.
 - [x] 1.5 Telemetry: `file_resume` by hoster and reason, `resumed` and `gave_up`.
 - [x] 1.6 The flag: the registry stamps `idle_reset` for VEEV, the stored link keeps it (an old record reads false), the builder gives `/proxy/<id>/file`, the file route accepts it.
 - [x] 1.7 The setting `stremio.file_stall_timeout_seconds` (default 10, 1 to 30) reaches the file route.

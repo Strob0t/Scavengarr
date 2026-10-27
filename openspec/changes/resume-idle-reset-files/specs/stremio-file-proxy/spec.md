@@ -38,7 +38,7 @@ A resume SHALL ask for `bytes=<next byte>-<last byte of the span>` with the tran
 - **THEN** the player receives exactly the file's bytes
 
 ### Requirement: Resume Attempts Are Bounded
-At one offset at most three resume attempts SHALL run, after waits of 0, 1 and 2 s, each reading with the stall timeout; the count SHALL start again once bytes flow, and after the third failed attempt the body SHALL raise `FileCut`.
+At one offset at most three resume attempts SHALL run, after waits of 0, 1 and 2 s, each with one stall timeout for its answer and that answer's first byte; the count SHALL start again once bytes flow, and after the third failed attempt the body SHALL raise `FileCut`.
 
 #### Scenario: Resumes refused
 - **WHEN** three attempts at one offset fail

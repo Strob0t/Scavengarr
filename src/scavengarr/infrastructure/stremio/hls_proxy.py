@@ -807,11 +807,13 @@ class _Transfer:
     resumed: bool = False
     skip: int = 0
     # A file's resumes, its failed attempts at the offset ``attempt_at``
-    # (bytes sent) and the offset of its last new resolution
+    # (bytes sent), the offset of its last new resolution, and the loop time
+    # by which a resumed answer's first byte is due (its attempt's deadline)
     resumes: int = 0
     attempts: int = 0
     attempt_at: int = -1
     refreshed_at: int = -1
+    due: float | None = None
 
     @property
     def done(self) -> bool:
@@ -956,8 +958,10 @@ async def _resume_file(
 
     The rest of the promised span is asked for from the next byte
     (``Range``, ``Accept-Encoding: identity``, the request's other headers
-    kept, ``If-Range`` included: a changed file answers 200), reading with
-    the stall timeout, and goes on only with a 206 from that byte. At one
+    kept, ``If-Range`` included: a changed file answers 200) and goes on
+    only with a 206 from that byte. An attempt's answer and its first byte
+    share one stall timeout (``_Transfer.due``), the wait for the CDN
+    semaphore and the client's retries included. At one
     offset at most ``len(_FILE_RESUME_WAITS)`` attempts run, each after its
     wait; the count starts again at the next offset, so a CDN that answers
     a resume and resets it before a byte uses up the same attempts. A
@@ -994,12 +998,17 @@ async def _resume_file(
                 "Accept-Encoding": "identity",
                 "Range": f"bytes={first}-{last}",
             }
+            due = asyncio.get_running_loop().time() + resume.stall_timeout
             try:
-                fresh = await _cdn_answer(http_client, transfer.url, headers, timeout)
-            except httpx.HTTPError as exc:
+                async with asyncio.timeout_at(due):
+                    fresh = await _cdn_answer(
+                        http_client, transfer.url, headers, timeout
+                    )
+            except (httpx.HTTPError, TimeoutError) as exc:
                 failure = exc
                 continue
             if fresh.status_code == 206 and _file_span(fresh)[0] == first:
+                transfer.due = due
                 transfer.resumes += 1
                 transfer.resumed = True
                 stage.outcome = "resumed"
@@ -1030,14 +1039,17 @@ async def _resume_file(
         raise transfer.cut(failure) from failure
 
 
-def _stall_bound(transfer: _Transfer, resume: FileResume | None) -> float | None:
-    """The wait for a file's next byte once its body flowed (a resume's
-    answer included); ``None`` for a segment and for the opening answer's
-    first byte, which waits the request's read timeout (a CDN's first byte
-    can take 30 s)."""
+def _stall_deadline(transfer: _Transfer, resume: FileResume | None) -> float | None:
+    """The loop time by which a file's next byte is due once its body
+    flowed: a resumed answer's first byte by its attempt's deadline
+    (``_Transfer.due``), any other byte within the stall timeout. ``None``
+    for a segment and for the opening answer's first byte, which waits the
+    request's read timeout (a CDN's first byte can take 30 s)."""
     if resume is None or not (transfer.sent or transfer.resumes):
         return None
-    return resume.stall_timeout
+    if transfer.due is not None:
+        return transfer.due
+    return asyncio.get_running_loop().time() + resume.stall_timeout
 
 
 async def _go_on(
@@ -1117,8 +1129,9 @@ async def _cdn_body(
             iterator = chunks(chunk_size=_SEGMENT_CHUNK).__aiter__()
             try:
                 while True:
-                    async with asyncio.timeout(_stall_bound(transfer, resume)):
+                    async with asyncio.timeout_at(_stall_deadline(transfer, resume)):
                         chunk = await anext(iterator, None)
+                    transfer.due = None
                     if chunk is None:
                         break
                     piece = transfer.take(chunk)
