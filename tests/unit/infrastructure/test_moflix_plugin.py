@@ -508,6 +508,77 @@ class TestPluginSearch:
             await plugin.search("batman")
 
     @respx.mock
+    async def test_a_page_from_the_search_api_is_asked_again_with_a_new_session(
+        self, plugin
+    ):
+        """A page instead of the API's JSON is no search without results:
+        the search starts a new session and asks once more."""
+        home = respx.get(f"{_BASE}/").respond(200, headers=_SESSION_COOKIES)
+        search = respx.get(url__startswith=f"{_BASE}/api/v1/search/").mock(
+            side_effect=[
+                httpx.Response(200, text="<html><title>Moflix</title></html>"),
+                httpx.Response(200, json={"results": [SEARCH_RESPONSE["results"][0]]}),
+            ]
+        )
+        respx.get(url__startswith=f"{_BASE}/api/v1/titles/2809").respond(
+            200, json=DETAIL_MOVIE_RESPONSE
+        )
+
+        results = await plugin.search("batman")
+
+        assert [r.title for r in results] == ["The Batman (2022)"]
+        assert search.call_count == 2
+        assert home.call_count == 2
+
+    @respx.mock
+    async def test_a_search_api_answering_pages_fails_the_search(
+        self, plugin, moflix_mod
+    ):
+        """A page again after the new session fails the search (an error,
+        not a search without results), so a cached search keeps the title's
+        earlier results; the search asks twice, not more."""
+        home = respx.get(f"{_BASE}/").respond(200, headers=_SESSION_COOKIES)
+        search = respx.get(url__startswith=f"{_BASE}/api/v1/search/").respond(
+            200, text="<html><title>Login</title></html>"
+        )
+
+        with pytest.raises(moflix_mod.SearchApiError):
+            await plugin.search("batman")
+
+        assert search.call_count == 2
+        assert home.call_count == 2
+
+    @respx.mock
+    async def test_a_refusal_after_a_page_fails_the_search(self, plugin, moflix_mod):
+        """After a page the failure is proven: no answer to the second call
+        (a 401, the session lost again) fails the search too."""
+        respx.get(f"{_BASE}/").respond(200, headers=_SESSION_COOKIES)
+        search = respx.get(url__startswith=f"{_BASE}/api/v1/search/").mock(
+            side_effect=[
+                httpx.Response(200, text="<html><title>Moflix</title></html>"),
+                httpx.Response(401, json={"message": "Unauthenticated."}),
+            ]
+        )
+
+        with pytest.raises(moflix_mod.SearchApiError):
+            await plugin.search("batman")
+
+        assert search.call_count == 2
+
+    @respx.mock
+    async def test_a_refused_search_is_not_asked_again(self, plugin):
+        """No answer at first (a 4xx) keeps its outcome: no new session, no
+        second call."""
+        home = respx.get(f"{_BASE}/").respond(200, headers=_SESSION_COOKIES)
+        search = respx.get(url__startswith=f"{_BASE}/api/v1/search/").respond(
+            401, json={"message": "Unauthenticated."}
+        )
+
+        assert await plugin.search("batman") == []
+        assert search.call_count == 1
+        assert home.call_count == 1
+
+    @respx.mock
     async def test_detail_failure_gives_no_result(self, plugin):
         """Without the detail (videos) there is no link, only the title page."""
         _api_routes(details={})
@@ -610,6 +681,61 @@ class TestCloudflareChallenge:
         assert sent.headers["x-xsrf-token"] == "b="
         assert sent.headers["user-agent"] == "BrowserUA/1.0"
         assert "cf_clearance=c" in sent.headers["cookie"]
+
+    @respx.mock
+    async def test_a_page_after_the_challenge_is_asked_again_over_httpx(
+        self, moflix_mod
+    ) -> None:
+        """After a challenge the browser handed back a page, not the API's
+        JSON, and only the clearance, without the site's session (production):
+        httpx starts a new session with the browser's clearance and asks the
+        API once more, instead of a search without results."""
+        from scavengarr.domain.ports.browser_fetcher import BrowserSession
+        from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+        home = respx.get(f"{_BASE}/").respond(200, headers=_SESSION_COOKIES)
+
+        def api(request: httpx.Request) -> httpx.Response:
+            # Cloudflare challenges the API, not the homepage, without clearance
+            if "cf_clearance=c" not in request.headers.get("cookie", ""):
+                return httpx.Response(403, text=_CF_CHALLENGE)
+            return httpx.Response(
+                200, json={"results": [SEARCH_RESPONSE["results"][0]]}
+            )
+
+        search = respx.get(url__startswith=f"{_BASE}/api/v1/search/").mock(
+            side_effect=api
+        )
+        respx.get(url__startswith=f"{_BASE}/api/v1/titles/2809").respond(
+            200, json=DETAIL_MOVIE_RESPONSE
+        )
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(
+            return_value="<html><head><title>Moflix</title></head></html>"
+        )
+        fetcher.session = AsyncMock(
+            return_value=BrowserSession(
+                cookies={"cf_clearance": "c"}, user_agent="BrowserUA/1.0"
+            )
+        )
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+        try:
+            async with httpx.AsyncClient() as client:
+                p = moflix_mod.MoflixPlugin()
+                p._client = client
+                p._domain_verified = True
+                p.base_url = _BASE
+                results = await p.search("batman")
+        finally:
+            HttpxPluginBase.set_browser_fetcher(None)
+
+        assert [r.title for r in results] == ["The Batman (2022)"]
+        fetcher.fetch_text.assert_awaited_once()
+        assert home.call_count == 2
+        sent = search.calls.last.request
+        assert sent.headers["x-xsrf-token"] == "tok=="
+        assert sent.headers["user-agent"] == "BrowserUA/1.0"
+        assert "moflix_stream_session=s1" in sent.headers["cookie"]
 
 
 # ---------------------------------------------------------------------------

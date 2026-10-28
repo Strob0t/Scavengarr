@@ -175,6 +175,7 @@ A failure of the site on the first search page is a failure of the search, so th
 - A timeout after the connection (the answer too slow) raises `TimeoutError`; no other domain is tried.
 - Every other answer is the helper's: a challenge counts in the challenge record (`_fetch_text()` passes it in the browser first), and a 4xx is `None`.
 - Detail pages and later result pages stay lenient (`None` with the log line): a missing one is a partial result.
+- moflix's search API answering a page instead of its JSON fails the search too: after a Cloudflare challenge the browser can hand back a page and only the clearance cookie, without the site's session. The search starts a new session (over httpx once the clearance is adopted) and asks once more (`moflix_search_new_session`); no JSON again raises `SearchApiError`. The Stremio search logs it as `stremio_plugin_search_error` and counts a circuit breaker failure, and its cache keeps the title's earlier moflix results and names moflix missing instead of storing a search without results ([The search cache](stremio-addon.md#the-search-cache)); the Torznab search answers with its error answer. No answer at first (a 4xx) stays a search without results.
 
 Every httpx plugin fetches the first page of its search this way, the XenForo forums their login page too.
 A site with one domain whose answer the plugin reads as a response (its headers, its JSON) calls `_safe_fetch(raising=page == 1)` instead, with the same outcomes; a listing without a query (the latest uploads) stays lenient.

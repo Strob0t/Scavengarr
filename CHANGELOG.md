@@ -6,6 +6,12 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: moflix's Search Survives a Page After the Cloudflare Challenge
+
+- When Cloudflare challenged moflix's API, the browser passed the challenge but handed back a page instead of the API's JSON, with only the clearance cookie and without the site's session; the adoption had dropped the session httpx held. The plugin logged `moflix_invalid_json` and answered a search without results, and a background refresh of a cached Stremio search replaced the title's moflix result (its 1080p mirrors) with nothing and stored the entry complete. Cloudflare challenges the API only, not the homepage, and the clearance lets httpx through.
+- The search now starts a new session (over httpx once the clearance is adopted) and asks the API once more (`moflix_search_new_session`); no JSON again fails the search (`SearchApiError`: a plugin search error and a circuit breaker failure), so the cache keeps the earlier results and names moflix missing. No answer at first (a 4xx) and an empty JSON search keep their outcomes.
+- Tests: `test_moflix_plugin.py` (the browser's page with the clearance only, then the API over httpx with a new session; a page answered once and twice, a refusal after a page, a first refusal not asked again; at most two calls).
+
 ### Fixed: A Cropped Frame Keeps the Quality Class of Its Width
 
 - A 2.40:1 crop of a 1280x720 encode is 1248x520: the encoder cuts the width to a multiple of 16, so it reaches neither 1280 wide nor 720 high, and the measured file was labelled SD. `quality_from_resolution()` now counts a width within 5 % of a class's (1216 for 720p, 1824 for 1080p, 3648 for 2160p) as reaching it; 1920x800 stays 1080p, 3840x1600 stays 2160p, and 720x576 and 640x360 stay SD.

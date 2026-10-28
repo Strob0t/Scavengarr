@@ -12,7 +12,10 @@ Scrapes moflix-stream.xyz (German streaming aggregator) through its REST API:
 Cloudflare challenges the API for some IPs (a VPN, at times a home line):
 ``_fetch_text()`` lets the browser pass it once, then the calls go on over
 httpx with the browser's session. Until 1.2.0 the plugin ran every search in
-the browser, too slow for Stremio on the production host.
+the browser, too slow for Stremio on the production host. After a challenge
+the browser can hand back a page instead of the API's JSON, with only the
+clearance cookie: the search then starts a new session and asks once more
+(``_api_search()``).
 
 Domain fallback: moflix-stream.xyz, moflix-stream.click
 """
@@ -42,6 +45,11 @@ _SEARCH_LIMIT = 20  # API hard cap
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+
+class SearchApiError(Exception):
+    """The search API answered a page, not its JSON, and the call after a
+    new session gave no JSON either."""
 
 
 def _is_premium(video: dict) -> bool:
@@ -100,7 +108,12 @@ class MoflixPlugin(HttpxPluginBase):
         """Start the site's session once (the homepage sets its cookies)."""
         await self._ensure_client()
         if self._site_cookie("XSRF-TOKEN") is None:
-            await self._fetch_text(f"{self.base_url}/", context="session")
+            await self._start_session()
+
+    async def _start_session(self) -> None:
+        """Start a new site session: the homepage sets its cookies (Cloudflare
+        challenges the API only)."""
+        await self._fetch_text(f"{self.base_url}/", context="session")
 
     async def _api_fetch(self, path: str) -> dict[str, Any] | None:
         """Call a moflix API endpoint (``None`` on failure)."""
@@ -113,15 +126,30 @@ class MoflixPlugin(HttpxPluginBase):
         """Search the API and return raw result dicts.
 
         A failure of the site raises (a timeout, no domain answering), so the
-        plugin record counts it.
+        plugin record counts it. A page instead of the API's JSON fails the
+        search too (an error, not a search without results, which would
+        replace the title's earlier results in the Stremio cache). After a
+        challenge the browser handed back such a page and only the clearance
+        cookie, without the site's session, so the search starts a new
+        session (the adopted clearance lets httpx through) and asks once
+        more; no JSON again raises ``SearchApiError``. No answer at first (a
+        4xx) stays a search without results.
         """
         encoded = quote(query, safe="")
         path = f"/api/v1/search/{encoded}?query={encoded}&limit={_SEARCH_LIMIT}"
 
-        body = await self._fetch_search_page(
-            path, context="api", headers=self._api_headers()
-        )
-        data = self._parse_json_text(body, context="api")
+        for attempt in (1, 2):
+            body = await self._fetch_search_page(
+                path, context="api", headers=self._api_headers()
+            )
+            data = self._parse_json_text(body, context="api")
+            if data is not None or (body is None and attempt == 1):
+                break
+            if attempt == 2:
+                # After a page no answer is a failure too
+                raise SearchApiError(f"{self.name}: the search API gave no JSON")
+            self._log.info("moflix_search_new_session", query=query)
+            await self._start_session()
         if not data:
             return []
 
