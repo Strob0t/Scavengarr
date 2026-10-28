@@ -135,7 +135,7 @@ Two checks look at a resolved URL before a player gets it, both in `infrastructu
 
 A playable stream keeps what the checked bytes tell (`PlaybackCheck`):
 
-- The largest `RESOLUTION` of an HLS master playlist's variants gives the quality class (`quality_from_resolution()`, by width or height, whichever gives the higher class), when the resolver named no quality or a lower one.
+- The largest `RESOLUTION` of an HLS master playlist's variants gives the quality class (`quality_from_resolution()`, by width or height, whichever gives the higher class; a width within 5 % of the class's counts, so a cropped 1248x520 is 720p), when the resolver named no quality or a lower one.
 - An MP4 file's largest track header (`tkhd`) gives the quality class the same way (`infrastructure/hoster_resolvers/_mp4.py`). A file whose `moov` box comes first names it in the 4 KiB. A file whose `moov` follows the media data (`mdat`) gets one more `Range` read of 4 KiB where the `moov` starts, with the same headers and within the check's 6 s, and only from a file that starts with `ftyp` and whose total the first answer named. That read failing (`playback_check_moov_unread` with the CDN's domain and the error) or answered from elsewhere than the `moov` (a status other than 206, a `Content-Range` from another byte) measures nothing, and the stream stays playable.
 - The total of a `Content-Range: bytes a-b/total` answer becomes `ResolvedStream.size_bytes`.
 - A variant past the 4 KiB, a video track past the 4 KiB of its `moov` (after an audio track with its tables) and a media playlist measure nothing; an answer without a `Content-Range` total measures no size and no `moov` behind the media data.

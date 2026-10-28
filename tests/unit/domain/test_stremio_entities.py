@@ -47,9 +47,19 @@ class TestQualityFromResolution:
         [
             (1920, 1080, StreamQuality.HD_1080P),
             (1920, 800, StreamQuality.HD_1080P),  # letterboxed: by width
+            (1248, 520, StreamQuality.HD_720P),  # cropped 720p
             (1280, 720, StreamQuality.HD_720P),
+            (3840, 1600, StreamQuality.UHD_4K),
             (3840, 2160, StreamQuality.UHD_4K),
+            (1824, 760, StreamQuality.HD_1080P),  # cropped 1080p
+            (1216, 400, StreamQuality.HD_720P),  # the tolerance's edge
+            (1215, 400, StreamQuality.SD),
+            (1823, 700, StreamQuality.HD_720P),
+            (3648, 1500, StreamQuality.UHD_4K),
+            (3647, 1500, StreamQuality.HD_1080P),
+            (720, 576, StreamQuality.SD),
             (854, 480, StreamQuality.SD),
+            (640, 360, StreamQuality.SD),
             (None, None, StreamQuality.UNKNOWN),
         ],
     )

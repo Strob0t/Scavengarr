@@ -36,16 +36,23 @@ _RESOLUTION_CLASSES = (
 )
 
 
+# A cropped frame keeps its class when its width falls this short of the
+# class's: an encoder cuts the width to a multiple of 16, so a 2.40:1 crop of
+# 1280x720 is 1248x520
+_WIDTH_TOLERANCE = 0.95
+
+
 def quality_from_resolution(width: int | None, height: int | None) -> StreamQuality:
     """The quality class of a video resolution, ``UNKNOWN`` without one.
 
     By width or by height, whichever gives the higher class: a letterboxed
-    1080p encode (1920x800) is 720p by its height alone.
+    1080p encode (1920x800) is 720p by its height alone. The width counts
+    with a small tolerance for crops (1248x520 is 720p).
     """
     if width is None or height is None:
         return StreamQuality.UNKNOWN
     for min_width, min_height, quality in _RESOLUTION_CLASSES:
-        if width >= min_width or height >= min_height:
+        if width >= min_width * _WIDTH_TOLERANCE or height >= min_height:
             return quality
     return StreamQuality.SD
 

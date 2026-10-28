@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Cropped Frame Keeps the Quality Class of Its Width
+
+- A 2.40:1 crop of a 1280x720 encode is 1248x520: the encoder cuts the width to a multiple of 16, so it reaches neither 1280 wide nor 720 high, and the measured file was labelled SD. `quality_from_resolution()` now counts a width within 5 % of a class's (1216 for 720p, 1824 for 1080p, 3648 for 2160p) as reaching it; 1920x800 stays 1080p, 3840x1600 stays 2160p, and 720x576 and 640x360 stay SD.
+- Tests: `test_stremio_entities.py` (`TestQualityFromResolution`: the crops, the tolerance's edge and the SD sizes).
+
 ### Changed: VEEV Plays Through the File Proxy
 
 - A resolver flag `idle_reset` marks a hoster whose CDN resets a connection that stops reading; the registry stamps it on the resolved stream and the stored link keeps it, like `address_bound`. VEEV declares it (its CDN reset 10 of 10 connections left idle for 30 to 300 s), so its files now play through `/api/v1/stremio/proxy/<id>/file`, which resumes them after a pause, instead of a `/play` redirect to the CDN ([0017](docs/target/decisions/0017-idle-reset-files-resumed.md)).
