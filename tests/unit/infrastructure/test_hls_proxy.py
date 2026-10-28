@@ -1453,6 +1453,91 @@ class TestFileResume:
 
         assert [r.extensions["timeout"]["read"] for r in seen] == [60.0, 7.0]
 
+    async def test_a_flowing_resumed_body_is_not_held_to_the_attempts_deadline(
+        self,
+    ) -> None:
+        """After a resume the first byte is due by the attempt's deadline;
+        once it came, every later byte gets a stall timeout of its own, so a
+        body that keeps flowing for longer than one stall timeout is not
+        asked for again."""
+        total = 3 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            self._cut(
+                self._PIECE,
+                total,
+                _PacedChunks([b"b" * self._PIECE, b"c" * self._PIECE], 0.5),
+            ),
+            self._cut(2 * self._PIECE, total, _Chunks([b"c" * self._PIECE])),
+        ]
+
+        body, seen, _, error = await self._play(answers, FileResume(stall_timeout=0.8))
+
+        assert error is None
+        assert body == b"a" * self._PIECE + b"b" * self._PIECE + b"c" * self._PIECE
+        assert len(seen) == 2
+
+    async def test_every_later_resume_keeps_the_bound_headers(self) -> None:
+        """The headers a resume goes on with are the request's own: the
+        second and third requests still carry the User-Agent and Referer
+        the hoster's CDN is bound to (decision 0017)."""
+        total = 3 * self._PIECE
+        answers = [
+            httpx.Response(
+                200,
+                headers={"Content-Length": str(total)},
+                stream=_CutChunks([b"a" * self._PIECE]),
+            ),
+            self._cut(self._PIECE, total, _CutChunks([b"b" * self._PIECE])),
+            self._cut(2 * self._PIECE, total, _Chunks([b"c" * self._PIECE])),
+        ]
+
+        _, seen, _, error = await self._play(answers)
+
+        assert error is None
+        assert len(seen) == 3
+        assert [r.headers["User-Agent"] for r in seen] == ["bound"] * 3
+        assert [r.headers["Referer"] for r in seen] == ["https://veev.example/"] * 3
+        assert [r.headers["Accept-Encoding"] for r in seen] == ["identity"] * 3
+
+    async def test_the_deadline_bounds_an_attempt_the_read_timeout_cannot(
+        self,
+    ) -> None:
+        """A wait httpx's read timeout does not time (the CDN semaphore, the
+        client's retries; here a transport that never answers) ends at the
+        attempt's deadline: three attempts, then the cut."""
+        seen: list[httpx.Request] = []
+        total = 2 * self._PIECE
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if len(seen) == 1:
+                return httpx.Response(
+                    200,
+                    headers={"Content-Length": str(total)},
+                    stream=_CutChunks([b"a" * self._PIECE]),
+                )
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            answer = await stream_file(
+                client, self._URL, {}, resume=FileResume(stall_timeout=0.2)
+            )
+            started = time.monotonic()
+            with pytest.raises(FileCut):
+                async with asyncio.timeout(5):
+                    async for _ in answer.chunks:
+                        pass
+            elapsed = time.monotonic() - started
+
+        assert len(seen) == 4
+        assert elapsed < 2.0
+
     async def test_an_attempts_answer_and_first_byte_share_one_stall_timeout(
         self,
     ) -> None:
@@ -1481,6 +1566,51 @@ class TestFileResume:
         # the stall and three attempts of one stall timeout each (2.0 s);
         # a stall timeout for the headers and one for the first byte: 3.35 s
         assert elapsed < 2.8
+
+
+class TestFileResumeRealBounds:
+    """The resume's attempts and waits as shipped: nothing patches
+    ``_FILE_RESUME_WAITS``, only the clock's sleep is recorded."""
+
+    async def test_three_attempts_after_waits_of_0_1_2_end_within_the_players_60_s(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits: list[float] = []
+        real_sleep = asyncio.sleep
+
+        async def _sleep(delay: float, *args: object, **kwargs: object) -> None:
+            if delay:
+                waits.append(delay)
+            await real_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", _sleep)
+        piece = 65536
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if len(seen) == 1:
+                return httpx.Response(
+                    200,
+                    headers={"Content-Length": str(2 * piece)},
+                    stream=_CutChunks([b"a" * piece]),
+                )
+            return httpx.Response(500)
+
+        resume = FileResume()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            answer = await stream_file(
+                client, "https://s-eri-1.veevcdn.example/v/a.mp4", {}, resume=resume
+            )
+            with pytest.raises(FileCut):
+                async for _ in answer.chunks:
+                    pass
+
+        assert len(seen) == 4
+        assert waits == [1.0, 2.0]
+        # the stall bound is the setting's default, the 60 s the player's
+        # proxy waits for a byte; the decision names 33 s
+        assert sum(waits) + 3 * resume.stall_timeout <= 33.0
 
 
 class TestSegmentCut:
@@ -1864,6 +1994,20 @@ class _CutChunks(_Chunks):
         for chunk in self._chunks:
             yield chunk
         raise httpx.ReadError("the CDN went away")
+
+
+class _PacedChunks(_Chunks):
+    """A body whose chunks each arrive *gap* seconds after the one before."""
+
+    def __init__(self, chunks: list[bytes], gap: float) -> None:
+        super().__init__(chunks)
+        self._gap = gap
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.read = True
+        for chunk in self._chunks:
+            await asyncio.sleep(self._gap)
+            yield chunk
 
 
 class _TimedOutChunks(_Chunks):
