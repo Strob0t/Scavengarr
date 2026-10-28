@@ -17,6 +17,6 @@
 
 ## 3. Rollout and proof
 
-- [ ] 3.1 CI and the image green; an independent review of the commits.
+- [x] 3.1 CI and the image green; an independent review of the commits.
 - [ ] 3.2 Deploy while nothing plays; the post-deploy checks.
 - [ ] 3.3 The title's VEEV stream is a `/proxy/<id>/file` URL; a pause test through it (60 s and 180 s): data within 5 s after the resume, the bytes after the resume identical to a direct range fetch of the CDN, the resume counter raised.
