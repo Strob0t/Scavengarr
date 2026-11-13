@@ -197,8 +197,13 @@ class HttpxTmdbClient:
         # Include original-language title as alternative when it differs
         original = result.get("original_title") or result.get("original_name") or ""
         alt_titles = [original] if original and original != title else []
+        tmdb_id = result.get("id")
+        if not isinstance(tmdb_id, int):
+            tmdb_id = None
 
-        return TitleMatchInfo(title=title, year=year, alt_titles=alt_titles)
+        return TitleMatchInfo(
+            title=title, year=year, alt_titles=alt_titles, tmdb_id=tmdb_id
+        )
 
     async def get_title_by_tmdb_id(self, tmdb_id: int, media_type: str) -> str | None:
         """Get the German title for a TMDB numeric ID.

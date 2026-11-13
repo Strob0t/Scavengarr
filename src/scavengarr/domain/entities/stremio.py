@@ -145,8 +145,24 @@ class TitleMatchInfo:
     alt_titles: list[str] = field(default_factory=list)
     content_type: StremioContentType | None = None
     imdb_id: str | None = None
+    tmdb_id: int | None = None
     animation: bool | None = None
     series_titles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExternalIds:
+    """The request's external ids, for plugins that can use them directly.
+
+    A site whose own search misses a short or localized title (hdfilme and
+    streamcloud do for ``Es``/``It``) can open the title's page by its TMDB
+    id instead. *content_type* names the page kind when the caller knows it;
+    a plugin falls back to its own category/season when it is ``None``.
+    """
+
+    imdb_id: str | None = None
+    tmdb_id: int | None = None
+    content_type: StremioContentType | None = None
 
 
 @dataclass(frozen=True)

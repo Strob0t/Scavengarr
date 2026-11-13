@@ -111,7 +111,7 @@ Shared helpers:
 
 - `_timeout` (default 15 s) and `_user_agent` for every request;
 - one app-wide HTTP client with per-domain rate limiting and retries of 429 and 503 (`RetryTransport`), injected by the composition root;
-- `_fetch_text()`, a GET that loads the URL through the browser when the site answers with a Cloudflare challenge, and then goes on in httpx with the browser's session (its cookies and User-Agent);
+- `_fetch_text()`, a GET that loads the URL through the browser when the site answers with a Cloudflare challenge, and then goes on in httpx with the browser's session (its cookies and User-Agent); only the harmless request headers go with the page's requests, the rest with its in-page fetch, which refuses redirects;
 - `_fetch_search_page()`, the search page's GET or POST in the raising mode (see [Failures of the site](#failures-of-the-site));
 - `_safe_fetch()` and `_safe_parse_json()`, which log and return `None` instead of raising (`_safe_fetch(raising=True)` is the raising mode);
 - `_resolve_redirect()` and `_resolve_own_links()`, which replace link-outs on the plugin's own host by their off-site targets, and `_resolve_link_out()`, which does it for one link-out at a grab (`GrabResolvingPlugin`);
@@ -175,7 +175,7 @@ A failure of the site on the first search page is a failure of the search, so th
 - A timeout after the connection (the answer too slow) raises `TimeoutError`; no other domain is tried.
 - Every other answer is the helper's: a challenge counts in the challenge record (`_fetch_text()` passes it in the browser first), and a 4xx is `None`.
 - Detail pages and later result pages stay lenient (`None` with the log line): a missing one is a partial result.
-- moflix's search API answering a page instead of its JSON fails the search too: after a Cloudflare challenge the browser can hand back a page and only the clearance cookie, without the site's session. The search starts a new session (over httpx once the clearance is adopted) and asks once more (`moflix_search_new_session`); no JSON again raises `SearchApiError`. The Stremio search logs it as `stremio_plugin_search_error` and counts a circuit breaker failure, and its cache keeps the title's earlier moflix results and names moflix missing instead of storing a search without results ([The search cache](stremio-addon.md#the-search-cache)); the Torznab search answers with its error answer. No answer at first (a 4xx) stays a search without results.
+- moflix's search API answering a page instead of its JSON fails the search too: after a Cloudflare challenge the browser can hand back a page and only the clearance cookie, without the site's session. The search starts a new session (over httpx once the clearance is adopted) and asks once more (`moflix_search_new_session`); no JSON again raises `SearchApiError`. The Stremio search logs it as `stremio_plugin_search_error` and counts a circuit breaker failure, and its cache keeps the title's earlier moflix results and names moflix missing instead of storing a search without results ([The search cache](stremio-addon.md#the-search-cache)); the Torznab search answers with its error answer. No answer at first (a 4xx) stays a search without results. A title search scrapes only the closest five hits (`_TITLE_SCRAPE_HITS`), since each detail is a Cloudflare-protected API call; a season search keeps its single-title cap.
 
 Every httpx plugin fetches the first page of its search this way, the XenForo forums their login page too.
 A site with one domain whose answer the plugin reads as a response (its headers, its JSON) calls `_safe_fetch(raising=page == 1)` instead, with the same outcomes; a listing without a query (the latest uploads) stays lenient.
@@ -282,7 +282,7 @@ A plugin's health comes from `PluginHealthMonitor` (`infrastructure/plugins/heal
 Mirror groups join sites that front one database (the same ids, titles and links in other themes): hdfilme, streamcloud and streamkiste share `mirror_group = "hdfilme"`.
 The member with the best `final_score` of its `current` snapshot is asked; a score with confidence up to 0.1 counts as none, and without scores the first member is asked.
 A member whose breaker is open is passed over; when no member's breaker is closed, all stay in and their breakers decide.
-The next member stands by: it is asked when the chosen one gives nothing for a query, and a member that gave nothing while its standby delivered ranks behind the others.
+The next member stands by: it is asked when the chosen one gives nothing for a query, within the time left of the answer budget, and a member that gave nothing while its standby delivered ranks behind the others.
 This choice uses the scores whenever a score store exists, also with scored selection off.
 Torznab keeps every member as an indexer of its own.
 

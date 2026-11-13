@@ -34,7 +34,7 @@ How the plugins work: [Plugins](../current/plugins.md).
 | `filmpalast` | filmpalast.to | 0 | Streams | httpx | de |
 | `fireani` | fireani.me | 0 | Streams | httpx | de |
 | `haschcon` | haschcon.com | 0 | Streams | httpx | de |
-| `hdfilme` | hdfilme.cafe | 0 | Streams | httpx | de |
+| `hdfilme` | hd-filme.today | 3 | Streams | httpx | de |
 | `hdsource` | hd-source.to | 0 | Downloads | httpx | de |
 | `hdworld` | hd-world.cc | 0 | Downloads | httpx | de |
 | `jjs` | jjs.page | 0 | Downloads | httpx | de |
@@ -57,6 +57,6 @@ How the plugins work: [Plugins](../current/plugins.md).
 | `serienfans` | serienfans.org | 0 | Downloads | httpx | de |
 | `serienjunkies` | serienjunkies.org | 0 | Downloads | httpx | de |
 | `sto` | serienstream.to | 2 | Streams | httpx | de |
-| `streamcloud` | streamcloud.download | 1 | Streams | httpx | de |
+| `streamcloud` | streamcloud.date | 2 | Streams | httpx | de |
 | `streamkiste` | streamkiste.bid | 5 | Streams | httpx | de |
 | `warezomen` | warezomen.com | 0 | Downloads | httpx | de |

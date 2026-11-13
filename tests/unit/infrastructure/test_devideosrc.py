@@ -104,6 +104,31 @@ class TestFindPlayer:
         )
         assert devideosrc.find_player(html) == DevideosrcPlayer("tv", "tt0903747")
 
+    def test_custom_serial_iframe(self) -> None:
+        html = (
+            '<iframe src="https://devideosrc.co/custom/serial/tt0903747/1/1"></iframe>'
+        )
+        assert devideosrc.find_player(html) == DevideosrcPlayer("tv", "tt0903747")
+
+    def test_hdfilme_rsc_series_payload(self) -> None:
+        html = (
+            r"<script>{\"imdb\":\"tt4574334\","
+            r"\"base\":\"/serie/66732-stranger-things-stream\"}</script>"
+        )
+        assert devideosrc.find_player(html) == DevideosrcPlayer("tv", "tt4574334")
+
+    def test_rsc_imdb_without_series_is_no_player(self) -> None:
+        html = '<script>{"imdb":"tt4574334"}</script>'
+        assert devideosrc.find_player(html) is None
+
+    def test_rsc_movie_with_serie_nav_link_is_no_player(self) -> None:
+        html = (
+            '<a href="/serie/">Serien</a>'
+            r"<script>{\"imdb\":\"tt0112573\","
+            r"\"base\":\"/filme/197-braveheart-stream\"}</script>"
+        )
+        assert devideosrc.find_player(html) is None
+
     def test_download_embed_alone_is_no_player(self) -> None:
         html = '<iframe src="https://devideosrc.co/embed/download/tt1"></iframe>'
         assert devideosrc.find_player(html) is None

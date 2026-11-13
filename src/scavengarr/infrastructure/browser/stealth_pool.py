@@ -13,7 +13,7 @@ import asyncio
 import math
 import re
 import time
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
@@ -28,6 +28,7 @@ from scavengarr.domain.ports.browser_fetcher import (
     Redirect,
 )
 from scavengarr.infrastructure.browser.hardening import block_heavy_resources
+from scavengarr.infrastructure.browser.header_safety import safe_headers
 from scavengarr.infrastructure.browser.page_gate import (
     ChallengeMark,
     Hold,
@@ -60,10 +61,20 @@ _RETRY_STATUSES = frozenset({429, 502, 503, 504})
 _RETRY_BACKOFF_S: tuple[float, ...] = (2.0, 5.0, 10.0)
 
 # In-page fetch for non-HTML responses and URLs that refuse a page load
-# (null on HTTP error); it sends the page's URL as Referer
-_FETCH_RAW_JS = """async (url) => {
-    const resp = await fetch(url, {credentials: "include"});
-    return resp.ok ? await resp.text() : null;
+# (null on HTTP error); it sends the page's URL as Referer and the caller's
+# headers, and refuses a redirect: the browser would otherwise carry a header
+# such as X-XSRF-TOKEN to the redirect target, a cross-origin one included.
+_FETCH_RAW_JS = """async ({url, headers}) => {
+    try {
+        const resp = await fetch(url, {
+            credentials: "include",
+            headers: headers || {},
+            redirect: "error",
+        });
+        return resp.ok ? await resp.text() : null;
+    } catch (e) {
+        return null;
+    }
 }"""
 
 
@@ -211,11 +222,23 @@ class CapturedMedia:
     referer: str | None
 
 
-async def _read_body(page: Page, url: str) -> str | None:
+async def _fetch_raw(
+    page: Page, url: str, headers: Mapping[str, str] | None
+) -> str | None:
+    """Raw body of *url* through the page's own session and *headers*."""
+    return await page.evaluate(
+        _FETCH_RAW_JS,
+        {"url": url, "headers": dict(headers or {})},
+    )
+
+
+async def _read_body(
+    page: Page, url: str, headers: Mapping[str, str] | None = None
+) -> str | None:
     """Rendered DOM for HTML, raw in-page fetch for other types (JSON)."""
     if await page.evaluate("() => document.contentType") == "text/html":
         return await page.content()
-    return await page.evaluate(_FETCH_RAW_JS, url)
+    return await _fetch_raw(page, url, headers)
 
 
 async def _allow_player_resources(route: Route) -> None:
@@ -703,7 +726,13 @@ class StealthPool:
             await asyncio.sleep(backoff)
         return False  # pragma: no cover  (loop always returns)
 
-    async def fetch_text(self, url: str, *, timeout: float) -> str | None:
+    async def fetch_text(
+        self,
+        url: str,
+        *,
+        timeout: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> str | None:
         """Return the body of *url*, solving a Cloudflare challenge first.
 
         Implements ``BrowserFetcherPort``. HTML pages come back as rendered
@@ -713,7 +742,10 @@ class StealthPool:
         with an error (no challenge) is asked once more by in-page fetch:
         an API may serve only requests from its site's pages (moflix, Laravel
         Sanctum: 401 without the site's Referer, which a page load lacks
-        unless a challenge's reload sends it).
+        unless a challenge's reload sends it). Only the harmless headers go
+        with the page's requests; the rest (a session token such as
+        ``X-XSRF-TOKEN``) go with the in-page fetch, which refuses a redirect
+        so a redirect target cannot inherit them.
         """
         timeout_ms = int(timeout * 1000)
         try:
@@ -724,14 +756,19 @@ class StealthPool:
                 page: Page | None = None
                 try:
                     page = await self.new_page()
+                    page_headers = safe_headers(headers)
+                    if page_headers:
+                        await page.set_extra_http_headers(page_headers)
                     if not await self._navigate(
                         page, url, wait_until="domcontentloaded", timeout_ms=timeout_ms
                     ):
-                        return await page.evaluate(_FETCH_RAW_JS, url)
+                        return await _fetch_raw(page, url, headers)
                     if not await solve_cloudflare(page, timeout_ms=timeout_ms):
                         return None
                     await self._remember(page)
-                    return await read_when_settled(page, lambda: _read_body(page, url))
+                    return await read_when_settled(
+                        page, lambda: _read_body(page, url, headers)
+                    )
                 except Exception:  # noqa: BLE001
                     log.debug("stealth_fetch_error", url=url, exc_info=True)
                     return None

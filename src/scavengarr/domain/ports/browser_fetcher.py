@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
@@ -74,11 +75,20 @@ class BrowserFetcherPort(Protocol):
     an anti-bot challenge.
     """
 
-    async def fetch_text(self, url: str, *, timeout: float) -> str | None:
+    async def fetch_text(
+        self,
+        url: str,
+        *,
+        timeout: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> str | None:
         """Return the response body of *url* (HTML or raw text such as JSON).
 
-        Returns None when the page could not be loaded or the challenge was
-        not solved within *timeout* seconds.
+        *headers* go with the page's requests. An API that needs a header
+        rather than a cookie (moflix: ``X-XSRF-TOKEN``) keeps it, which a
+        bare browser load of the API URL would lose. Returns None when the
+        page could not be loaded or the challenge was not solved within
+        *timeout* seconds.
         """
         ...
 

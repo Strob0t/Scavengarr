@@ -247,7 +247,11 @@ class TitleResolver:
             )
             if not title:
                 return None
-            return TitleMatchInfo(title=title, content_type=request.content_type)
+            return TitleMatchInfo(
+                title=title,
+                content_type=request.content_type,
+                tmdb_id=int(tmdb_id),
+            )
         info = await self._tmdb.get_title_and_year(request.imdb_id, language=language)
         if info is not None:
             return replace(info, content_type=request.content_type)

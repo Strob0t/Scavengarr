@@ -6,6 +6,40 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: A Plugin's Headers Cannot Leave the Site Through a Redirect
+
+- The browser fallback passed a plugin's request headers to the browser as page-wide extra headers, and a Playwright route's header override follows a redirect: a same-origin request that redirected off-site carried them to the destination (a session header such as moflix's `X-XSRF-TOKEN` included). Only the harmless headers (`Accept`, `Referer`, `User-Agent`, …) go with the page's requests now; the rest go with the in-page JSON fetch, which refuses a redirect (`redirect: "error"`), so no redirect target can inherit them. The solver path gets only the harmless headers for the same reason — it applies them to every request of its browser — and the session it hands back lets the plugin's next httpx request carry the token, scoped to the site.
+- Tests: `test_stealth_pool.py` (the page gets only the harmless headers, the in-page fetch carries the token and refuses redirects; a refused page load is asked with the headers), `test_solver_fetcher.py` (a token and an `Authorization` stay out of the solver payload).
+
+### Fixed: A Mirror Standby Runs Only Within the Answer Budget
+
+- A member with a standby is cut at the 12 s handover, but the standby then got a full plugin timeout, so the group could spend up to 42 s of a 30 s answer budget; a standby that needed more than the remaining 18 s finished only after the answer. The standby now gets the time left of the budget (`budget_ends`) once its slot is acquired, is skipped when the budget has passed before or while it waits for that slot, and a cut standby counts no circuit breaker failure (it did not have its whole timeout).
+- Tests: `test_plugin_search_runner.py` (a standby is cut at the remaining budget, a slot wait past the budget skips it, a standby past the budget is not run, the cut trips no breaker).
+
+### Fixed: The Browser Fallback Keeps a Plugin's Request Headers
+
+- `HttpxPluginBase._fetch_text()` dropped the plugin's request headers on the way to the browser, so an API that wants a header rather than a cookie answered the page with 401: moflix's Laravel session needs `X-XSRF-TOKEN` beside the clearance cookie, and every call after a challenge paid a rejected session and a second, in-page fetch. `fetch_text()` now carries the headers through `BrowserFetcherPort`: the stealth page sets them with `page.set_extra_http_headers`, `SolverFetcher` puts them into its `request.get` payload, and `ChainedBrowserFetcher` forwards them, so the first browser load already answers the API.
+- Tests: `test_httpx_browser_fallback.py` (the fallback receives the request's extra headers); the filmfans and kinoger browser fakes accept the new keyword.
+
+### Fixed: moflix's Title Search Scrapes Only the Closest Five Hits
+
+- A moflix title search scraped a detail for every relevant hit: each detail is a Cloudflare-protected API call, and a generic title matched up to twenty. It takes the closest five now (`_TITLE_SCRAPE_HITS`); a season search keeps its single-title cap.
+- Tests: `test_moflix_plugin.py` (twenty hits cost five detail requests).
+
+### Added: A Title's TMDB Id Opens Its Page Before the Site Search
+
+- hdfilme and streamcloud use the request's TMDB id to open the title page directly (`/filme1/<id>`, `/filme/<id>`, `/serie/<id>`) before the site's text search. The pages accept the id without a slug, so a short or localized title whose page the site search does not return (for example `Es`/`It`) is found again.
+- einschalten's JSON API ids are TMDB ids: its `/api/movies/<id>` and `/api/movies/<id>/watch` endpoints are called directly before the text search. A missing detail or watch answer falls back to the search.
+- The id reaches the plugins through the `search_external_ids` context var; `TitleMatchInfo` carries the TMDB id from `/find` (and from `tmdb:` requests). The old text search remains the fallback when Stremio provides no TMDB id or the direct page answers without a player, so setups without the id keep working unchanged.
+- Tests: the TMDB client's id, the runner's context hand-off, and the direct-hit plus text-search-fallback paths of both plugins.
+
+### Fixed: hdfilme and streamcloud Follow Their 2026-11 Layout
+
+- hdfilme and streamcloud moved to `hd-filme.today` / `streamcloud.date`, `GET /suche?q=`, `div.grid > a.cv` result cards and new detail metadata (`p.dmeta`/`p.dsyn`, `div.sc-riga`). Both parsers keep the old DLE markup as a fallback; the new search is one page of up to ~60 hits and ignores `?page=`.
+- `devideosrc.find_player()` recognises `custom/serial/<imdb>/<season>/<episode>` and hdfilme's Next.js RSC series payload (the `base` field under `/serie/`), so series resolve through the normal `/serial/<imdb>` player.
+- The XFS resolver sends the browser `User-Agent` beside the `Referer` on the CDN check and the resolved stream: dr0pstream's dropcdn answered the bot UA with 403, which dropped dropload-only series.
+- Tests: `test_hdfilme_plugin.py`, `test_streamcloud_plugin.py`, `test_devideosrc.py`, `test_xfs_resolver.py`; the plugin list is regenerated.
+
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
 - A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.

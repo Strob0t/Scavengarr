@@ -341,9 +341,9 @@ Results that arrive after the answer budget stay out of the answer: they reach t
 - A plugin whose circuit breaker is open returns at once with no results and no search.
 - The answer budget cuts no plugin: a plugin that returns after it counts as `late`, and its results reach the cache entry and the next request.
 - A plugin that waits for its slot when the answer budget passes runs when it gets the slot.
-- Every timeout is a circuit breaker failure and counts as `timeouts` in the plugin history.
+- Every timeout is a circuit breaker failure and counts as `timeouts` in the plugin history; a mirror standby cut at the answer budget counts as a timeout but not as a failure.
 - An error and an unreachable site are breaker failures too; a search with results is a success; an empty answer is neither.
-- A member of a mirror group that gives nothing hands the query to its standby.
+- A member of a mirror group that gives nothing hands the query to its standby. The standby is the extra run for this answer: it gets the time left of the answer budget once its slot is acquired and is skipped when that has passed, the wait for its slot included.
 
 The answer budget (`answer_budget_s()` of `application/stremio/title_search.py`) is `stremio.answer_budget_seconds` when set, else the plugin timeout, and never more than the plugin timeout.
 It counts from the request's start, and for a stale entry's refresh from the refresh's start.

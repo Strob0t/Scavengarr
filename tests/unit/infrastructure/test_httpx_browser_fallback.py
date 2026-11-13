@@ -257,6 +257,28 @@ class TestFetchText:
         assert url == "https://cf.example/api?q=x"  # query string preserved
 
     @respx.mock
+    async def test_browser_fallback_gets_the_extra_headers(self) -> None:
+        """An API that needs a header (moflix: X-XSRF-TOKEN) gets it in the
+        browser too, not only in the httpx request."""
+        respx.get("https://cf.example/api").respond(403, text=_CF_CHALLENGE)
+        fetcher = AsyncMock()
+        fetcher.fetch_text = AsyncMock(return_value="{}")
+        HttpxPluginBase.set_browser_fetcher(fetcher)
+
+        async with httpx.AsyncClient() as client:
+            plugin = await _plugin_with_client(client)
+            await plugin._fetch_text(
+                "https://cf.example/api",
+                headers={"X-XSRF-TOKEN": "abc", "Referer": "https://cf.example/"},
+            )
+
+        headers = fetcher.fetch_text.await_args.kwargs["headers"]
+        assert headers == {
+            "X-XSRF-TOKEN": "abc",
+            "Referer": "https://cf.example/",
+        }
+
+    @respx.mock
     async def test_challenge_without_fetcher_returns_none(self) -> None:
         respx.get("https://cf.example/page").respond(403, text=_CF_CHALLENGE)
 
@@ -437,7 +459,9 @@ class TestBrowserSessionReuse:
         route_b = respx.get("https://cf.example/b").respond(200, text="<html>b</html>")
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def _slow_solve(url: str, *, timeout: float) -> str:
+        async def _slow_solve(
+            url: str, *, timeout: float, headers: object = None
+        ) -> str:
             started.set()
             await release.wait()
             return "<html>solved</html>"
@@ -464,7 +488,9 @@ class TestBrowserSessionReuse:
         respx.get("https://cf.example/a").respond(403, text=_CF_CHALLENGE)
         started, release = asyncio.Event(), asyncio.Event()
 
-        async def _broken_solve(url: str, *, timeout: float) -> str:
+        async def _broken_solve(
+            url: str, *, timeout: float, headers: object = None
+        ) -> str:
             started.set()
             await release.wait()
             raise RuntimeError("browser gone")

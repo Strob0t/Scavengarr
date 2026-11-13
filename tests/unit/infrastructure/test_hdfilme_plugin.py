@@ -1,4 +1,4 @@
-"""Tests for the hdfilme.cafe Python plugin (httpx-based)."""
+"""Tests for the hdfilme Python plugin (httpx-based)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.domain.entities.stremio import ExternalIds
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
+from scavengarr.infrastructure.plugins.constants import search_external_ids
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "hdfilme.py"
 
@@ -182,6 +184,47 @@ _SERIES_DETAIL_HTML = """\
 """
 
 
+_CV_SEARCH_HTML = """\
+<div class="grid">
+  <a class="cv" href="/filme1/197-braveheart-stream" title="Braveheart">
+    <div class="cv-art"><img src="/poster.jpg" alt="Braveheart"></div>
+    <div class="cv-t">Braveheart</div>
+    <div class="cv-m">1995</div>
+  </a>
+  <a class="cv" href="/filme1/198-inception-stream" title="Inception">
+    <div class="cv-t">Inception</div>
+    <div class="cv-m">2010 · ★ 8,8</div>
+  </a>
+</div>
+"""
+
+_NEW_FILM_DETAIL_HTML = """\
+<html><head>
+<title>Braveheart (1995) Kostenlos Stream Online | HDfilme</title>
+</head><body><main class="wrap">
+<aside class="dx"><div class="scheda">
+  <h1 class="dh1">Braveheart</h1>
+  <p class="dmeta">
+    <span class="dmeta-v">
+      <span><a href="/genre/drama">Drama</a></span>
+      <span> <a href="/genre/historie">Historie</a></span>
+      <span> <a href="/genre/kriegsfilm">Kriegsfilm</a></span>
+    </span>
+    <i class="dsep">|</i>
+    <span class="dmeta-v"><span><a href="/land/usa">USA</a></span></span>
+    <i class="dsep">|</i>1995<i class="dsep">|</i>177<!-- --> Min.
+    <i class="dsep">|</i><span class="dmeta-s">★ <!-- -->8,0</span>
+  </p>
+  <div class="trama-dx">
+    <p class="dsyn">Ende des 13. Jahrhunderts ermorden britische Besatzer
+    die geliebte Frau des in Schottland lebenden William Wallace.</p>
+  </div>
+</div></aside>
+<div class="player"><iframe src="https://devideosrc.co/custom/movie/tt0112573"></iframe></div>
+</main></body></html>
+"""
+
+
 # ---------------------------------------------------------------------------
 # Parser unit tests
 # ---------------------------------------------------------------------------
@@ -212,6 +255,21 @@ class TestSearchResultParser:
         parser = _SearchResultParser("https://hdfilme.cafe")
         parser.feed(html)
         assert len(parser.results) == 0
+
+    def test_parses_cv_search_results(self) -> None:
+        parser = _SearchResultParser("https://hd-filme.today")
+        parser.feed(_CV_SEARCH_HTML)
+
+        assert [result["title"] for result in parser.results] == [
+            "Braveheart",
+            "Inception",
+        ]
+        assert (
+            parser.results[0]["url"]
+            == "https://hd-filme.today/filme1/197-braveheart-stream"
+        )
+        assert parser.results[0]["year"] == "1995"
+        assert parser.results[1]["year"] == "2010"
 
     def test_item_without_movie_title_skipped(self) -> None:
         html = """\
@@ -245,6 +303,23 @@ class TestDetailPageParser:
         assert parser.is_series is False
         assert "themoviedb.org/movie/268" in parser.tmdb_url
 
+    def test_parses_new_detail_layout(self) -> None:
+        parser = _DetailPageParser("https://hd-filme.today")
+        parser.feed(_NEW_FILM_DETAIL_HTML)
+
+        assert parser.title == "Braveheart"
+        assert parser.year == "1995"
+        assert parser.duration == "177 min"
+        assert parser.genres == ["Drama", "Historie", "Kriegsfilm"]
+        assert parser.is_series is False
+        assert parser.description.startswith("Ende des 13.")
+
+    def test_parses_hour_long_runtime(self) -> None:
+        parser = _DetailPageParser("https://hd-filme.today")
+        parser.feed('<p class="dmeta">Drama | 2023 | 2 Std. 5 Min.</p>')
+
+        assert parser.duration == "125 min"
+
     def test_parses_series_detail(self) -> None:
         parser = _DetailPageParser("https://hdfilme.cafe")
         parser.feed(_SERIES_DETAIL_HTML)
@@ -273,6 +348,12 @@ class TestDetailPageParser:
     def test_series_detected_by_tmdb_tv_url(self) -> None:
         html = '<a href="https://www.themoviedb.org/tv/12345">TMDB</a>'
         parser = _DetailPageParser("https://hdfilme.cafe")
+        parser.feed(html)
+        assert parser.is_series is True
+
+    def test_series_detected_by_og_type(self) -> None:
+        html = '<meta property="og:type" content="video.tv_show">'
+        parser = _DetailPageParser("https://hd-filme.today")
         parser.feed(html)
         assert parser.is_series is True
 
@@ -309,7 +390,7 @@ class TestDetailPageParser:
 # Plugin tests (respx)
 # ---------------------------------------------------------------------------
 
-_BASE = "https://hdfilme.cafe"
+_BASE = "https://hd-filme.today"
 _BATMAN_URL = _BASE + "/filme1/23004-batman-stream.html"
 _THE_BATMAN_URL = _BASE + "/filme1/39187-the-batman-stream.html"
 _ST_URL = _BASE + "/filme1/29460-stranger-things-stream.html"
@@ -405,7 +486,7 @@ def _search_html(*items: tuple[str, str]) -> str:
 def _mock_site(listing: str, details: dict[str, str]) -> respx.Route:
     """Route search/browse listing, detail pages and devideosrc."""
     listing_route = respx.get(
-        url__regex=rf"^{_BASE}/(\?.*|filme1/(page/\d+/)?|serien/(page/\d+/)?)$"
+        url__regex=rf"^{_BASE}/(suche.*|\?.*|filme1/(page/\d+/)?|serien/(page/\d+/)?)$"
     ).mock(
         side_effect=lambda request: httpx.Response(
             200, text="" if "/page/" in request.url.path else listing
@@ -446,6 +527,58 @@ class TestHdfilmePlugin:
             "https://dr0pstream.com/e/i6yeojjbilif",
             "https://doodstream.com/e/jud9plfzzhf0",
         ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_direct_tmdb_lookup_skips_the_text_search(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            "",
+            {f"{_BASE}/filme1/346364": _NEW_FILM_DETAIL_HTML},
+        )
+        plug._search_page = AsyncMock()
+
+        token = search_external_ids.set(
+            ExternalIds(imdb_id="tt1396484", tmdb_id=346364, content_type="movie")
+        )
+        try:
+            results = await plug.search("Es")
+        finally:
+            search_external_ids.reset(token)
+        await plug.cleanup()
+
+        assert [result.title for result in results] == ["Braveheart"]
+        plug._search_page.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_direct_tmdb_lookup_falls_back_to_text_search(self) -> None:
+        plug = _make_plugin()
+        plug._ensure_client = AsyncMock()
+        plug._search_page = AsyncMock(
+            return_value=[
+                {
+                    "title": "Batman",
+                    "url": f"{_BASE}/filme1/23004-batman-stream.html",
+                    "year": "1989",
+                }
+            ]
+        )
+        expected = SearchResult(
+            title="Batman", download_link="https://dood/1", category=2000
+        )
+        plug._scrape_detail = AsyncMock(side_effect=[[], [expected]])
+
+        token = search_external_ids.set(
+            ExternalIds(tmdb_id=346364, content_type="movie")
+        )
+        try:
+            results = await plug.search("Batman")
+        finally:
+            search_external_ids.reset(token)
+        await plug.cleanup()
+
+        assert results == [expected]
+        plug._search_page.assert_awaited_once()
 
     @respx.mock
     @pytest.mark.asyncio
@@ -653,6 +786,41 @@ class TestLooseMatches:
         scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
         assert scraped == ["https://site.example/1"]
 
+    async def test_title_search_caps_detail_scrapes(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_page = AsyncMock(
+            return_value=[
+                {"title": f"Dark {i}", "url": f"https://site.example/{i}"}
+                for i in range(20)
+            ]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=[])
+
+        await plugin.search("Dark")
+
+        assert len(plugin._scrape_detail.await_args_list) == 5
+
+    async def test_title_search_starts_with_the_exact_hit(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_page = AsyncMock(
+            return_value=[
+                {"title": f"Dark {i}", "url": f"https://site.example/{i}"}
+                for i in range(20)
+            ]
+            + [{"title": "Dark", "url": "https://site.example/dark"}]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=[])
+
+        await plugin.search("Dark")
+
+        scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
+        assert scraped[0] == "https://site.example/dark"
+        assert len(scraped) == 5
+
     async def test_season_request_scrapes_the_exact_hit_only(self) -> None:
         plugin = _make_plugin()
         plugin._ensure_client = AsyncMock()
@@ -677,7 +845,9 @@ class TestLooseMatches:
 async def test_a_search_page_that_times_out_is_a_timeout() -> None:
     """A slow site is a timeout in the plugin record, not a search without
     results."""
-    respx.get("https://hdfilme.cafe/").mock(side_effect=httpx.ReadTimeout("slow"))
+    respx.get(url__startswith=f"{_BASE}/suche").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
     plugin = _make_plugin()
     plugin._client = httpx.AsyncClient()
     plugin._domain_verified = True

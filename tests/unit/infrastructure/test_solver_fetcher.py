@@ -59,6 +59,46 @@ class TestSolverFetcher:
         }
 
     @respx.mock
+    async def test_sensitive_headers_stay_out_of_the_solver(self) -> None:
+        """A solver applies headers to every request its browser makes, a
+        redirect target included; the plugin's session token does not go."""
+        route = respx.post(f"{_SOLVER}/v1").respond(200, json=_solution())
+
+        async with httpx.AsyncClient() as client:
+            fetcher = SolverFetcher(http_client=client, base_url=_SOLVER)
+            await fetcher.fetch_text(
+                "https://site.example/api",
+                timeout=40,
+                headers={
+                    "Accept": "application/json",
+                    "Referer": "https://site.example/",
+                    "X-XSRF-TOKEN": "token",
+                    "Authorization": "Bearer secret",
+                },
+            )
+
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["headers"] == {
+            "Accept": "application/json",
+            "Referer": "https://site.example/",
+        }
+
+    @respx.mock
+    async def test_only_sensitive_headers_leave_no_headers_key(self) -> None:
+        route = respx.post(f"{_SOLVER}/v1").respond(200, json=_solution())
+
+        async with httpx.AsyncClient() as client:
+            fetcher = SolverFetcher(http_client=client, base_url=_SOLVER)
+            await fetcher.fetch_text(
+                "https://site.example/api",
+                timeout=40,
+                headers={"X-XSRF-TOKEN": "token"},
+            )
+
+        payload = json.loads(route.calls[0].request.content)
+        assert "headers" not in payload
+
+    @respx.mock
     async def test_json_rendered_by_the_browser_is_unwrapped(self) -> None:
         page = '<html><head></head><body><pre>{"a": 1}</pre></body></html>'
         respx.post(f"{_SOLVER}/v1").respond(200, json=_solution(response=page))

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -26,6 +26,7 @@ from scavengarr.domain.ports.browser_fetcher import (
     ClickThrough,
     Redirect,
 )
+from scavengarr.infrastructure.browser.header_safety import safe_headers
 
 log = structlog.get_logger(__name__)
 
@@ -37,6 +38,11 @@ _PRE_ONLY_RE = re.compile(
 )
 # Extra time on top of the solver's own budget for the HTTP round trip
 _HTTP_MARGIN_S = 10.0
+# A solver applies the request's headers to every request its browser makes,
+# a subresource or a redirect target included. Only the harmless headers go
+# therefore (``safe_headers``): a plugin's session token (moflix's
+# X-XSRF-TOKEN) stays with the own browser, whose in-page fetch carries it,
+# and the plugin's next httpx request after the session adoption carries it.
 
 
 def _unwrap_pre(body: str) -> str:
@@ -53,16 +59,31 @@ class SolverFetcher:
         # host -> session of the site's latest solution
         self._sessions: dict[str, BrowserSession] = {}
 
-    async def _solve(self, url: str, timeout: float) -> dict[str, Any] | None:
-        """Run ``request.get`` and return the solution (``None`` on failure)."""
+    async def _solve(
+        self,
+        url: str,
+        timeout: float,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Run ``request.get`` and return the solution (``None`` on failure).
+
+        *headers* are filtered to the harmless ones (``safe_headers``): the
+        solver cannot scope a header to one origin.
+        """
+        payload: dict[str, Any] = {
+            "cmd": "request.get",
+            "url": url,
+            "maxTimeout": int(timeout * 1000),
+        }
+        if headers:
+            scoped = safe_headers(headers)
+            if scoped:
+                payload["headers"] = scoped
         try:
             resp = await self._http.post(
                 self._endpoint,
-                json={
-                    "cmd": "request.get",
-                    "url": url,
-                    "maxTimeout": int(timeout * 1000),
-                },
+                json=payload,
                 timeout=timeout + _HTTP_MARGIN_S,
             )
             data = resp.json()
@@ -100,8 +121,14 @@ class SolverFetcher:
     async def session(self, url: str) -> BrowserSession | None:
         return self._sessions.get(urlsplit(url).hostname or "")
 
-    async def fetch_text(self, url: str, *, timeout: float) -> str | None:
-        solution = await self._solve(url, timeout)
+    async def fetch_text(
+        self,
+        url: str,
+        *,
+        timeout: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> str | None:
+        solution = await self._solve(url, timeout, headers=headers)
         if solution is None:
             return None
         status = solution.get("status")
@@ -140,9 +167,15 @@ class ChainedBrowserFetcher:
         # host -> the fetcher whose browser last passed that site
         self._served: dict[str, BrowserFetcherPort] = {}
 
-    async def fetch_text(self, url: str, *, timeout: float) -> str | None:
+    async def fetch_text(
+        self,
+        url: str,
+        *,
+        timeout: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> str | None:
         for fetcher in self._fetchers:
-            body = await fetcher.fetch_text(url, timeout=timeout)
+            body = await fetcher.fetch_text(url, timeout=timeout, headers=headers)
             if body is not None:
                 self._served[urlsplit(url).hostname or ""] = fetcher
                 return body

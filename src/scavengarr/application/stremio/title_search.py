@@ -28,6 +28,7 @@ from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.title_resolution import TitleResolver
 from scavengarr.domain.entities.stremio import (
     EpisodeRef,
+    ExternalIds,
     StremioStreamRequest,
     TitleMatchInfo,
 )
@@ -343,6 +344,24 @@ class TitleSearch:
                 matches = await self._titles.matching(results, ref)
                 progress.add(results, matches.matching, matches.partial)
 
+            tmdb_id = next(
+                (
+                    info.tmdb_id
+                    for info in title_infos.values()
+                    if info is not None and info.tmdb_id is not None
+                ),
+                None,
+            )
+            external_ids = None
+            if tmdb_id is not None:
+                external_ids = ExternalIds(
+                    imdb_id=(
+                        request.imdb_id if request.imdb_id.startswith("tt") else None
+                    ),
+                    tmdb_id=tmdb_id,
+                    content_type=request.content_type,
+                )
+
             progress.expect(group_plugins)
             await self._search_runner.search_with_fallback(
                 group_plugins,
@@ -351,6 +370,7 @@ class TitleSearch:
                 season=request.season,
                 episode=request.episode,
                 episode_ref=episode_ref,
+                external_ids=external_ids,
                 budget=budget,
                 budget_ends=budget_ends,
                 on_results=_found,

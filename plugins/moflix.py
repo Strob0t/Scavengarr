@@ -41,6 +41,9 @@ _DOMAINS = [
     "moflix-stream.click",
 ]
 _SEARCH_LIMIT = 20  # API hard cap
+# A title search scrapes the closest hits only: each detail is an API call
+# behind Cloudflare, and a generic title can match many results.
+_TITLE_SCRAPE_HITS = 5
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -329,7 +332,7 @@ class MoflixPlugin(HttpxPluginBase):
             query,
             _hit_name,
             limit=SINGLE_TITLE_HITS if season is not None else None,
-        )
+        )[:_TITLE_SCRAPE_HITS]
         if not search_results:
             return []
 

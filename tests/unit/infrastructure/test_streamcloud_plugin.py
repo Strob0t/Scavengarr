@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import json
 from pathlib import Path
@@ -12,7 +13,9 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.domain.entities.stremio import ExternalIds
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
+from scavengarr.infrastructure.plugins.constants import search_external_ids
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "streamcloud.py"
 
@@ -36,7 +39,7 @@ _clean_title = _mod._clean_title
 _detect_series = _mod._detect_series
 
 
-_BASE = "https://streamcloud.download"
+_BASE = "https://streamcloud.date"
 
 
 def _make_plugin() -> object:
@@ -57,24 +60,24 @@ _SEARCH_HTML = """\
 
 <div class="item cf item-video post-1515412 post type-post" style="position:relative;">
   <div class="thumb" title="Justice League">
-    <a href="https://streamcloud.download/7244-justice-league-stream-deutsch.html">\
+    <a href="/7244-justice-league-stream-deutsch.html">\
 <img src="/uploads/thumb/poster.jpg" alt="Justice League"><span class="overlay">\
 </span></a>
   </div>
   <div class="f_title">\
-<a href="https://streamcloud.download/7244-justice-league-stream-deutsch.html">\
+<a href="/7244-justice-league-stream-deutsch.html">\
 Justice League</a></div>
   <div class="f_year">2017</div>
 </div>
 
 <div class="item cf item-video post-1515412 post type-post" style="position:relative;">
   <div class="thumb" title="The Batman">
-    <a href="https://streamcloud.download/39187-the-batman-stream-deutsch.html">\
+    <a href="/39187-the-batman-stream-deutsch.html">\
 <img src="/uploads/thumb/poster2.jpg" alt="The Batman"><span class="overlay">\
 </span></a>
   </div>
   <div class="f_title">\
-<a href="https://streamcloud.download/39187-the-batman-stream-deutsch.html">\
+<a href="/39187-the-batman-stream-deutsch.html">\
 The Batman</a></div>
   <div class="f_year">2004</div>
 </div>
@@ -122,6 +125,45 @@ _EMPTY_DETAIL_HTML = """\
 <h1>No Streams Available</h1>
 <p>Short text.</p>
 </main></body></html>
+"""
+
+_CV_SEARCH_HTML = """\
+<div class="grid">
+  <a class="cv" href="/filme/197-braveheart-stream-deutsch" title="Braveheart">
+    <div class="cv-art"><img src="/poster.jpg" alt="Braveheart"></div>
+    <div class="cv-t">Braveheart</div>
+    <div class="cv-m">1995 · ★ 8,0</div>
+  </a>
+  <a class="cv" href="/filme/198-inception-stream-deutsch" title="Inception">
+    <div class="cv-t">Inception</div>
+    <div class="cv-m">2010 · ★ 8,8</div>
+  </a>
+</div>
+"""
+
+_NEW_MOVIE_DETAIL_HTML = """\
+<html><body><main class="wrap"><div class="sc-fila">
+  <div class="player"><iframe src="https://devideosrc.co/movie/tt0112573"></iframe></div>
+  <h1 class="sc-h1">Braveheart</h1>
+  <div class="sc-sub">
+    <span class="sc-hd">HD | Deutsch</span>
+    <a class="sc-imdb" href="https://www.imdb.com/title/tt0112573/">
+      <span class="sc-star">★</span> <!-- -->8,0<!-- -->/10
+    </a>
+  </div>
+  <div class="sc-info">
+    <p class="dsyn">Ende des 13. Jahrhunderts ermorden britische Besatzer
+    die geliebte Frau des in Schottland lebenden William Wallace.</p>
+    <div class="sc-riga"><strong>Genres:</strong><div>
+      <span><a href="/genre/drama">Drama</a></span>
+      <span> / <a href="/genre/historie">Historie</a></span>
+    </div></div>
+    <div class="sc-riga"><strong>Veröffentlicht:</strong><div>
+      <a href="/jahr/1995">1995</a>
+    </div></div>
+    <div class="sc-riga"><strong>Spielzeit:</strong><div>177 min</div></div>
+  </div>
+</div></main></body></html>
 """
 
 _MOVIE_PLAYER = "https://devideosrc.co/movie/tt0974015"
@@ -196,7 +238,15 @@ def _embed_links(request: httpx.Request) -> httpx.Response:
 
 
 def _mock_site(search_html: str, details: dict[str, str]) -> None:
-    """Route search (page 1 GET, page 2+ POST), detail pages and devideosrc."""
+    """Route search (page 1, page 2+), detail pages and devideosrc."""
+
+    def _suche(request: httpx.Request) -> httpx.Response:
+        # The 2026-11 layout has no page 2 in these fixtures.
+        return httpx.Response(
+            200, text="" if "page=" in str(request.url) else search_html
+        )
+
+    respx.get(url__startswith=_BASE + "/suche").mock(side_effect=_suche)
     respx.get(_BASE + "/").respond(200, text=search_html)
     respx.post(_BASE + "/index.php").respond(200, text="")
     for url, html in details.items():
@@ -287,6 +337,21 @@ class TestSearchResultParser:
         parser.feed("<html><body>No results</body></html>")
         assert len(parser.results) == 0
 
+    def test_parses_cv_search_results(self) -> None:
+        parser = _SearchResultParser("https://streamcloud.date")
+        parser.feed(_CV_SEARCH_HTML)
+
+        assert [result["title"] for result in parser.results] == [
+            "Braveheart",
+            "Inception",
+        ]
+        assert (
+            parser.results[0]["url"]
+            == "https://streamcloud.date/filme/197-braveheart-stream-deutsch"
+        )
+        assert parser.results[0]["year"] == "1995"
+        assert parser.results[1]["year"] == "2010"
+
     def test_card_without_title_skipped(self) -> None:
         html = """\
         <div class="item cf item-video">
@@ -331,6 +396,54 @@ class TestDetailPageParser:
         assert parser.imdb_rating == "6.1"
         assert parser.description.startswith("Bruce Wayne")
         assert parser.is_series is False
+
+    def test_new_detail_layout(self) -> None:
+        parser = _DetailPageParser(_BASE)
+        parser.feed(_NEW_MOVIE_DETAIL_HTML)
+
+        assert parser.title == "Braveheart"
+        assert parser.year == "1995"
+        assert parser.genres == ["Drama", "Historie"]
+        assert parser.runtime == "177 min"
+        assert parser.imdb_id == "tt0112573"
+        assert parser.imdb_rating == "8.0"
+        assert parser.description.startswith("Ende des 13.")
+        assert parser.is_series is False
+
+    def test_series_from_og_type(self) -> None:
+        parser = _DetailPageParser(_BASE)
+        parser.feed('<meta property="og:type" content="video.tv_show">')
+
+        assert parser.is_series is True
+
+    def test_new_rows_without_h1_class_use_the_bare_h1(self) -> None:
+        html = (
+            "<h1>Braveheart</h1>"
+            '<div class="sc-riga"><strong>Genres:</strong>'
+            '<div><a href="/genre/drama">Drama</a></div></div>'
+        )
+        parser = _DetailPageParser(_BASE)
+        parser.feed(html)
+
+        assert parser.title == "Braveheart"
+        assert parser.genres == ["Drama"]
+
+    def test_legacy_detail_does_not_use_site_logo_as_title(self) -> None:
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "fixtures"
+            / "html"
+            / "streamcloud"
+            / "detail-oppenheimer.html.gz"
+        )
+        html = gzip.decompress(fixture.read_bytes()).decode("utf-8")
+
+        parser = _DetailPageParser("https://streamcloud.download")
+        parser.feed(html)
+
+        # The legacy page's first <h1> is its logo; the search result names it.
+        assert parser.title == ""
+        assert parser.year == "2023"
 
     def test_series_metadata_in_spans(self) -> None:
         parser = _DetailPageParser(_BASE)
@@ -384,6 +497,100 @@ class TestStreamcloudPluginSearch:
 
         # "Justice League" is a loose match of the site's search, not scraped
         assert {r.title for r in results} == {"The Batman"}
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_direct_tmdb_lookup_skips_the_text_search(self) -> None:
+        plug = _make_plugin()
+        _mock_site(
+            "",
+            {f"{_BASE}/filme/346364": _NEW_MOVIE_DETAIL_HTML},
+        )
+        respx.get("https://devideosrc.co/movie/tt0112573").respond(
+            200, text=_player_html("movie", "tt0112573")
+        )
+        plug._search_all_pages = AsyncMock()
+
+        token = search_external_ids.set(
+            ExternalIds(imdb_id="tt1396484", tmdb_id=346364, content_type="movie")
+        )
+        try:
+            results = await plug.search("Es")
+        finally:
+            search_external_ids.reset(token)
+        await plug.cleanup()
+
+        assert [result.title for result in results] == ["Braveheart"]
+        plug._search_all_pages.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_direct_tmdb_lookup_falls_back_to_text_search(self) -> None:
+        plug = _make_plugin()
+        plug._ensure_client = AsyncMock()
+        plug._search_all_pages = AsyncMock(
+            return_value=[
+                {
+                    "title": "Batman",
+                    "url": f"{_BASE}/filme/23004-batman-stream-deutsch.html",
+                    "year": "1989",
+                }
+            ]
+        )
+        expected = SearchResult(
+            title="Batman", download_link="https://dood/1", category=2000
+        )
+        plug._scrape_detail = AsyncMock(side_effect=[None, expected])
+
+        token = search_external_ids.set(
+            ExternalIds(tmdb_id=346364, content_type="movie")
+        )
+        try:
+            results = await plug.search("Batman")
+        finally:
+            search_external_ids.reset(token)
+        await plug.cleanup()
+
+        assert results == [expected]
+        plug._search_all_pages.assert_awaited_once()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_legacy_detail_keeps_the_search_title(self) -> None:
+        base = Path(__file__).resolve().parents[2] / "fixtures" / "html" / "streamcloud"
+        search = gzip.decompress((base / "search-oppenheimer.html.gz").read_bytes())
+        detail = gzip.decompress((base / "detail-oppenheimer.html.gz").read_bytes())
+        detail_urls = (
+            "https://streamcloud.download/"
+            "33792-to-end-all-war-oppenheimer-the-atomic-bomb-stream-deutsch.html",
+            "https://streamcloud.download/23684-oppenheimer-stream-deutsch.html",
+        )
+        _mock_site(
+            search.decode("utf-8"),
+            {url: detail.decode("utf-8") for url in detail_urls},
+        )
+        respx.get("https://devideosrc.co/movie/tt15398776").respond(
+            200, text=_player_html("movie", "tt15398776")
+        )
+
+        plug = _make_plugin()
+        results = await plug.search("Oppenheimer")
+        await plug.cleanup()
+
+        assert results
+        assert all(result.title != "StreamCloud" for result in results)
+        assert any("Oppenheimer" in result.title for result in results)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_cv_layout_is_not_paginated(self) -> None:
+        plug = _make_plugin()
+        _mock_site(_CV_SEARCH_HTML, {})
+
+        await plug.search("Braveheart")
+        await plug.cleanup()
+
+        suche_calls = [c for c in respx.calls if "/suche" in str(c.request.url)]
+        assert len(suche_calls) == 1
 
     @respx.mock
     @pytest.mark.asyncio
@@ -595,10 +802,10 @@ class TestStreamcloudDomainFallback:
         # First domain fails, second succeeds
         ok_resp = MagicMock()
         ok_resp.status_code = 200
-        ok_resp.url = httpx.URL("https://streamcloud.plus/")
+        ok_resp.url = httpx.URL("https://streamcloud.download/")
         mock_client.head = AsyncMock(
             side_effect=[
-                httpx.ConnectError("streamcloud.download down"),
+                httpx.ConnectError("streamcloud.date down"),
                 ok_resp,
             ]
         )
@@ -606,11 +813,11 @@ class TestStreamcloudDomainFallback:
         plug._client = mock_client
         await plug._verify_domain()
 
-        assert plug.base_url == "https://streamcloud.plus"
+        assert plug.base_url == "https://streamcloud.download"
         assert plug._domain_verified is True
         # streamcloud.my is a gambling site now (2026-10-01): never a fallback
         tried = [str(c.args[0]) for c in mock_client.head.await_args_list]
-        assert "streamcloud.plus" in tried[1]
+        assert "streamcloud.download" in tried[1]
 
     @pytest.mark.asyncio
     async def test_no_domain_reachable(self) -> None:
@@ -624,7 +831,7 @@ class TestStreamcloudDomainFallback:
         with pytest.raises(PluginUnreachableError):
             await plug._verify_domain()
 
-        assert plug.base_url == "https://streamcloud.download"
+        assert plug.base_url == "https://streamcloud.date"
         assert plug._domain_verified is False
 
     @pytest.mark.asyncio
@@ -684,6 +891,41 @@ class TestLooseMatches:
         scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
         assert scraped == ["https://site.example/1"]
 
+    async def test_title_search_caps_detail_scrapes(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_all_pages = AsyncMock(
+            return_value=[
+                {"title": f"Dark {i}", "url": f"https://site.example/{i}"}
+                for i in range(20)
+            ]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=None)
+
+        await plugin.search("Dark")
+
+        assert len(plugin._scrape_detail.await_args_list) == 5
+
+    async def test_title_search_starts_with_the_exact_hit(self) -> None:
+        plugin = _make_plugin()
+        plugin._ensure_client = AsyncMock()
+        plugin._verify_domain = AsyncMock()
+        plugin._search_all_pages = AsyncMock(
+            return_value=[
+                {"title": f"Dark {i}", "url": f"https://site.example/{i}"}
+                for i in range(20)
+            ]
+            + [{"title": "Dark", "url": "https://site.example/dark"}]
+        )
+        plugin._scrape_detail = AsyncMock(return_value=None)
+
+        await plugin.search("Dark")
+
+        scraped = [c.args[0]["url"] for c in plugin._scrape_detail.await_args_list]
+        assert scraped[0] == "https://site.example/dark"
+        assert len(scraped) == 5
+
     async def test_season_request_scrapes_the_exact_hit_only(self) -> None:
         plugin = _make_plugin()
         plugin._ensure_client = AsyncMock()
@@ -708,7 +950,7 @@ class TestLooseMatches:
 async def test_a_search_page_that_times_out_is_a_timeout() -> None:
     """A slow site is a timeout in the plugin record, not a search without
     results."""
-    respx.get("https://streamcloud.download/").mock(
+    respx.get(url__startswith=f"{_BASE}/suche").mock(
         side_effect=httpx.ReadTimeout("slow")
     )
     plugin = _make_plugin()

@@ -177,6 +177,7 @@ The background searches follow these rules (`title_search.py`):
 ### The answer budget
 
 The answer budget decides when a request stops waiting for its search, and the plugin timeout decides when a plugin is cut.
+A mirror group's standby is the exception: it is the extra run for this answer, so it gets the time left of the answer budget once its slot is acquired, and is not started when that has passed, the wait for the slot included.
 The diagram shows a search with one plugin that holds its slot at once and one that waits for a slot.
 The rules behind it (the slots, the plugin timeout, the breaker and the late results) are in [the Stremio search timing](architecture.md#the-stremio-search-timing).
 
@@ -211,6 +212,7 @@ sequenceDiagram
 `PluginCircuitBreaker` (`infrastructure/circuit_breaker.py`) skips a plugin after 5 failures in a row, for 60 s at first.
 It counts each plugin per requested category (`<plugin>:2000` for its movies, `<plugin>:5000` for its series), since a site can be too slow for one content type only.
 An error, an unreachable site and a timeout are failures, and a search with results is a success.
+A mirror standby cut at the answer budget counts as a timeout in the plugin history but not as a breaker failure: it did not have its whole timeout.
 An answer without results neither counts nor resets the breaker, since a site that answers an empty search at once would otherwise keep closing it.
 After the cooldown one probe request is allowed (half-open), and the concurrent requests skip the plugin until it reports.
 A probe that never reports is replaced by the next request after one more cooldown.

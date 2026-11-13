@@ -614,6 +614,7 @@ class TestGetTitleAndYear:
         assert result is not None
         assert result.title == "Terminator 2 – Tag der Abrechnung"
         assert result.year == 1991
+        assert result.tmdb_id == 280
 
     @respx.mock
     @pytest.mark.asyncio()
