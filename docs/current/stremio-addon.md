@@ -97,14 +97,16 @@ A series whose list entry carries a season or another IMDb id gets no number.
 
 `TitleResolver` (`application/stremio/title_resolution.py`) looks up the title and year per plugin language through TMDB's `/find` by the IMDb id, a `tmdb:` id by its TMDB id, in the language's locale.
 The reference titles are the localised title and TMDB's original title where it differs.
-A plugin is searched with the titles of its own languages only: the original title is no search query.
-TMDB's answers are cached: a lookup for 24 h, the trending lists for 6 h, a search for 1 h and the IMDb ids of catalog items for 30 days.
+For a TV title whose `/find` result names its origin country, the client also reads TMDB's `/alternative_titles` and adds one vetted Latin-script alternative to the reference titles and to `search_titles`: one of TMDB's same-content types (`romaji`, `alternative spelling`, `common misspelling`, `literal translation`, `original name`, `title`, or an untyped entry), never a special, sequel, working title, acronym or short code.
+A plugin is searched with the titles of its own languages only: the original title is no search query; a title's `search_titles` is the exception.
+TMDB's answers are cached: a lookup for 24 h, the trending lists for 6 h, a search for 1 h, the IMDb ids of catalog items for 30 days and a title's alternative titles for 7 days (a failed answer for 5 minutes).
+A `tmdb:` id from a catalog item still names only its localized title: the alternative search title comes from an IMDb `/find` result.
 Without a TMDB key `ImdbFallbackClient` (`infrastructure/tmdb/imdb_fallback.py`) takes the titles from the IMDB Suggest API and the localised ones from Wikidata (the IMDb property `P345`).
 Title and year come from the suggest entry with the requested id; an answer without that id gives no title (`imdb_suggest_id_missing`) and is not cached.
 
 Plugins declare their `languages` (default `["de"]`), and the use case groups the plugins by identical language lists.
 It looks up the titles of every language a stream plugin searches in, in parallel, and searches each group with its languages' queries (`application/stremio/queries.py`).
-A group's queries are the full title and, for a title with a colon, the base title before it.
+A group's queries are the full title and, for a title with a colon, the base title before it, plus each language's `search_titles` cleaned as one query (no colon-base fallback for those).
 Every title info carries the request's series titles in all those languages (`series_titles`), so a partial match is judged alike in every group and the locating plugins get the same titles whichever plugins a request selects.
 
 The use case reads the request's Cinemeta meta once (`SeriesMetaPort`, `CinemetaClient` in `infrastructure/stremio/cinemeta.py`, cached for 7 days).
@@ -248,7 +250,7 @@ The search runner counts the dropped results per plugin in the plugins' long-ter
 | Threshold | A result needs `title_match_threshold` to stay. |
 | Year tolerance | Movies get `title_year_tolerance_movie`, series `title_year_tolerance_series`. |
 | Candidates | Each result is scored by up to four deduplicated candidates: the raw title, guessit's title of `title` and of `release_name`, and the raw `release_name`. |
-| Reference titles | The localised title counts with TMDB's original title where it differs. |
+| Reference titles | The localised title counts with TMDB's original title where it differs and the vetted original-language alternative from `/alternative_titles`. |
 | IMDb id | A result whose metadata names `imdb` or `imdb_id` is kept or dropped by the id alone (reason `imdb`), before any text is compared. |
 | Kind | With the reference's kind known, a result whose label or genres contradict it is dropped (reason `category`). |
 | Partial match | A series result that holds none of the request's series titles whole but a strict word subset of one is partial, and it counts only where its plugin keeps no other match. |

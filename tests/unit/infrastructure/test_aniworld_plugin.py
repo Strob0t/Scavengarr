@@ -128,6 +128,16 @@ _AJAX_SEARCH_RESPONSE = [
     },
 ]
 
+# The site answers an empty body for a keyword with an apostrophe; this is
+# what the quote-free fallback query returns.
+_AJAX_JOJO_RESPONSE = [
+    {
+        "title": "<em>JoJo</em>&#039;s Bizarre Adventure (2012)",
+        "description": "Jonathan <em>JoJo</em> Joestar...",
+        "link": "/anime/stream/jojos-bizarre-adventure",
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Plugin attribute tests
@@ -923,6 +933,54 @@ class TestLocatesEpisodes:
         assert len(results) == 1
         assert results[0].metadata["site_episode"] == 1
         assert "/anime/stream/one-piece/staffel-1" in paths
+
+
+class TestApostropheQuery:
+    """aniworld returns an empty body for a keyword with an apostrophe."""
+
+    def test_possessive_is_dropped(self) -> None:
+        assert (
+            _mod._apostrophe_free_query("JoJo's Bizarre Adventure")
+            == "Bizarre Adventure"
+        )
+
+    def test_curly_apostrophe_is_dropped(self) -> None:
+        assert _mod._apostrophe_free_query("Grey\u2019s Anatomy") == "Anatomy"
+
+    def test_query_without_apostrophe_has_no_fallback(self) -> None:
+        assert _mod._apostrophe_free_query("Breaking Bad") is None
+
+    def test_every_word_with_apostrophe_has_no_fallback(self) -> None:
+        assert _mod._apostrophe_free_query("O'Brien's") is None
+
+    async def test_search_retries_without_apostrophe(self) -> None:
+        plugin = _make_plugin()
+        plugin._domain_verified = True
+
+        empty_resp = _make_mock_response()
+        search_resp = _make_mock_response(json_data=_AJAX_JOJO_RESPONSE)
+        detail_resp = _make_mock_response(text=_DETAIL_HTML)
+        episode_resp = _make_mock_response(text=_EPISODE_HTML)
+
+        def _route_get(url, **_kw):
+            return episode_resp if "/episode-" in str(url) else detail_resp
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(side_effect=[empty_resp, search_resp])
+        mock_client.get = AsyncMock(side_effect=_route_get)
+        plugin._client = mock_client
+
+        results = await plugin.search("JoJo's Bizarre Adventure")
+
+        assert mock_client.post.await_count == 2
+        assert mock_client.post.call_args_list[0].kwargs["data"] == {
+            "keyword": "JoJo's Bizarre Adventure"
+        }
+        assert mock_client.post.call_args_list[1].kwargs["data"] == {
+            "keyword": "Bizarre Adventure"
+        }
+        assert len(results) == 1
+        assert results[0].title == "JoJo's Bizarre Adventure (2012)"
 
 
 @respx.mock

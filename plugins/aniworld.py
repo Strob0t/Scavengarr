@@ -77,6 +77,36 @@ _LANG_MAP: dict[str, str] = {
 }
 
 
+def _apostrophe_free_query(query: str) -> str | None:
+    """The longest run of words in *query* that has no apostrophe.
+
+    aniworld's AJAX search answers an empty body for any keyword that
+    contains an apostrophe ("JoJo's Bizarre Adventure", "Grey's
+    Anatomy"), so the plugin would search nothing. The site matches a
+    contiguous part of the title, so "Bizarre Adventure" finds the same
+    series. ``None`` when the query has no apostrophe or every word of
+    it has one.
+    """
+    if not any(mark in query for mark in ("'", "\u2019")):
+        return None
+    runs: list[list[str]] = []
+    current: list[str] = []
+    for word in query.split():
+        if any(mark in word for mark in ("'", "\u2019")):
+            if current:
+                runs.append(current)
+                current = []
+        else:
+            current.append(word)
+    if current:
+        runs.append(current)
+    if not runs:
+        return None
+    longest = max(runs, key=lambda run: (len(run), sum(len(word) for word in run)))
+    variant = " ".join(longest)
+    return variant if variant != query else None
+
+
 class _DetailPageParser:
     """Parse aniworld.to anime detail page (selectolax).
 
@@ -459,8 +489,15 @@ class AniworldPlugin(HttpxPluginBase):
         await self._ensure_client()
         await self._verify_domain()
 
+        items = await self._ajax_search(query)
+        if not items:
+            # aniworld answers an empty body for any keyword with an
+            # apostrophe; a quote-free part of the title still finds it
+            variant = _apostrophe_free_query(query)
+            if variant is not None:
+                items = await self._ajax_search(variant)
         all_items = relevant_hits(
-            await self._ajax_search(query),
+            items,
             query,
             hit_title,
             limit=SINGLE_TITLE_HITS if season is not None else None,

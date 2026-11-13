@@ -138,6 +138,12 @@ class TitleMatchInfo:
     by a shorter form of them is partial (``is_partial_title``), whichever
     language group's reference scores it; without them the reference's
     own titles judge it.
+
+    *search_titles* are additional titles worth searching with, besides
+    the localized ``title``: the original-language title in Latin script
+    (an anime's romaji title, e.g. ``"JoJo no Kimyou na Bouken"``), which
+    German sites often index instead of the English name. Every title is
+    also in ``alt_titles``, so the matcher accepts either form.
     """
 
     title: str
@@ -147,6 +153,7 @@ class TitleMatchInfo:
     imdb_id: str | None = None
     animation: bool | None = None
     series_titles: tuple[str, ...] = ()
+    search_titles: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
