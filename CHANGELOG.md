@@ -6,6 +6,11 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: Gateway Errors 502 and 504 Are Retried
+
+- The shared `RetryTransport` retried only 429 and 503, so a transient `502 Bad Gateway` or `504 Gateway Timeout` from an upstream (TMDB, a plugin site) went straight through. A title lookup that hit one returned no streams although a retry would have found the title. The transport now retries 502 and 504 with the same `Retry-After`/exponential backoff budget; only 429 and 503 still count as throttling for the adaptive rate limiter, so a gateway error does not halve a domain's rate.
+- Tests: `test_retry_transport.py` (502 and 504 retry, a cached 502 is not retried, a gateway error does not call `record_throttle`).
+
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
 - A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.

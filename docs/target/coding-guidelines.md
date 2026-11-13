@@ -55,7 +55,7 @@ The performance and robustness rules the code of `src/` and `plugins/` follows, 
 ### Timeouts and retries
 
 - Every outgoing request must have a timeout.
-- Retries must happen in one layer: the shared client's `RetryTransport` retries 429 and 503 (`Retry-After`, exponential backoff with jitter, capped; a 429 or 503 that Cloudflare served from its cache is not retried).
+- Retries must happen in one layer: the shared client's `RetryTransport` retries 429, 502, 503 and 504 (`Retry-After`, exponential backoff with jitter, capped; a retryable answer that Cloudflare served from its cache is not retried).
 - Plugins and resolvers must not add a generic retry loop on top; site-specific retries stay the exception.
 - A configuration error must fail fast with an explicit exception (`PluginLoadError` in `src/scavengarr/infrastructure/plugins/loader.py`), and invalid client input must answer 400 or 422.
 

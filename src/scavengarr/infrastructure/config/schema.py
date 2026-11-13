@@ -732,14 +732,14 @@ class AppConfig(BaseModel):
         description="Maximum adaptive rate per domain (rps).",
     )
 
-    # Retry on 429/503 (YAML section: http.*)
+    # Retry on 429/502/503/504 (YAML section: http.*)
     http_retry_max_attempts: int = Field(
         default=3,
         validation_alias=AliasChoices(
             "http_retry_max_attempts",
             AliasPath("http", "retry_max_attempts"),
         ),
-        description="Max retry attempts on 429/503 responses. 0 = no retries.",
+        description="Max retry attempts on 429/502/503/504 responses. 0 = no retries.",
     )
     http_retry_backoff_base: float = Field(
         default=1.0,

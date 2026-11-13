@@ -1,12 +1,12 @@
-"""httpx transport with per-domain rate limiting and 429/503 retry.
+"""httpx transport with per-domain rate limiting and 429/502/503/504 retry.
 
 A 403 or 503 that is a Cloudflare challenge (``cf-mitigated: challenge``,
 or a challenge page) is the edge talking, not the origin: it is returned
 at once, neither retried nor fed back to the rate limiter.
 
 A request with the ``LINK_CHECK`` extension goes out once, past the rate
-limit: its 429 or 503 comes back at once instead of being waited out, and
-no answer of it is fed back.
+limit: a retryable answer (429, 502, 503 or 504) comes back at once
+instead of being waited out, and no answer of it is fed back.
 """
 
 from __future__ import annotations
@@ -22,7 +22,10 @@ from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_RETRYABLE = frozenset({429, 503})
+_DEFAULT_RETRYABLE = frozenset({429, 502, 503, 504})
+# Statuses that mean the origin throttled the request; a gateway error
+# (502/504) is retried but is not fed to the adaptive rate limiter.
+_THROTTLE_STATUSES = frozenset({429, 503})
 # cf-cache-status values of responses served from Cloudflare's cache
 _CACHED_STATUSES = frozenset({"HIT", "STALE", "UPDATING"})
 # Statuses a Cloudflare challenge page comes with
@@ -68,15 +71,17 @@ def _parse_retry_after(headers: httpx.Headers) -> float | None:
 
 
 class RetryTransport(httpx.AsyncBaseTransport):
-    """Wraps an httpx transport with rate limiting and retry on 429/503.
+    """Wraps an httpx transport with rate limiting and retry on 429/502/503/504.
 
     **Proactive:** calls ``DomainRateLimiter.acquire()`` before every
     request but a link check (``LINK_CHECK``) to throttle per-domain
     request rate.
 
-    **Reactive:** on retryable HTTP status codes (429, 503 by default),
-    waits using exponential backoff (with jitter) and retries up to
+    **Reactive:** on retryable HTTP status codes (429, 502, 503 and 504 by
+    default), waits using exponential backoff (with jitter) and retries up to
     *max_retries* times.  Respects ``Retry-After`` header when present.
+    Only 429 and 503 count as throttling for the adaptive rate limiter; a
+    gateway error (502/504) is retried without halving the domain rate.
     """
 
     def __init__(
@@ -127,14 +132,18 @@ class RetryTransport(httpx.AsyncBaseTransport):
                 self._rate_limiter.record_success(url_str)
                 return response
 
-            # A cached 429/503 (Cloudflare can cache them for hours) comes back
-            # unchanged on retry and says nothing about the origin's load now
+            # A cached retryable error (Cloudflare can cache one for hours)
+            # comes back unchanged on retry and says nothing about the
+            # origin's load now
             if response.headers.get("cf-cache-status") in _CACHED_STATUSES:
                 log.debug("http_cached_error", url=url_str, status=response.status_code)
                 return response
 
-            # Adaptive feedback: throttled (429/503)
-            self._rate_limiter.record_throttle(url_str)
+            # Adaptive feedback: the origin throttled us (429/503). A
+            # gateway error (502/504) is retried but says nothing about the
+            # origin's rate.
+            if response.status_code in _THROTTLE_STATUSES:
+                self._rate_limiter.record_throttle(url_str)
 
             # Last attempt — return whatever we got
             if attempt == self._max_retries:

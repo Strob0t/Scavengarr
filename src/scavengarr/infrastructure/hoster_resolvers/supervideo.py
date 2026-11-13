@@ -239,7 +239,7 @@ class SuperVideoResolver:
     async def _fetch_with_httpx(self, embed_url: str) -> tuple[str | None, bool]:
         """Fetch page via httpx. Returns (html, cloudflare_blocked).
 
-        429/503 retries are handled transparently by the RetryTransport
+        429/502/503/504 retries are handled transparently by the RetryTransport
         layer on the shared httpx client.
         """
         try:
