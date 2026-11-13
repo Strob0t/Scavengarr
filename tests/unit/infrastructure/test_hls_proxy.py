@@ -351,7 +351,8 @@ class TestFetchHlsResource:
         route = respx.get(url).respond(200, content=b"\x47\x40")
 
         async with httpx.AsyncClient() as client:
-            chunks, _ = await stream_hls_segment(client, url, {})
+            answer = await stream_hls_segment(client, url, {})
+            chunks = answer.chunks
             async for _chunk in chunks:
                 pass
 
@@ -471,7 +472,8 @@ class TestStreamHlsSegment:
             return httpx.Response(200, stream=_Chunks(parts))
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
-            chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            answer = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            chunks = answer.chunks
             received = [chunk async for chunk in chunks]
 
         assert [len(chunk) for chunk in received] == [65536, 65536, 32768]
@@ -487,8 +489,12 @@ class TestStreamHlsSegment:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
-            chunks, content_type = await stream_hls_segment(
+            answer = await stream_hls_segment(
                 client, "https://cdn.test/1.ts", {}, head=True
+            )
+            chunks, content_type = (
+                answer.chunks,
+                answer.headers.get("content-type", "application/octet-stream"),
             )
             received = [chunk async for chunk in chunks]
 
@@ -509,10 +515,138 @@ class TestStreamHlsSegment:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
-            chunks, _ = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            answer = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            chunks = answer.chunks
             received = b"".join([chunk async for chunk in chunks])
 
         assert received == data
+        assert "content-encoding" not in answer.headers
+
+    async def test_a_segment_range_reaches_the_cdn_and_comes_back(self) -> None:
+        """The desktop Stremio app's player asks every HLS segment with
+        ``Range: bytes=0-``. Passed through, the player learns the segment's
+        length; without it, a chunked body of unknown size had it re-request
+        segment after segment (2026-11-13)."""
+        seen: list[tuple[str | None, str | None, str | None]] = []
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            seen.append(
+                (
+                    request.headers.get("range"),
+                    request.headers.get("if-range"),
+                    request.headers.get("accept-encoding"),
+                )
+            )
+            return httpx.Response(
+                206,
+                headers={
+                    "Content-Type": "video/mp2t",
+                    "Content-Length": "4",
+                    "Content-Range": "bytes 0-3/4",
+                    "Accept-Ranges": "bytes",
+                },
+                content=b"\x47\x40\x00\x10",
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_hls_segment(
+                client,
+                "https://cdn.test/1.ts",
+                {},
+                player={"Range": "bytes=0-", "If-Range": '"etag-1"'},
+            )
+            received = b"".join([chunk async for chunk in answer.chunks])
+
+        assert seen == [("bytes=0-", '"etag-1"', "identity")]
+        assert answer.status == 206
+        assert answer.headers["content-range"] == "bytes 0-3/4"
+        assert answer.headers["content-length"] == "4"
+        assert received == b"\x47\x40\x00\x10"
+
+    async def test_an_unsatisfiable_segment_range_passes_through(self) -> None:
+        """A 416 is the player's answer to see, not a 502: the file proxy
+        behaves the same way, and the streamed answer is closed first."""
+        body = _Chunks([b""])
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                416,
+                headers={"Content-Range": "bytes */4"},
+                stream=body,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_hls_segment(
+                client, "https://cdn.test/1.ts", {}, player={"Range": "bytes=9-"}
+            )
+            received = [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 416
+        assert answer.headers["content-range"] == "bytes */4"
+        assert received == []
+        assert body.closed
+
+    async def test_a_segment_keeps_the_length_the_cdn_framed(self) -> None:
+        """A framed body keeps its Content-Length (not chunked as before)."""
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp2t", "Content-Length": "3"},
+                content=b"\x47\x40\x00",
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 200
+        assert answer.headers["content-length"] == "3"
+
+    async def test_a_chunked_segment_declares_no_length(self) -> None:
+        """A body the CDN chunks promises no length; the answer must not invent
+        one (uvicorn refuses a body of another length)."""
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "video/mp2t"},
+                stream=_Chunks([b"\x47" * 1000]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            [chunk async for chunk in answer.chunks]
+
+        assert answer.status == 200
+        assert "content-length" not in answer.headers
+
+    async def test_an_encoded_segment_declares_no_length_or_span(self) -> None:
+        """The body goes out decoded, so the encoded entity's length and span
+        must not frame it (uvicorn refuses a body of another length), and a
+        206 whose span was dropped answers as the whole segment."""
+        data = b"\x47segment" * 100
+        encoded = gzip.compress(data)
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                206,
+                headers={
+                    "Content-Encoding": "gzip",
+                    "Content-Type": "video/mp2t",
+                    "Content-Length": str(len(encoded)),
+                    "Content-Range": f"bytes 0-{len(encoded) - 1}/{len(encoded)}",
+                },
+                content=encoded,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
+            answer = await stream_hls_segment(client, "https://cdn.test/1.ts", {})
+            received = b"".join([chunk async for chunk in answer.chunks])
+
+        assert received == data
+        assert answer.status == 200
+        assert set(answer.headers) == {"content-type"}
 
     async def test_the_bytes_sent_are_reported_when_the_body_ends(self) -> None:
         sent: list[int] = []
@@ -521,9 +655,10 @@ class TestStreamHlsSegment:
             return httpx.Response(200, stream=_Chunks([b"\x47" * 70000]))
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
-            chunks, _ = await stream_hls_segment(
+            answer = await stream_hls_segment(
                 client, "https://cdn.test/1.ts", {}, on_sent=sent.append
             )
+            chunks = answer.chunks
             [chunk async for chunk in chunks]
 
         assert sent == [70000]
@@ -536,9 +671,10 @@ class TestStreamHlsSegment:
             return httpx.Response(200, stream=body)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
-            chunks, _ = await stream_hls_segment(
+            answer = await stream_hls_segment(
                 client, "https://cdn.test/1.ts", {}, on_sent=sent.append
             )
+            chunks = answer.chunks
             first = await chunks.__anext__()
             await chunks.aclose()
 
@@ -572,9 +708,10 @@ class TestStreamHlsSegment:
             async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
 
                 async def _play() -> None:
-                    chunks, _ = await stream_hls_segment(
+                    answer = await stream_hls_segment(
                         client, "https://cdn.test/1.ts", {}, on_sent=sent.append
                     )
+                    chunks = answer.chunks
                     await chunks.__anext__()
                     try:
                         raise RuntimeError("the player went away")
@@ -624,12 +761,13 @@ class TestProxyWatch:
         with structlog.testing.capture_logs() as logs:
             async with httpx.AsyncClient(transport=transport) as client:
                 for number in (1, 2):
-                    chunks, _ = await stream_hls_segment(
+                    answer = await stream_hls_segment(
                         client,
                         f"https://cdn.test/hls/{number}.ts?t=secret",
                         {},
                         watch=ProxyWatch("abc", "voe", "segment"),
                     )
+                    chunks = answer.chunks
                     [chunk async for chunk in chunks]
 
         first = _events(logs, "hls_proxy_first_answer")
@@ -652,9 +790,10 @@ class TestProxyWatch:
                     ProxyWatch("abc", "voe", "segment"),
                     ProxyWatch("def", "voe", "segment"),
                 ):
-                    chunks, _ = await stream_hls_segment(
+                    answer = await stream_hls_segment(
                         client, "https://cdn.test/1.ts", {}, watch=watch
                     )
+                    chunks = answer.chunks
                     [chunk async for chunk in chunks]
             async with respx.mock:
                 respx.get("https://cdn.test/index.m3u8").mock(
@@ -702,12 +841,13 @@ class TestProxyWatch:
 
         with structlog.testing.capture_logs() as logs:
             async with httpx.AsyncClient(transport=httpx.MockTransport(_cdn)) as client:
-                chunks, _ = await stream_hls_segment(
+                answer = await stream_hls_segment(
                     client,
                     "https://cdn.test/1.ts",
                     {},
                     watch=ProxyWatch("abc", "voe", "segment"),
                 )
+                chunks = answer.chunks
                 await chunks.__anext__()
                 await chunks.aclose()
 
@@ -725,12 +865,13 @@ class TestProxyWatch:
         transport = httpx.MockTransport(self._segment_cdn)
         with structlog.testing.capture_logs() as logs:
             async with httpx.AsyncClient(transport=transport) as client:
-                chunks, _ = await stream_hls_segment(
+                answer = await stream_hls_segment(
                     client,
                     "https://cdn.test/1.ts",
                     {},
                     watch=ProxyWatch("abc", "voe", "segment"),
                 )
+                chunks = answer.chunks
                 async with contextlib.aclosing(chunks):
                     [chunk async for chunk in chunks]
 
@@ -743,13 +884,14 @@ class TestProxyWatch:
         )
         with structlog.testing.capture_logs() as logs:
             async with httpx.AsyncClient() as client:
-                chunks, _ = await stream_hls_segment(
+                answer = await stream_hls_segment(
                     client,
                     "https://cdn.test/1.ts",
                     {},
                     read_ahead=read_ahead,
                     watch=ProxyWatch("abc", "voe", "segment"),
                 )
+                chunks = answer.chunks
                 await chunks.__anext__()
                 await chunks.aclose()
 
@@ -2141,13 +2283,14 @@ class TestSegmentCut:
             async with httpx.AsyncClient(
                 transport=httpx.MockTransport(handle)
             ) as client:
-                chunks, _ = await stream_hls_segment(
+                answer = await stream_hls_segment(
                     client,
                     self._URL,
                     {"Referer": "https://moflix-stream.example/"},
                     head=head,
                     on_sent=sent.append,
                 )
+                chunks = answer.chunks
                 body = b"".join([chunk async for chunk in chunks])
         return body, seen, sent, logs
 
@@ -2220,9 +2363,10 @@ class TestSegmentCut:
             async with httpx.AsyncClient(
                 transport=httpx.MockTransport(lambda r: answers.pop(0))
             ) as client:
-                chunks, _ = await stream_hls_segment(
+                answer = await stream_hls_segment(
                     client, self._URL, {}, on_sent=sent.append
                 )
+                chunks = answer.chunks
                 with pytest.raises(SegmentCut):
                     async for chunk in chunks:
                         received += len(chunk)
@@ -2316,7 +2460,8 @@ class TestSegmentCut:
             async with httpx.AsyncClient(
                 transport=httpx.MockTransport(lambda r: answers.pop(0))
             ) as client:
-                chunks, _ = await stream_hls_segment(client, self._URL, {})
+                answer = await stream_hls_segment(client, self._URL, {})
+                chunks = answer.chunks
                 with pytest.raises(SegmentCut):
                     async for _chunk in chunks:
                         pass
@@ -2451,9 +2596,10 @@ class TestSegmentStall:
         try:
             with structlog.testing.capture_logs() as logs:
                 async with httpx.AsyncClient(timeout=30) as client:
-                    chunks, _ = await stream_hls_segment(
+                    answer = await stream_hls_segment(
                         client, f"http://127.0.0.1:{port}/hls/seg-1.ts", {}
                     )
+                    chunks = answer.chunks
                     body = b"".join([chunk async for chunk in chunks])
         finally:
             server.close()

@@ -627,10 +627,11 @@ async def _proxy_hls(
     # Segments (.ts) — stream without buffering full body
     if not master and not path.endswith(".m3u8"):
         try:
-            chunk_iter, content_type = await stream_hls_segment(
+            answer = await stream_hls_segment(
                 state.http_client,
                 target_url,
                 _cdn_headers(link),
+                player=request.headers,
                 head=head,
                 on_sent=None if head else _bytes_counter(telemetry, "segment"),
                 read_ahead=getattr(state, "hls_read_ahead", None),
@@ -639,7 +640,9 @@ async def _proxy_hls(
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
         return _BodyResponse(
-            content=chunk_iter, media_type=content_type, headers=_CORS_HEADERS
+            content=answer.chunks,
+            status_code=answer.status,
+            headers={**_CORS_HEADERS, **answer.headers},
         )
 
     # Manifests (.m3u8) — fetch, rewrite URLs, return

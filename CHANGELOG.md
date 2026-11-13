@@ -6,6 +6,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: HLS Segments Answer the Player's Byte Range
+
+- The desktop Stremio app's player plays HLS in mpv and requests every segment with `Range: bytes=0-`. The proxy answered `200` with a chunked body and no `Content-Length`, so the player never learned a segment's size: mpv re-requested segment after segment (measured: 5-7 requests per segment, each answered within a second) and playback stalled with broken frames, while a player that sends no range played the same source fine.
+- Segments now take the route direct files already took: the player's `Range` and `If-Range` reach the CDN (`Accept-Encoding: identity` keeps the offsets valid) and its status and headers (`Content-Length`, `Content-Range`, `Accept-Ranges`) go back out, so a `bytes=0-` request is answered `206` with the segment's span. A `bytes=0-` request is still served from the read-ahead cache, now as a `206` with `Content-Range`; any other range goes to the CDN, whose byte offsets decide. A `416` passes through, as it does for a file, and an encoded body — handed out decoded — declares neither the encoded length nor its span.
+- Docs: `stremio-addon.md` (the segment rules, the fetches ahead).
+- Tests: `test_hls_proxy.py` (a ranged segment reaches the CDN with `Range`/`If-Range` and comes back 206 with its span; a framed body keeps its `Content-Length`; a chunked one declares none; an encoded one neither length nor span; a 416 passes through), `test_hls_read_ahead.py` (`bytes=0-` answered from the fetch ahead as a range; a partial range left to the CDN), `test_stremio_endpoint.py` (the endpoint answers `206` with `Content-Range`/`Content-Length` and passes the player's `Range` on).
+
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
 - A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.

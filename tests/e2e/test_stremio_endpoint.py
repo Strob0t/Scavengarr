@@ -1799,7 +1799,9 @@ class TestProxyHlsEndpoint:
         async def _fake_iter() -> Any:
             yield segment_data
 
-        mock_stream.return_value = (_fake_iter(), "video/mp2t")
+        mock_stream.return_value = FileAnswer(
+            200, {"content-type": "video/mp2t"}, _fake_iter()
+        )
 
         repo = AsyncMock()
         repo.get = AsyncMock(return_value=link)
@@ -1812,6 +1814,37 @@ class TestProxyHlsEndpoint:
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "video/mp2t"
         assert resp.content == segment_data
+
+    @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
+    def test_a_ranged_segment_answers_with_its_span(
+        self, mock_stream: AsyncMock
+    ) -> None:
+        """A player's ``Range: bytes=0-``, asked for every HLS segment by the
+        desktop Stremio app's player, reaches the CDN and the player learns the
+        segment's length: 206, not a chunked body of unknown size."""
+        link = _make_hls_link()
+        mock_stream.return_value = _file_answer(
+            206,
+            headers={
+                "content-type": "video/mp2t",
+                "content-length": "1500",
+                "content-range": "bytes 0-1499/1500",
+                "accept-ranges": "bytes",
+            },
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        client = TestClient(_make_app(stream_link_repo=repo))
+
+        resp = client.get(
+            f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc&expires=123",
+            headers={"Range": "bytes=0-"},
+        )
+
+        assert resp.status_code == 206
+        assert resp.headers["content-range"] == "bytes 0-1499/1500"
+        assert resp.headers["content-length"] == "1500"
+        assert mock_stream.call_args.kwargs["player"]["Range"] == "bytes=0-"
 
     @patch(f"{_PROXY_MODULE}.stream_hls_segment", new_callable=AsyncMock)
     @pytest.mark.parametrize(
@@ -2077,7 +2110,9 @@ class TestPinnedPlaylists:
         async def _segment() -> Any:
             yield b"ts"
 
-        mock_segment.return_value = (_segment(), "video/mp2t")
+        mock_segment.return_value = FileAnswer(
+            200, {"content-type": "video/mp2t"}, _segment()
+        )
         client = TestClient(_make_app(stream_link_repo=repo))
 
         playlist = client.get(f"{_PREFIX}/stremio/proxy/hls-abc/{HLS_MASTER}").text
@@ -2266,7 +2301,8 @@ def _file_answer(
     headers: dict[str, str] | None = None,
     chunks: tuple[bytes, ...] = (b"\x00" * 1000, b"\x01" * 500),
 ) -> FileAnswer:
-    """What ``stream_file`` returns: the CDN's answer with the body in pieces."""
+    """What ``stream_file`` and ``stream_hls_segment`` return: the CDN's
+    answer with the body in pieces."""
 
     async def _iter() -> Any:
         for chunk in chunks:
@@ -2769,7 +2805,9 @@ class TestProxyTelemetry:
         async def _chunks() -> Any:
             yield b"\x00" * 1000
 
-        mock_stream.return_value = (_chunks(), "video/mp2t")
+        mock_stream.return_value = FileAnswer(
+            200, {"content-type": "video/mp2t"}, _chunks()
+        )
         client, t = self._client(_make_hls_link())
 
         resp = client.head(f"{_PREFIX}/stremio/proxy/hls-abc/seg-1.ts?t=abc")

@@ -219,6 +219,39 @@ def _player_headers(headers: dict[str, str]) -> dict[str, str]:
     return {"User-Agent": DEFAULT_USER_AGENT, **headers}
 
 
+def _header(player: Mapping[str, str] | None, name: str) -> str | None:
+    """One of the player's request headers: Starlette's ``Headers`` matches
+    without case, a plain mapping may not."""
+    if player is None:
+        return None
+    value = player.get(name)
+    if value is None:
+        value = next(
+            (
+                candidate
+                for key, candidate in player.items()
+                if key.lower() == name.lower()
+            ),
+            None,
+        )
+    return value
+
+
+def _request_headers(
+    headers: dict[str, str], player: Mapping[str, str] | None
+) -> dict[str, str]:
+    """The CDN request headers of a streamed body: the stream's *headers*
+    over the player's User-Agent, ``Accept-Encoding: identity`` (a byte
+    range must keep its offsets, so nothing is decoded) and the player's
+    ``Range`` and ``If-Range`` (*player*) when it sent them."""
+    request_headers = {**_player_headers(headers), "Accept-Encoding": "identity"}
+    for name in _RANGE_HEADERS:
+        value = _header(player, name)
+        if value is not None and value.strip():
+            request_headers[name] = value
+    return request_headers
+
+
 ProxyKind = Literal["master", "playlist", "segment", "file"]
 
 # The kinds whose first answer was logged, by stream id (the oldest first, at
@@ -352,20 +385,33 @@ def resolve_query_string(request_query: str, video_url: str) -> str:
     return urlparse(video_url).query
 
 
+def _player_range(player: Mapping[str, str] | None) -> str | None:
+    """The player's ``Range`` header, if it sent a usable one: a plain
+    mapping may carry the name in any case, and a blank value asks nothing."""
+    value = _header(player, "Range")
+    return value if value is not None and value.strip() else None
+
+
+def _asks_whole_segment(wanted: str | None) -> bool:
+    """Whether *wanted*, a player's ``Range``, asks for the whole segment:
+    none, or ``bytes=0-``, the probe of a player that may seek. A segment
+    fetched ahead answers those from memory; anything else goes to the CDN,
+    whose byte offsets decide."""
+    return wanted is None or wanted.strip().lower() == "bytes=0-"
+
+
 async def stream_hls_segment(
     http_client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str],
     *,
+    player: Mapping[str, str] | None = None,
     head: bool = False,
     on_sent: Callable[[int], None] | None = None,
     read_ahead: SegmentReadAhead | None = None,
     watch: ProxyWatch | None = None,
-) -> tuple[AsyncGenerator[bytes], str]:
-    """Stream an HLS segment from CDN without buffering full body.
-
-    Returns ``(byte_iterator, content_type)``.
-    Raises ``httpx.HTTPStatusError`` on non-2xx responses.
+) -> FileAnswer:
+    """An HLS segment streamed from its CDN, byte range included.
 
     Uses ``httpx.stream()`` so that segment bytes flow through the
     proxy without loading the entire 2-10 MB segment into memory. They go
@@ -375,16 +421,29 @@ async def stream_hls_segment(
     (dev-server end-to-end run, 2026-10-05). An encoded body
     (``Content-Encoding``, which the proxy does not forward) is decoded.
 
+    The ``Range`` and ``If-Range`` headers of *player*'s request
+    (``_request_headers``) go to the CDN and its status and headers back
+    out (``FileAnswer``), so a player that asks for a range learns the
+    segment's length instead of a chunked body of unknown size — the
+    desktop player of the Stremio app asks every segment with
+    ``Range: bytes=0-``, and without the length it re-requested segment
+    after segment (2026-11-13).
+
     For a HEAD request (*head*) the iterator is empty: the CDN's answer
     is closed after its status and headers, before its bytes. *on_sent*
     is told the bytes that went out when the body ends, an aborted
     transfer's included. With *read_ahead* a GET starts the fetches of
     the next segments and is answered from memory when its own was
-    fetched ahead. The CDN's answer is read with ``_SEGMENT_READ_TIMEOUT_S``
+    fetched ahead — unless the player asks for a part of it, which the CDN
+    is asked for. The CDN's answer is read with ``_SEGMENT_READ_TIMEOUT_S``
     (``_read_timeout``). *watch* is told the 2xx answer and a player's
     abort (``_cdn_body``, ``_pieces``).
+
+    Raises ``httpx.HTTPStatusError`` for an error answer other than 416
+    (closed first) and ``httpx.HTTPError`` when the CDN cannot be reached.
     """
-    if read_ahead is not None and not head:
+    wanted = _player_range(player)
+    if read_ahead is not None and not head and _asks_whole_segment(wanted):
         read_ahead.schedule(url, http_client, headers)
         ahead = await read_ahead.take(url)
         if ahead is not None:
@@ -392,27 +451,15 @@ async def stream_hls_segment(
                 watch.answered(
                     url, None, ahead.content_type, len(ahead.body), ahead.body
                 )
-            body = _pieces(ahead.body, on_sent=on_sent, watch=watch)
-            return body, ahead.content_type
+            return _ahead_answer(ahead, wanted, on_sent=on_sent, watch=watch)
+    request_headers = _request_headers(headers, player)
     timeout = _read_timeout(http_client, _SEGMENT_READ_TIMEOUT_S)
-    async with _CDN_SEMAPHORE:
-        resp = await http_client.send(
-            http_client.build_request(
-                "GET", url, headers=_player_headers(headers), timeout=timeout
-            ),
-            stream=True,
-            follow_redirects=True,
-        )
-        if resp.is_error:
-            # Streamed responses hold their pooled connection until closed
-            await resp.aclose()
-        resp.raise_for_status()
+    resp = await _open_answer(http_client, url, request_headers, timeout)
 
-    ct = resp.headers.get("content-type", "application/octet-stream")
     body = _cdn_body(
         http_client,
         url,
-        _player_headers(headers),
+        request_headers,
         timeout,
         resp,
         head=head,
@@ -420,7 +467,36 @@ async def stream_hls_segment(
         segment=True,
         watch=watch,
     )
-    return body, ct
+    headers_out = _segment_headers(resp)
+    status = resp.status_code
+    if status == 206 and "content-range" not in headers_out:
+        # An encoded body is handed out decoded, so its span was dropped and
+        # nothing frames a partial answer: it is the whole segment.
+        status = 200
+    return FileAnswer(status, headers_out, body)
+
+
+def _ahead_answer(
+    ahead: AheadSegment,
+    wanted: str | None,
+    *,
+    on_sent: Callable[[int], None] | None = None,
+    watch: ProxyWatch | None = None,
+) -> FileAnswer:
+    """A segment fetched ahead as the answer to *wanted*: its whole body, a
+    206 with its span when the player asked a range and there are bytes to
+    span, else a 200 (an empty body has no range to promise)."""
+    length = len(ahead.body)
+    headers_out = {
+        "content-type": ahead.content_type,
+        "content-length": str(length),
+        "accept-ranges": "bytes",
+    }
+    body = _pieces(ahead.body, on_sent=on_sent, watch=watch)
+    if wanted is None or length == 0:
+        return FileAnswer(200, headers_out, body)
+    headers_out["content-range"] = f"bytes 0-{length - 1}/{length}"
+    return FileAnswer(206, headers_out, body)
 
 
 def _watch_answer(watch: ProxyWatch, resp: httpx.Response, first: bytes) -> None:
@@ -802,13 +878,40 @@ class FileResume:
 
 @dataclass(frozen=True)
 class FileAnswer:
-    """A direct file's answer from its CDN: the status (200, 206, or 416 for
-    a range it cannot serve), the headers of ``_FILE_HEADERS`` it carried
-    and its body in pieces."""
+    """A streamed answer from a CDN, a direct file's or an HLS segment's: the
+    status (200, 206, or 416 for a range it cannot serve), the headers of
+    ``_FILE_HEADERS`` it carried (a segment fetched ahead instead carries the
+    length of the body it answers with) and its body in pieces."""
 
     status: int
     headers: dict[str, str]
     chunks: AsyncGenerator[bytes]
+
+
+async def _open_answer(
+    http_client: httpx.AsyncClient,
+    url: str,
+    request_headers: dict[str, str],
+    timeout: httpx.Timeout,
+) -> httpx.Response:
+    """The CDN's streamed answer to a GET of *url*.
+
+    A 416 (a range the CDN cannot serve) comes back for the player to see; any
+    other error answer is closed before it raises, since a streamed response
+    holds its pooled connection until closed. Raises ``httpx.HTTPStatusError``.
+    """
+    async with _CDN_SEMAPHORE:
+        resp = await http_client.send(
+            http_client.build_request(
+                "GET", url, headers=request_headers, timeout=timeout
+            ),
+            stream=True,
+            follow_redirects=True,
+        )
+        if resp.is_error and resp.status_code != 416:
+            await resp.aclose()
+            resp.raise_for_status()
+    return resp
 
 
 async def stream_file(
@@ -840,23 +943,9 @@ async def stream_file(
     Raises ``httpx.HTTPStatusError`` for an error answer other than 416
     (closed first) and ``httpx.HTTPError`` when the CDN cannot be reached.
     """
-    request_headers = {**_player_headers(headers), "Accept-Encoding": "identity"}
-    for name in _RANGE_HEADERS:
-        value = player.get(name) if player is not None else None
-        if value:
-            request_headers[name] = value
+    request_headers = _request_headers(headers, player)
     timeout = _read_timeout(http_client, _FILE_READ_TIMEOUT_S)
-    async with _CDN_SEMAPHORE:
-        resp = await http_client.send(
-            http_client.build_request(
-                "GET", url, headers=request_headers, timeout=timeout
-            ),
-            stream=True,
-            follow_redirects=True,
-        )
-        if resp.is_error and resp.status_code != 416:
-            await resp.aclose()
-            resp.raise_for_status()
+    resp = await _open_answer(http_client, url, request_headers, timeout)
     body = _cdn_body(
         http_client,
         url,
@@ -898,6 +987,20 @@ class SegmentCut(Exception):
     skip, the one resume or restart included. Raised out of the body like
     ``FileCut``: a clean end would hand the player a truncated segment as
     whole under chunked encoding, and it would not ask again."""
+
+
+def _segment_headers(resp: httpx.Response) -> dict[str, str]:
+    """An HLS segment's answer headers: ``_file_headers``, without the
+    ``Content-Encoding`` whose body ``_cdn_body`` hands out decoded — the
+    player would decode it twice — and without the length and span of that
+    encoded entity, which do not frame the bytes written (uvicorn refuses a
+    body of another length)."""
+    headers_out = _file_headers(resp)
+    if "content-encoding" in resp.headers:
+        headers_out.pop("content-encoding", None)
+        headers_out.pop("content-length", None)
+        headers_out.pop("content-range", None)
+    return headers_out
 
 
 def _file_headers(resp: httpx.Response) -> dict[str, str]:
