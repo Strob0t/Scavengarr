@@ -4,7 +4,9 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.6.0 - 2026-11-19
+
+Stremio streams: kinoking no longer gives another film's links (its `group_filmo_*` servers match by title only), a link without a source language shows "Sprache unbekannt" instead of the plugin default, and the new setting `stremio.preferred_audio_language` makes the HLS proxy start a stream with several audio tracks in that language. Title matching: the IMDb fallback takes only the requested id, a title without a year is no fuzzy match, and a film's follow-up with another year is another film. Playback: proxied files go on after every interruption of their CDN, VEEV plays through the file proxy, an MP4 file's header measures its quality, and a StreamUp HLS stream must answer its first segment. Diagnostics: season, episode and plugin per stream, the proxy's first CDN answer and player aborts, stuck requests and a stalled event loop are logged. Dependencies: minor and patch updates (fastapi 0.162.2, patchright 1.64.4, ruff 0.17.4 and others).
 
 ### Fixed: kinoking Gives No Other Film's Links, Unknown Link Languages Shown as Such
 
