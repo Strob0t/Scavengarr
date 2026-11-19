@@ -2,7 +2,7 @@
 
 > **Purpose:** The one index of the documentation: the map, the state, one line per document with its status, and the documentation rules.
 > **Status:** reference
-> **As of:** 867eed7a
+> **As of:** 86d497b5
 
 The one index of the documentation: one line per document with its status.
 
@@ -35,8 +35,11 @@ The `how-to` guides work with the `current` documents and look up the `reference
 ## The state
 
 The current docs cover every part of the code: the architecture and its request flows, the Stremio addon, the plugins and their domains, the hoster resolvers, the browser and its challenges, Torznab and CrawlJobs, link validation and observability; [`current/known-issues.md`](current/known-issues.md) holds the open defects.
-Open in the hoster resolvers and the browser: the production proof that Filemoon's captcha pass stays warm, read from the maintainer's use.
-The plugins have no open row; their ideas wait in the backlog for their trigger.
+Open in the HTTP stack: tests for the rate limiter's per-domain grouping and for the wiring of its settings, and two loose notes of the configuration reference.
+Open in the observability: the two weeks of readings of the stall watchdog ([`add-stall-watchdog`](../openspec/changes/add-stall-watchdog/proposal.md), group 4), and with them the maintainer's choice of its exit switch, off until then.
+Open in the Stremio addon: for VEEV through the file proxy, which resumes a proxied file after every interruption of its CDN ([`resume-idle-reset-files`](../openspec/changes/resume-idle-reset-files/proposal.md), reviewed and accepted), the tasks of its proof on production and the gaps its review left, and the streaming server's 500 on `/hlsv2/probe` for the addon's stream URLs.
+Open in the hoster resolvers: the playback check's MP4 measurement picks its track without the track's handler, and some of its edge cases lack a test.
+The plugins and the browser have no open row; their ideas wait in the backlog for their trigger.
 The rows behind each item are in [`backlog.md`](backlog.md), and the row that opens or closes an area's work updates this paragraph in the same commit.
 
 ## Start here
@@ -72,7 +75,7 @@ One line per feature, with the document that describes it.
 | Stremio addon | The manifest, the catalogs and the streams answer IMDb and `kitsu:` ids, with TMDB titles in each plugin's languages. | [Stremio addon](current/stremio-addon.md) |
 | Search cache and answer budget | Searches are cached per title, and a request answers at its budget with the results known by then. | [Stremio addon](current/stremio-addon.md#the-search-cache) |
 | Stream ranking | Streams are ranked by a weighted score, and each hoster and language keeps its best-ranked stream. | [Stremio addon](current/stremio-addon.md#ranking) |
-| HLS and file proxy | Streams bound to headers or to the resolving address play through Scavengarr's own proxy. | [Stremio addon](current/stremio-addon.md#hls-proxy) |
+| HLS and file proxy | Streams bound to headers or to the resolving address, and files whose CDN resets a paused connection, play through Scavengarr's own proxy. | [Stremio addon](current/stremio-addon.md#hls-proxy) |
 | Hoster resolvers | Individual, generic DDL and XFS resolvers turn a hoster link into a stream or a checked download. | [Hoster resolvers](current/hoster-resolvers.md), [resolver list](reference/resolvers.md) |
 | Circuit breakers | A plugin per category, or a hoster, is skipped after repeated failures until it recovers. | [Stremio addon](current/stremio-addon.md#circuit-breakers), [Hoster resolvers](current/hoster-resolvers.md#the-circuit-breaker) |
 | Shared browser and stealth pool | One Chromium serves the browser plugins and the captures, with a stealth context for protected pages. | [Browser and challenges](current/browser-and-challenges.md) |
@@ -117,6 +120,8 @@ One line per feature, with the document that describes it.
 | [`target/decisions/0013-mirror-groups.md`](target/decisions/0013-mirror-groups.md) | target | Mirror sites form a group, and a Stremio request asks one of them. |
 | [`target/decisions/0014-resolver-state-snapshot.md`](target/decisions/0014-resolver-state-snapshot.md) | target | The resolver registry's state outlives a restart as one snapshot. |
 | [`target/decisions/0015-privacy-rule.md`](target/decisions/0015-privacy-rule.md) | target | Docs and commit texts tell nothing about what the maintainer watches. |
+| [`target/decisions/0016-in-process-stall-monitor.md`](target/decisions/0016-in-process-stall-monitor.md) | target | A thread in the process names a stalled loop, its exit switch off. |
+| [`target/decisions/0017-idle-reset-files-resumed.md`](target/decisions/0017-idle-reset-files-resumed.md) | target | Files of CDNs that reset idle connections go through the file proxy, which resumes them. |
 | [`target/decisions/_template.md`](target/decisions/_template.md) | target | The template of a decision record. |
 
 ## Features
@@ -133,7 +138,7 @@ One line per feature, with the document that describes it.
 | [`how-to/new-resolver.md`](how-to/new-resolver.md) | how-to | Adding or repairing a hoster resolver, from the unresolved hosters to the regenerated resolver list. |
 | [`current/torznab-and-crawljobs.md`](current/torznab-and-crawljobs.md) | current | How a Torznab search becomes a feed, and a CrawlJob's life from the search to the grab. |
 | [`current/link-validation.md`](current/link-validation.md) | current | The HEAD then GET check of download links, its host skip and its cache. |
-| [`current/observability.md`](current/observability.md) | current | What the core records and where: the stages, the request id, the plugin record, Prometheus, Grafana, the alerts and tracing on demand. |
+| [`current/observability.md`](current/observability.md) | current | What the core records and where: the stages, the request id, the plugin record, the background tasks, stalls and stuck requests, Prometheus, Grafana, the alerts and tracing on demand. |
 | [`reference/metrics.md`](reference/metrics.md) | reference | Every metric with its labels, buckets and values, and the stats endpoints; the table generated by `scripts/generate_metrics_doc.py`. |
 | [`how-to/operations.md`](how-to/operations.md) | how-to | Reading production with `scripts/prodctl.py`: logs, metrics, the digest, the post-deploy check and the probes. |
 | [`how-to/performance-measurement.md`](how-to/performance-measurement.md) | how-to | Measuring stream requests, a playback under load and the title set before and after a change. |
@@ -159,6 +164,9 @@ One line per feature, with the document that describes it.
 |---|---|---|
 | [`how-to/dev-container.md`](how-to/dev-container.md) | how-to | Setting up and working in the dev container: git access, its tools, checks in a worktree, the editor, the Claude Code hooks and the production diagnostics. |
 | [`agents/skills.md`](agents/skills.md) | reference | The Claude Code skills of the dev container and their sources. |
+| [`agents/skill-review-2026-11-own.md`](agents/skill-review-2026-11-own.md) | reference | The review of the project's own Claude Code skills against the repository, with the evidence and the planned patches. |
+| [`agents/skill-review-2026-11-external.md`](agents/skill-review-2026-11-external.md) | reference | The review of the external Claude Code skills against their upstream sources and the repository, with the evidence and the planned patches. |
+| [`agents/skill-review-2026-11-usage.md`](agents/skill-review-2026-11-usage.md) | reference | The usage numbers of the Claude Code skills from the session transcripts against the old usage record, and the order they set for the planned patches. |
 | [`agents/mcp-servers.md`](agents/mcp-servers.md) | reference | The MCP servers of `.mcp.json` and what installs them. |
 
 ## Plans
@@ -225,7 +233,7 @@ Diagrams per current doc, each a Mermaid fence:
 | `current/architecture.md` | the Torznab search and the Stremio stream request as sequence diagrams; the composition order and the shutdown sequence (both halves: the app's drain and Uvicorn's wait) as flowcharts |
 | `target/architecture.md` | the layer graph with the allowed edges only, matching the rule table |
 | `current/stremio-addon.md` | the search cache entry's states (missing, fresh, stale, partial, refreshing) as a state diagram; the answer budget against the plugin timeout as a sequence; the `kitsu:` id translation as a flowchart |
-| `current/hoster-resolvers.md` | a link's outcome states (stream, dead, challenge with its cooldown steps, breaker open) as a state diagram; the dispatch (client-bound, address-bound → `/play` or `/proxy/<id>/file`) as a flowchart |
+| `current/hoster-resolvers.md` | a link's outcome states (stream, dead, challenge with its cooldown steps, breaker open) as a state diagram; the dispatch (client-bound, address-bound, idle-reset → `/play` or `/proxy/<id>/file`) as a flowchart |
 | `current/browser-and-challenges.md` | the page gate as a flowchart; the capture state's life cycle (restore, use, save, expire) as a state diagram |
 | `current/plugins.md` | the search stages as a sequence; the plugin selection for a Stremio request (score, mirror group, reachability) as a flowchart |
 | `current/plugin-domains.md` | the domain decision (configured domains, official list and marker, redirect, recheck) as a flowchart |

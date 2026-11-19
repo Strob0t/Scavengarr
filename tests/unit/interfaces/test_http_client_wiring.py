@@ -12,6 +12,7 @@ from scavengarr.infrastructure.common.private_address_guard import (
     PrivateAddressError,
     PrivateAddressGuard,
 )
+from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
 from scavengarr.infrastructure.common.retry_transport import RetryTransport
 from scavengarr.infrastructure.config.schema import AppConfig
 from scavengarr.interfaces.composition import build_http_client
@@ -90,5 +91,55 @@ async def test_connections_go_to_the_addresses_the_guard_checked() -> None:
         hooks = client.event_hooks["request"]
         assert isinstance(backend, GuardedNetworkBackend)
         assert backend.guard in hooks
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_settings_reach_the_limiter() -> None:
+    """``rate_limit_adaptive``, ``rate_limit_min_rps`` and
+    ``rate_limit_max_rps`` build the limiter of the shared client; the
+    settings-read test alone does not notice a hard-coded value."""
+    client = build_http_client(
+        AppConfig(
+            rate_limit_requests_per_second=8.0,
+            rate_limit_adaptive=True,
+            rate_limit_min_rps=2.0,
+            rate_limit_max_rps=9.0,
+        )
+    )
+    try:
+        transport = client._transport  # noqa: SLF001
+        assert isinstance(transport, RetryTransport)
+        limiter = transport._rate_limiter  # noqa: SLF001
+        assert isinstance(limiter, DomainRateLimiter)
+        await limiter.acquire("https://example.com/")
+        bucket = limiter._buckets["example"]  # noqa: SLF001
+        assert bucket.rate == 8.0
+        bucket.record_throttle()
+        assert bucket.rate == 4.0  # halved: adaptive is on
+        bucket.record_throttle()
+        bucket.record_throttle()
+        assert bucket.rate == 2.0  # floored at min_rps
+        for _ in range(40):
+            bucket.record_success()
+        assert bucket.rate == 9.0  # capped at max_rps
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_adaptive_off_keeps_the_rate() -> None:
+    client = build_http_client(
+        AppConfig(rate_limit_requests_per_second=8.0, rate_limit_adaptive=False)
+    )
+    try:
+        transport = client._transport  # noqa: SLF001
+        assert isinstance(transport, RetryTransport)
+        limiter = transport._rate_limiter  # noqa: SLF001
+        assert isinstance(limiter, DomainRateLimiter)
+        await limiter.acquire("https://example.com/")
+        limiter.record_throttle("https://example.com/")
+        assert limiter._buckets["example"].rate == 8.0  # noqa: SLF001
     finally:
         await client.aclose()

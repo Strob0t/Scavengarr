@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from scavengarr.domain.entities.stremio import StreamLanguage, StreamQuality
 from scavengarr.infrastructure.stremio.release_guess import guess_release
@@ -44,6 +45,28 @@ _BADGE_TO_QUALITY: dict[str, StreamQuality] = {
     "CAMRIP": StreamQuality.CAM,
 }
 
+# Badges that name no resolution: their class ranks the stream, but no
+# source said it is 720p or 1080p ("HD" is any of them)
+_GUESSED_BADGES = frozenset({"HD", "WEBRIP", "WEBDL", "WEB-DL", "BDRIP", "BLURAY"})
+
+# Separators of a badge's spellings ("Full HD", "Blu-Ray") and of its parts
+# ("HD-1080p", "4K/UHD", "1080p/5.1")
+_BADGE_SEPARATORS_RE = re.compile(r"[\s._/-]+")
+_BADGE_TOKEN_RE = re.compile(r"[0-9A-Z]+")
+
+
+@dataclass(frozen=True)
+class ParsedQuality:
+    """A stream's quality class, and whether a word that names no
+    resolution guessed it (``_GUESSED_BADGES``): the class ranks the
+    stream, a label would claim a resolution no source named."""
+
+    quality: StreamQuality = StreamQuality.UNKNOWN
+    guessed: bool = False
+
+
+_UNKNOWN = ParsedQuality()
+
 # --- Language helpers ---
 
 # German labels too (s.to: "Englisch", "Japanisch mit deutschen Untertiteln")
@@ -54,11 +77,33 @@ _SUBTITLE_PATTERNS = re.compile(r"(?i)\b(sub|untertiteln?)\b")
 # "Originalversion")
 _ORIGINAL_PATTERNS = re.compile(r"(?i)\b(original(?:version|fassung)?|ov)\b")
 _ORIGINAL = StreamLanguage(code="ov", label="Original", is_dubbed=False)
+# A link whose source names no language (``link["language"] = "unknown"``):
+# shown as such instead of the plugin's default language
+UNKNOWN_LANGUAGE_CODE = "unknown"
+_UNKNOWN_LANGUAGE = StreamLanguage(
+    code=UNKNOWN_LANGUAGE_CODE, label="Sprache unbekannt", is_dubbed=False
+)
 
 
-def _quality_from_badge(badge: str) -> StreamQuality:
-    """Map a badge/link_quality string to StreamQuality (case-insensitive)."""
-    return _BADGE_TO_QUALITY.get(badge.strip().upper(), StreamQuality.UNKNOWN)
+def _quality_from_badge(badge: str) -> ParsedQuality:
+    """The quality a badge or link_quality string names (case-insensitive).
+
+    The whole badge in any spelling ("Full HD"), else the best part that
+    names a quality of its own ("HD-1080p" is 1080p, "4K/UHD" 4K): a word
+    without a resolution inside a composite badge ("HD/Deutsch") adds no
+    guess.
+    """
+    text = badge.strip().upper()
+    for whole in (text, _BADGE_SEPARATORS_RE.sub("", text)):
+        quality = _BADGE_TO_QUALITY.get(whole)
+        if quality is not None:
+            return ParsedQuality(quality, guessed=whole in _GUESSED_BADGES)
+    parts = (
+        _BADGE_TO_QUALITY.get(token, StreamQuality.UNKNOWN)
+        for token in _BADGE_TOKEN_RE.findall(text)
+        if token not in _GUESSED_BADGES
+    )
+    return ParsedQuality(max(parts, default=StreamQuality.UNKNOWN))
 
 
 def _language_code(lang_obj: object) -> str | None:
@@ -91,7 +136,7 @@ def parse_quality(
     release_name: str | None = None,
     quality_badge: str | None = None,
     link_quality: str | None = None,
-) -> StreamQuality:
+) -> ParsedQuality:
     """Determine quality from multiple sources.
 
     Priority: 1) guessit(release_name).screen_size, 2) link_quality, 3) quality_badge.
@@ -101,21 +146,16 @@ def parse_quality(
         guess = guess_release(release_name)
         screen_size = guess.get("screen_size")
         if screen_size and screen_size in _SCREEN_SIZE_TO_QUALITY:
-            return _SCREEN_SIZE_TO_QUALITY[screen_size]
+            return ParsedQuality(_SCREEN_SIZE_TO_QUALITY[screen_size])
 
-    # 2) Try link_quality
-    if link_quality:
-        q = _quality_from_badge(link_quality)
-        if q != StreamQuality.UNKNOWN:
-            return q
+    # 2) Try link_quality, 3) quality_badge
+    for badge in (link_quality, quality_badge):
+        if badge:
+            parsed = _quality_from_badge(badge)
+            if parsed.quality != StreamQuality.UNKNOWN:
+                return parsed
 
-    # 3) Try quality_badge
-    if quality_badge:
-        q = _quality_from_badge(quality_badge)
-        if q != StreamQuality.UNKNOWN:
-            return q
-
-    return StreamQuality.UNKNOWN
+    return _UNKNOWN
 
 
 def parse_language(
@@ -127,6 +167,8 @@ def parse_language(
     """Determine language from multiple sources.
 
     Priority: 1) guessit(release_name), 2) link_language, 3) plugin_default_language.
+    A link_language of ``unknown`` (the source names none) gives the unknown
+    language, not the plugin default.
     """
     # 1) Try guessit on release_name
     if release_name:
@@ -135,6 +177,8 @@ def parse_language(
             return lang
 
     # 2) Try link_language string
+    if link_language and link_language.strip().lower() == UNKNOWN_LANGUAGE_CODE:
+        return _UNKNOWN_LANGUAGE
     if link_language:
         lang = _language_from_link_string(link_language)
         if lang is not None:
@@ -152,35 +196,39 @@ def parse_language(
     return None
 
 
+def _language_codes(value: object) -> list[str]:
+    """The language codes of a guessit field: one Language or a list."""
+    langs = value if isinstance(value, list) else [value] if value else []
+    return [code for lang in langs if (code := _language_code(lang))]
+
+
 def _language_from_guessit(release_name: str) -> StreamLanguage | None:
-    """Extract language info from a release name via guessit."""
+    """Extract language info from a release name via guessit.
+
+    German audio wins over any subtitle language ("German.DL.EngSub" is a
+    German Dub), German subtitles over a foreign audio
+    ("English.German.Subbed" is a German Sub); otherwise the subtitle's
+    language comes first, then the audio's.
+    """
     guess = guess_release(release_name)
+    audio = _language_codes(guess.get("language"))
+    subs = _language_codes(guess.get("subtitle_language"))
 
-    # Check subtitle_language first (subs take priority as they're more specific)
-    sub_langs = guess.get("subtitle_language")
-    if sub_langs:
-        lang_obj = sub_langs if not isinstance(sub_langs, list) else sub_langs[0]
-        code = _language_code(lang_obj)
-        if code:
-            return StreamLanguage(
-                code=f"{code}-sub",
-                label=_label_for(code, is_dubbed=False),
-                is_dubbed=False,
-            )
-
-    # Check audio language
-    audio_langs = guess.get("language")
-    if audio_langs:
-        lang_obj = audio_langs if not isinstance(audio_langs, list) else audio_langs[0]
-        code = _language_code(lang_obj)
-        if code:
-            return StreamLanguage(
-                code=code,
-                label=_label_for(code, is_dubbed=True),
-                is_dubbed=True,
-            )
-
-    return None
+    if "de" in audio:
+        code, is_dubbed = "de", True
+    elif "de" in subs:
+        code, is_dubbed = "de", False
+    elif subs:
+        code, is_dubbed = subs[0], False
+    elif audio:
+        code, is_dubbed = audio[0], True
+    else:
+        return None
+    return StreamLanguage(
+        code=code if is_dubbed else f"{code}-sub",
+        label=_label_for(code, is_dubbed=is_dubbed),
+        is_dubbed=is_dubbed,
+    )
 
 
 def _language_from_link_string(link_language: str) -> StreamLanguage | None:

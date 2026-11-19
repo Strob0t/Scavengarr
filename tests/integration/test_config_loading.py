@@ -282,6 +282,43 @@ class TestTelemetrySettings:
             load_config(config_path=path)
 
 
+class TestWatchdogSettings:
+    """The stall monitor runs at 120 s by default, its exit switch off
+    (OpenSpec add-stall-watchdog, design D6)."""
+
+    def test_defaults(self) -> None:
+        watchdog = load_config().watchdog
+
+        assert watchdog.stall_seconds == 120
+        assert watchdog.exit_on_stall is False
+
+    def test_from_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.dump({"watchdog": {"stall_seconds": 60, "exit_on_stall": True}}),
+            encoding="utf-8",
+        )
+        watchdog = load_config(config_path=path).watchdog
+
+        assert (watchdog.stall_seconds, watchdog.exit_on_stall) == (60, True)
+
+    def test_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCAVENGARR_WATCHDOG_STALL_SECONDS", "0")
+        monkeypatch.setenv("SCAVENGARR_WATCHDOG_EXIT_ON_STALL", "true")
+        watchdog = load_config().watchdog
+
+        assert (watchdog.stall_seconds, watchdog.exit_on_stall) == (0, True)
+
+    def test_the_limit_must_not_be_negative(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.dump({"watchdog": {"stall_seconds": -1}}), encoding="utf-8"
+        )
+
+        with pytest.raises(ValueError, match="stall_seconds"):
+            load_config(config_path=path)
+
+
 class TestCliOverrides:
     """CLI overrides beat everything (highest precedence)."""
 

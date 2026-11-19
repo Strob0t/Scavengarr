@@ -1,7 +1,8 @@
-"""FastAPI middleware for API rate limiting."""
+"""FastAPI middleware: the API's rate limit and the request watch."""
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import deque
 
@@ -9,6 +10,13 @@ import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from scavengarr.domain.ports.telemetry import RouteClass
+from scavengarr.infrastructure.graceful_shutdown import (
+    GracefulShutdown,
+    WatchedRequest,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -24,6 +32,17 @@ _EXEMPT_PREFIXES = (
     "/api/v1/stremio/health",
     "/api/v1/healthz",
     "/api/v1/readyz",
+)
+
+# The stuck-request check's route classes by path prefix (the first match);
+# None: never watched
+_ROUTE_CLASSES: tuple[tuple[str, RouteClass | None], ...] = (
+    ("/api/v1/stremio/stream/", "stremio_stream"),
+    ("/api/v1/stremio/catalog/", "stremio_catalog"),
+    ("/api/v1/stremio/play/", None),
+    ("/api/v1/stremio/proxy/", None),
+    ("/api/v1/torznab/", "torznab"),
+    ("/api/v1/download/", "torznab"),
 )
 
 
@@ -104,3 +123,45 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         idle = [ip for ip, dq in self._window.items() if not dq or dq[-1] <= cutoff]
         for ip in idle:
             del self._window[ip]
+
+
+def route_class(path: str) -> RouteClass | None:
+    """The stuck-request check's route class of *path*; None for play and
+    proxy requests, which last as long as a playback and are never watched."""
+    for prefix, route in _ROUTE_CLASSES:
+        if path.startswith(prefix):
+            return route
+    return "other"
+
+
+class RequestWatchMiddleware:
+    """Notes each HTTP request's task, route class and start in
+    ``GracefulShutdown`` for the stuck-request check, and forgets it when the
+    request ends, cancelled or not.
+
+    Pure ASGI and the innermost middleware: ``log_requests`` and the rate
+    limit (``BaseHTTPMiddleware``) run the app below them in a task of their
+    own, so the task noted here is the one that runs the route.
+    """
+
+    def __init__(self, app: ASGIApp, shutdown: GracefulShutdown) -> None:
+        self._app = app
+        self._shutdown = shutdown
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        route = route_class(scope["path"]) if scope["type"] == "http" else None
+        task = asyncio.current_task()
+        if route is None or task is None:
+            await self._app(scope, receive, send)
+            return
+        request = WatchedRequest(
+            task=task,
+            route=route,
+            started=asyncio.get_running_loop().time(),
+            request_id=structlog.contextvars.get_contextvars().get("request_id"),
+        )
+        self._shutdown.watch_request(request)
+        try:
+            await self._app(scope, receive, send)
+        finally:
+            self._shutdown.forget_request(request)

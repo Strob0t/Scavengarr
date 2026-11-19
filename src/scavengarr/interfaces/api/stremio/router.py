@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -26,10 +27,15 @@ from scavengarr.domain.entities.stremio import (
 from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.stremio.hls_proxy import (
+    FileResume,
+    ProxyKind,
+    ProxyWatch,
+    Refresh,
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
     listed_segments,
+    prefer_audio_language,
     resolve_query_string,
     rewrite_manifest,
     stream_file,
@@ -62,6 +68,12 @@ _CACHE_STATUS = {
 
 # FFmpeg's own User-Agent: Stremio's streaming server probes and converts with it
 _FFMPEG_AGENT = "Lavf/"
+
+# ``/play``'s redirect line, its media kind (``_media_kind``) and the
+# extensions of a video file's path
+_EVENT_PLAY_RESOLVED = "stremio_play_resolved"
+_FIELD_MEDIA_KIND = "media_kind"
+_FILE_EXTENSIONS = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".ts")
 
 
 def _catalogs(*, trending: bool) -> list[dict[str, Any]]:
@@ -389,6 +401,12 @@ async def stremio_play(
         3. Redirect to the video URL (302); 502 when the hoster gives no
            video (never a redirect to an embed page).
 
+    A file the stream builder sends through the file proxy (``_proxied_file``:
+    address-bound or idle-reset) is redirected to the proxy's ``FILE_NAME``
+    path instead, so a stream object kept from before its flag plays through
+    the proxy too: a stored one at once (the proxy resolves it when stale),
+    one whose new resolution carries the flag under the id of that link.
+
     HEAD answers like GET: a streaming server asks with HEAD first.
     """
     state = cast(AppState, request.app.state)
@@ -401,6 +419,8 @@ async def stremio_play(
     if link is None:
         log.warning("stremio_play_not_found", stream_id=stream_id)
         return _error_json(404, "stream expired or not found")
+    if _proxied_file(link):
+        return _to_file_proxy(request, link)
 
     current = await links.current(link, request.headers)
     if current is None:
@@ -411,16 +431,50 @@ async def stremio_play(
             url=link.hoster_url,
         )
         return _error_json(502, "could not extract video URL from hoster")
+    if _proxied_file(current):
+        return _to_file_proxy(request, current)
 
     log.info(
-        "stremio_play_resolved",
+        _EVENT_PLAY_RESOLVED,
         stream_id=stream_id,
         hoster=link.hoster,
         cdn=extract_domain(current.video_url),
         is_hls=current.is_hls,
+        **{_FIELD_MEDIA_KIND: _media_kind(current)},
     )
     return RedirectResponse(
         url=current.video_url,
+        status_code=302,
+        headers=_CORS_HEADERS,
+    )
+
+
+def _media_kind(link: CachedStreamLink) -> str:
+    """What *link*'s video URL names, read from the link alone: ``hls``, a
+    ``file`` (a video file's extension) or ``other``."""
+    if link.is_hls:
+        return "hls"
+    path = urlsplit(link.video_url).path.lower()
+    return "file" if path.endswith(_FILE_EXTENSIONS) else "other"
+
+
+def _proxied_file(link: CachedStreamLink) -> bool:
+    """Whether *link* is a file the file proxy serves: a video URL, no HLS,
+    address-bound or idle-reset (``build_stream_from_resolved``)."""
+    return (
+        bool(link.video_url)
+        and not link.is_hls
+        and (link.address_bound or link.idle_reset)
+    )
+
+
+def _to_file_proxy(request: Request, link: CachedStreamLink) -> RedirectResponse:
+    """``/play``'s redirect of a proxied file to the file proxy's path of
+    *link*."""
+    log.info("stremio_play_proxied", stream_id=link.stream_id, hoster=link.hoster)
+    base = str(request.base_url).rstrip("/")
+    return RedirectResponse(
+        url=f"{base}/api/v1/stremio/proxy/{link.stream_id}/{FILE_NAME}",
         status_code=302,
         headers=_CORS_HEADERS,
     )
@@ -472,9 +526,10 @@ async def proxy_hls(
     the stream's content type with a HEAD request before it plays. A
     segment is not downloaded for HEAD.
 
-    An address-bound file (``FILE_NAME``; its CDN plays it only for the
-    address that resolved it) is streamed with the player's byte range
-    (``_proxy_file``).
+    A file whose CDN plays it only for the address that resolved it
+    (``address_bound``) or resets a connection the paused player leaves
+    idle (``idle_reset``) is served at ``FILE_NAME``: streamed with the
+    player's byte range and resumed after an interruption (``_proxy_file``).
 
     The playlist is not served to a streaming server's converter unless
     ``stremio.allow_hls_transcoding`` is on (``_converter_refused``).
@@ -497,9 +552,9 @@ async def proxy_hls(
     return response
 
 
-def _hls_kind(path: str) -> str:
-    """The stream's own playlist (``master``), an address-bound ``file``,
-    another ``playlist`` or a ``segment``."""
+def _hls_kind(path: str) -> ProxyKind:
+    """The stream's own playlist (``master``), an address-bound or idle-reset
+    ``file``, another ``playlist`` or a ``segment``."""
     if path == HLS_MASTER:
         return "master"
     if path == FILE_NAME:
@@ -568,9 +623,10 @@ async def _proxy_hls(
             log.warning("hls_proxy_foreign_path", stream_id=stream_id, path=path[:80])
             return _error_json(400, "path outside the stream's CDN")
 
+    head = request.method == "HEAD"
+    watch = None if head else ProxyWatch(stream_id, link.hoster, _hls_kind(path))
     # Segments (.ts) — stream without buffering full body
     if not master and not path.endswith(".m3u8"):
-        head = request.method == "HEAD"
         try:
             chunk_iter, content_type = await stream_hls_segment(
                 state.http_client,
@@ -579,6 +635,7 @@ async def _proxy_hls(
                 head=head,
                 on_sent=None if head else _bytes_counter(telemetry, "segment"),
                 read_ahead=getattr(state, "hls_read_ahead", None),
+                watch=watch,
             )
         except httpx.HTTPError as exc:
             return _cdn_error_response(stream_id, target_url, exc)
@@ -588,7 +645,7 @@ async def _proxy_hls(
 
     # Manifests (.m3u8) — fetch, rewrite URLs, return
     fetched = await _fetch_playlist(
-        state.http_client, links, link, target_url, master=master
+        state.http_client, links, link, target_url, master=master, watch=watch
     )
     if isinstance(fetched, JSONResponse):
         return fetched
@@ -628,6 +685,11 @@ def _playlist_response(
         proxy_base,
         playlist_dir=playlist_dir,
     )
+    config = getattr(state, "config", None)
+    rewritten = prefer_audio_language(
+        rewritten,
+        config.stremio.preferred_audio_language if config is not None else None,
+    )
     read_ahead = getattr(state, "hls_read_ahead", None)
     if read_ahead is not None:
         read_ahead.remember(
@@ -665,18 +727,21 @@ async def _proxy_file(
     stream_id: str,
     request: Request,
 ) -> Response | JSONResponse:
-    """An address-bound file (``FILE_NAME``): the current video URL streamed
-    with the player's byte range, the CDN's status and headers passed on.
+    """An address-bound or idle-reset file (``FILE_NAME``): the current video
+    URL streamed with the player's byte range, the CDN's status and headers
+    passed on.
 
     When the CDN refuses the file (403, 404, 410: an expired URL), it is
     fetched once more from the link ``StremioLinks.after_refusal`` gives,
-    then 502, as for the stream's playlist.
+    then 502, as for the stream's playlist. A body the CDN interrupts goes
+    on by ``_file_resume``'s rules.
     """
     link = await _file_link(links, stream_id)
     if isinstance(link, JSONResponse):
         return link
     head = request.method == "HEAD"
     on_sent = None if head else _bytes_counter(telemetry, "file")
+    watch = None if head else ProxyWatch(stream_id, link.hoster, "file")
     try:
         answer = await stream_file(
             state.http_client,
@@ -685,6 +750,8 @@ async def _proxy_file(
             player=request.headers,
             head=head,
             on_sent=on_sent,
+            resume=_file_resume(state, telemetry, links, link),
+            watch=watch,
         )
     except httpx.HTTPStatusError as exc:
         fresh = await links.after_refusal(link, exc.response.status_code)
@@ -698,6 +765,8 @@ async def _proxy_file(
                 player=request.headers,
                 head=head,
                 on_sent=on_sent,
+                resume=_file_resume(state, telemetry, links, fresh),
+                watch=watch,
             )
         except httpx.HTTPError as again:
             return _cdn_error_response(stream_id, fresh.video_url, again)
@@ -708,6 +777,43 @@ async def _proxy_file(
         status_code=answer.status,
         headers={**_CORS_HEADERS, **answer.headers},
     )
+
+
+def _file_resume(
+    state: AppState,
+    telemetry: TelemetryPort,
+    links: StremioLinks,
+    link: CachedStreamLink,
+) -> FileResume:
+    """How a file of *link* goes on after its CDN interrupts it: the stall
+    timeout of ``stremio.file_stall_timeout_seconds``, a refused resume
+    resolved again through ``StremioLinks.after_refusal``, and the resumes
+    counted under the link's hoster when it names a resolver (``other``
+    otherwise: no free text in a label)."""
+    registry = getattr(state, "hoster_resolver_registry", None)
+    known = registry is not None and link.hoster in registry.supported_hosters
+    return FileResume(
+        stall_timeout=state.config.stremio.file_stall_timeout_seconds,
+        refresh=_refresher(links, link),
+        telemetry=telemetry,
+        hoster=link.hoster if known else "other",
+    )
+
+
+def _refresher(links: StremioLinks, link: CachedStreamLink) -> Refresh:
+    """A refused resume's new resolution of *link*: the new video URL and
+    its headers, ``None`` when the hoster gives no file."""
+    current = link
+
+    async def refresh(status: int) -> tuple[str, dict[str, str]] | None:
+        nonlocal current
+        fresh = await links.after_refusal(current, status)
+        if fresh is None or fresh.is_hls or not fresh.video_url:
+            return None
+        current = fresh
+        return fresh.video_url, _cdn_headers(fresh)
+
+    return refresh
 
 
 async def _stored_link(
@@ -749,13 +855,13 @@ async def _proxy_link(
 async def _file_link(
     links: StremioLinks, stream_id: str
 ) -> CachedStreamLink | JSONResponse:
-    """The current link of an address-bound file; 400 for an HLS stream or
-    a file the builder sends through ``/play`` (a record from before the
-    flag among them)."""
+    """The current link of an address-bound or idle-reset file; 400 for an
+    HLS stream or a file the builder sends through ``/play`` (a record from
+    before the flag among them)."""
     link = await _stored_link(links, stream_id, current=True)
     if isinstance(link, JSONResponse):
         return link
-    if not link.video_url or link.is_hls or not link.address_bound:
+    if not _proxied_file(link):
         log.warning("hls_proxy_not_a_file", stream_id=stream_id)
         return _error_json(400, "stream is not a proxied file")
     return link
@@ -768,15 +874,18 @@ async def _fetch_playlist(
     target_url: str,
     *,
     master: bool,
+    watch: ProxyWatch | None = None,
 ) -> tuple[bytes, CachedStreamLink] | JSONResponse:
     """A playlist's body, and the link it came with.
 
     When the CDN refuses the stream's own playlist, it is fetched once
     more from the link ``StremioLinks.after_refusal`` gives (an expired
-    token).
+    token). *watch* is told the CDN's answers (``fetch_hls_resource``).
     """
     try:
-        body, _ = await fetch_hls_resource(http_client, target_url, _cdn_headers(link))
+        body, _ = await fetch_hls_resource(
+            http_client, target_url, _cdn_headers(link), watch=watch
+        )
         return body, link
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
@@ -788,7 +897,7 @@ async def _fetch_playlist(
 
     try:
         body, _ = await fetch_hls_resource(
-            http_client, fresh.video_url, _cdn_headers(fresh)
+            http_client, fresh.video_url, _cdn_headers(fresh), watch=watch
         )
     except httpx.HTTPError as exc:
         return _cdn_error_response(link.stream_id, fresh.video_url, exc)

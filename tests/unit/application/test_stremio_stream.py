@@ -1393,3 +1393,37 @@ class TestEmptyAnswerLogs:
         assert answer == []
         [line] = [e for e in logs if e["event"] == "stremio_all_filtered"]
         assert (line["total"], line["dropped"]) == (1, 0)
+
+
+class TestStreamItemLog:
+    """Each answered stream logs ``stremio_stream_item``: the plugin and the
+    link label that gave it, to trace a stream of the wrong season."""
+
+    async def test_one_line_per_stream_with_plugin_and_label(self) -> None:
+        resolutions = Resolutions(alive=(VOE, DOOD))
+        uc = from_cache(
+            [
+                {**hoster_link(VOE), "label": "2x3 Episode Title"},
+                {**hoster_link(DOOD), "label": "Folge 3"},
+            ],
+            resolutions,
+            cached=False,
+        )
+
+        with capture_logs() as logs:
+            streams = await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        lines = [e for e in logs if e["event"] == "stremio_stream_item"]
+        assert len(lines) == len(streams) == 2
+        by_hoster = {e["hoster"]: e for e in lines}
+        assert by_hoster["voe"]["plugin"] == "a"
+        assert by_hoster["voe"]["link_label"] == "2x3 Episode Title"
+        assert (
+            by_hoster["voe"]["label_season"],
+            by_hoster["voe"]["label_episode"],
+        ) == (2, 3)
+        assert by_hoster["dood"]["label_season"] is None
+        assert by_hoster["dood"]["label_episode"] == 3
+        assert {e["imdb_id"] for e in lines} == {"tt1234567"}
+        assert all(e["stream_id"] for e in lines)
+        assert all("url" not in e for e in lines)

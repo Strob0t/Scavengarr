@@ -3,11 +3,15 @@ the network."""
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from scavengarr.infrastructure.config import AppConfig
+from scavengarr.infrastructure.network_probe import NetworkProbe
+from scavengarr.infrastructure.telemetry import Telemetry
 from scavengarr.infrastructure.version import APP_VERSION
 from scavengarr.interfaces.app import create_app
 
@@ -75,3 +79,43 @@ def test_a_lost_network_makes_the_app_unready_but_not_dead() -> None:
         {"status": "not_ready", "reason": "network"},
     )
     assert client.get("/api/v1/healthz").status_code == 200
+
+
+def _app_with_cache(cache: AsyncMock) -> FastAPI:
+    """A started app whose network probe pings *cache*, with a DNS that
+    answers."""
+
+    async def resolve(name: str) -> object:
+        return [("addr",)]
+
+    app = _started_app(_Probe(lost=False))
+    app.state.network_probe = NetworkProbe(
+        cache, telemetry=Telemetry(), resolve=resolve
+    )
+    return app
+
+
+def test_a_ping_that_raises_makes_the_app_unready_not_a_500() -> None:
+    """A closed transport raises a ``RuntimeError``, no ``RedisError``
+    (row 175): 503 naming the check, and none of the error's text."""
+    cache = AsyncMock()
+    cache.ping.side_effect = RuntimeError("handler is closed redis://secret@host")
+
+    resp = TestClient(_app_with_cache(cache), raise_server_exceptions=False).get(
+        "/api/v1/readyz"
+    )
+
+    assert (resp.status_code, resp.json()) == (
+        503,
+        {"status": "not_ready", "reason": "cache"},
+    )
+    assert "secret" not in resp.text
+
+
+def test_a_ping_that_works_leaves_the_app_ready() -> None:
+    cache = AsyncMock()
+    cache.ping.return_value = True
+
+    resp = TestClient(_app_with_cache(cache)).get("/api/v1/readyz")
+
+    assert (resp.status_code, resp.json()) == (200, {"status": "ready"})

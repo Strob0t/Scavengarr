@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 
 import structlog
 
+from scavengarr.domain.ports.telemetry import RouteClass
+
 log = structlog.get_logger(__name__)
+
+
+@dataclass(eq=False, slots=True)
+class WatchedRequest:
+    """A request in flight for the stuck-request check: the task that runs
+    its route, its route class, its start on the loop's clock and its id."""
+
+    task: asyncio.Task[object]
+    route: RouteClass
+    started: float
+    request_id: str | None = None
+    # Logged once: set by the check that logged it
+    reported: bool = False
 
 
 class GracefulShutdown:
@@ -33,6 +49,7 @@ class GracefulShutdown:
         self._drained = asyncio.Event()
         self._drained.set()  # starts drained (0 active)
         self._ready = False
+        self._watched: set[WatchedRequest] = set()
 
     @property
     def active_requests(self) -> int:
@@ -60,6 +77,17 @@ class GracefulShutdown:
         if self._active <= 0:
             self._active = 0
             self._drained.set()
+
+    @property
+    def watched_requests(self) -> tuple[WatchedRequest, ...]:
+        """The requests in flight that the stuck-request check reads."""
+        return tuple(self._watched)
+
+    def watch_request(self, request: WatchedRequest) -> None:
+        self._watched.add(request)
+
+    def forget_request(self, request: WatchedRequest) -> None:
+        self._watched.discard(request)
 
     async def wait_for_drain(self, *, timeout: float = 10.0) -> None:
         """Wait for all active requests to finish, up to *timeout* seconds."""

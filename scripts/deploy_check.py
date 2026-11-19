@@ -1,7 +1,7 @@
 """The post-deploy check's evaluation: pass or fail per check, one table.
 
-``prodctl.py check`` gathers the inputs (the container's row and start time,
-its log since the start, its ``/metrics``, four stream answers through the
+``prodctl.py check`` gathers the inputs (the container's inspect state, its
+log since the start, its ``/metrics``, four stream answers through the
 public endpoint) and this module judges them, so the judgement is tested
 from fixtures without a network:
 
@@ -19,8 +19,10 @@ from fixtures without a network:
 7. the readiness probe's gauge ``scavengarr_network_ok`` reads 1 for the
    cache backend and the DNS (none yet: a warning).
 
-Stream descriptions are the only site data in the table; the caller masks
-the output (``portainer.mask``).
+Komodo answers the log's last 5000 lines: when they begin after the
+container's start, checks 2 to 4 are warnings that the log no longer reaches
+the start, not failures. Stream descriptions are the only site data in the
+table; the caller masks the output (``komodo.mask``).
 """
 
 from __future__ import annotations
@@ -29,7 +31,10 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from komodo import ContainerState
 
 Status = Literal["pass", "fail", "warn"]
 
@@ -90,22 +95,40 @@ def parse_time(value: str) -> float:
     return stamp.timestamp()
 
 
-def container_check(containers: Iterable[dict[str, Any]], name: str) -> Check:
-    """Running and healthy, from the ``State`` and ``Status`` of ``ps``."""
-    for row in containers:
-        if name in (n.lstrip("/") for n in row.get("Names", [])):
-            state, status = row.get("State", ""), row.get("Status", "")
-            ok = state == "running" and "(healthy)" in status
-            return Check("container", "pass" if ok else "fail", f"{state}, {status}")
-    return Check("container", "fail", f"no container {name!r}")
+def container_check(state: ContainerState) -> Check:
+    """Running and healthy, from the container's inspect state; its restarts
+    and an OOM kill show."""
+    detail = [state.status, state.health or "no health check"]
+    detail.append(f"restarts {state.restarts}")
+    if state.oom_killed:
+        detail.append("OOM-killed")
+    ok = state.status == "running" and state.health == "healthy"
+    return Check("container", "pass" if ok else "fail", ", ".join(detail))
 
 
 def _records_of(records: Iterable[dict[str, Any]], event: str) -> list[dict[str, Any]]:
     return [r for r in records if r.get("event") == event]
 
 
-def startup_checks(records: Sequence[dict[str, Any]], started_at: float) -> list[Check]:
-    """Checks 2 to 4 from the log since the container's start."""
+def startup_checks(
+    records: Sequence[dict[str, Any]],
+    started_at: float,
+    *,
+    cut_at: float | None = None,
+) -> list[Check]:
+    """Checks 2 to 4 from the log since the container's start. *cut_at* is
+    the first line's time of a log that Komodo's line cap cut: after the
+    start, the start's records are gone and the checks only warn."""
+    if cut_at is not None and cut_at > started_at:
+        begins = datetime.fromtimestamp(cut_at, UTC).strftime("%H:%M:%S")
+        detail = (
+            "the log no longer reaches the container's start"
+            f" (it begins at {begins} UTC)"
+        )
+        return [
+            Check(name, "warn", detail)
+            for name in ("startup", "unknown keys", *_RESTORED)
+        ]
     checks: list[Check] = []
     startups = _records_of(records, _STARTUP)
     newest = startups[-1] if startups else None

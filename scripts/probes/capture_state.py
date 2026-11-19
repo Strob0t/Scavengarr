@@ -1,6 +1,10 @@
 """The browser's kept state: capture states and clearance cookies.
 
-``probe capture_state`` prints per kept host its age, each cookie's name,
+Run by the maintainer in the production container:
+
+    docker exec -i scavengarr python - < scripts/probes/capture_state.py
+
+It prints per kept host its age, each cookie's name,
 domain, path and remaining lifetime, and per origin the localStorage key
 names with their value lengths and, for a value that is a JSON object, the
 epoch times among its top-level fields from now (Byse's captcha pass: its

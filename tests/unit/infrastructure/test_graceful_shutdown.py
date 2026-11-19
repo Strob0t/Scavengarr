@@ -6,7 +6,10 @@ import asyncio
 
 import pytest
 
-from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
+from scavengarr.infrastructure.graceful_shutdown import (
+    GracefulShutdown,
+    WatchedRequest,
+)
 
 
 class TestRequestTracking:
@@ -85,3 +88,29 @@ class TestDrain:
         await gs.wait_for_drain(timeout=0.05)
         assert gs.active_requests == 1
         assert gs.is_shutting_down is True
+
+
+class TestWatchedRequests:
+    """The requests in flight that the stuck-request check reads."""
+
+    async def test_a_request_is_watched_until_it_is_forgotten(self) -> None:
+        gs = GracefulShutdown()
+        task = asyncio.current_task()
+        assert task is not None
+        request = WatchedRequest(task=task, route="torznab", started=1.0)
+
+        gs.watch_request(request)
+        assert gs.watched_requests == (request,)
+        gs.forget_request(request)
+        assert gs.watched_requests == ()
+
+    async def test_forgetting_twice_is_harmless(self) -> None:
+        gs = GracefulShutdown()
+        task = asyncio.current_task()
+        assert task is not None
+        request = WatchedRequest(task=task, route="other", started=1.0)
+        gs.watch_request(request)
+
+        gs.forget_request(request)
+        gs.forget_request(request)
+        assert gs.watched_requests == ()

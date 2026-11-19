@@ -30,6 +30,7 @@ def _serialize_link(link: CachedStreamLink) -> str:
             "is_hls": link.is_hls,
             "resolved_at": link.resolved_at,
             "address_bound": link.address_bound,
+            "idle_reset": link.idle_reset,
         }
     )
 
@@ -47,6 +48,7 @@ def _deserialize_link(data: str) -> CachedStreamLink:
         is_hls=d.get("is_hls", False),
         resolved_at=d.get("resolved_at", 0.0),
         address_bound=d.get("address_bound", False),
+        idle_reset=d.get("idle_reset", False),
     )
 
 

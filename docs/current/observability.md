@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr records the steps of its core as Prometheus metrics: every Stremio stream request, its phases, every plugin search of a Stremio request, every hoster resolution, every stealth browser page and every HLS proxy request.
 > **Status:** current
-> **As of:** 54ee500c
+> **As of:** 86d497b5
 
 ## Purpose
 
@@ -37,9 +37,10 @@ The core records through one port, `TelemetryPort` (`domain/ports/telemetry.py`)
 - Exceptions always propagate, and `stage.label(...)` sets a label known only later.
 - `count(name, outcome, **labels)` counts an outcome without a run, such as a plugin skipped by its open breaker or a resolution from the cache.
 - `record(name, value, **labels)` records a value that is not a duration: streams per answer, bytes, the state of a readiness check.
+- `record_background_task_death(task)` counts a long-lived background task that ended with an exception ([Background tasks](#background-tasks)).
 
 The composition root builds it with `create_telemetry(config.telemetry.tracing_endpoint)` and closes it at shutdown.
-Nine places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, Filemoon's pass keeper (`PassKeeper`), the stealth browser's page gate (`PageGate`), the HLS proxy route with its read-ahead (`SegmentReadAhead`), the event-loop monitor and the readiness probe (`NetworkProbe`).
+Ten places record: `StremioStreamUseCase` (its search and resolve phases through `TitleSearch` and `ResolveFlow`), `PluginSearchRunner`, `HosterResolverRegistry`, Filemoon's pass keeper (`PassKeeper`), the stealth browser's page gate (`PageGate`), the HLS proxy route with its read-ahead (`SegmentReadAhead`), the event-loop monitor, the readiness probe (`NetworkProbe`) and the background tasks' done-callback (`watch_task`).
 Plugins and resolvers contain no metrics code, so a new one is recorded without changes.
 A component without a wired port gets `NO_TELEMETRY`, which records nothing, as in most tests.
 
@@ -115,9 +116,58 @@ Production's container once lost its network namespace for 33 h (the VPN contain
 
 - The probe pings the cache backend (`CachePort.ping()`) and resolves the fully qualified public name `example.com.` concurrently, each check within 3 s, at most once every 30 s; a request in between gets the last probe's verdict. It runs only when asked: the image's healthcheck asks every 30 s, and without a caller the gauge has no sample.
 - The network counts as lost once both checks have failed for longer than 5 min; `/api/v1/readyz` then answers 503 with `"reason": "network"`. A single miss changes nothing, and neither does one check failing alone (a Redis restart, a DNS hiccup).
+- A check that raises (a closed transport raises a `RuntimeError`, no Redis error) makes `/api/v1/readyz` answer 503 with `"reason": "cache"`, not 500; the log line `readyz_check_failed` carries the exception's type, never its text, which can hold the Redis URL.
 - Every probe sets `scavengarr_network_ok{check="cache"}` and `scavengarr_network_ok{check="dns"}` to 1 or 0; no alert rule reads it, the post-deploy check does ([Operations](../how-to/operations.md#5-check-a-deploy)).
 - The loss logs `network_lost` once (error, with `seconds`, `probes` and `dns_error`), its end `network_recovered` (`seconds`, `probes`); a failed Redis ping counts toward the cache's `redis_unavailable` and `redis_recovered` lines.
 - Docker marks the container unhealthy after three failed checks and restarts nothing by itself.
+
+### Background tasks
+
+The service runs nine long-lived tasks beside its requests: seven from the composition root (`loop_lag`, the event-loop monitor; `page_budget`, the stealth browser's page budget; `plugin_health`; `scoring`; `browser_warmup`; `pass_keeper`; `request_watch`, the stuck-request check) and the two writers' own (`hoster_state_store`, `plugin_history`).
+Each carries the done-callback of `watch_task` (`infrastructure/telemetry/background.py`), so a task that ends with an exception shows at once instead of at the shutdown that awaits it.
+
+- A task that ends with an exception logs `background_task_died` once (error, with `task`, `error`, the exception's type, and its traceback) and counts `scavengarr_background_task_deaths_total{task}`.
+- A cancelled task (the shutdown) and one that returns (the browser's warm-up) log and count nothing.
+- The names are a fixed set (`BackgroundTaskName` in the telemetry port); each has a zero series from the start, so `increase()` sees the first death.
+- A dead task is not restarted: what it did (the lag samples, the page budget's changes, the writes of the snapshots) stops until the next start.
+- A dead task no longer stops the shutdown: the shutdown and both writers' `aclose()` stop each task with `stop_task()` (beside `watch_task`), which cancels it and waits for its end without raising its exception, so the writers' last snapshots, the browsers' cleanup and the closes of the HTTP client, the cache and the telemetry still run. A cancellation of the shutdown itself still propagates.
+
+### Stalls
+
+A synchronous call that holds the event loop stops every request at once, and `healthz` and `readyz` time out with it: Docker marks the container unhealthy and restarts nothing.
+The stall monitor (`StallMonitor`, `infrastructure/telemetry/watchdog.py`) names such a stall from a thread outside the loop, and its exit switch can end the process, so that the container's restart policy restarts it.
+
+- The loop lag task's tick stamps a heartbeat every 0.5 s, and the monitor's thread reads it every 5 s; a heartbeat older than `watchdog.stall_seconds` (120 s by default) is a stall.
+- A stall logs `event_loop_stalled` once (error, with `age_s`, `limit_s`, `exit` and `stack`, the innermost 4000 characters of the loop thread's stack) and dumps every thread's traceback to standard error through `faulthandler`, which writes from C, past the logging path.
+- While the stall lasts the thread reads the heartbeat every 0.5 s; when the loop ticks again, `event_loop_recovered` (warning) names the stall's length in `length_s`.
+- The monitor starts after `app_startup_complete`, since the startup's plugin loading holds the loop, and logs `stall_monitor_started` with `stall_seconds`, `exit_on_stall` and `backstop_seconds`; a limit of 0 starts no thread and logs `stall_monitor_off`.
+- It stops first at the shutdown (`stall_monitor_stopped`), since the shutdown's bounded waits hold the loop too.
+- A `faulthandler` timer at twice the limit dumps the tracebacks of a stall in which no Python thread runs, such as a C call that holds the interpreter. The monitor's thread arms it again at every check, so the timer never fires while the thread runs, and a stall the monitor names has one dump.
+- A check that raises logs `stall_monitor_check_failed` and cancels the timer, and the next check arms it again; the thread's end cancels it too, so it never fires on a healthy loop.
+- The lag histogram `scavengarr_event_loop_lag_seconds` has buckets up to 120 s, so a stall the loop survived stays in the scraped metrics after the logs are gone.
+
+The exit switch `watchdog.exit_on_stall` is off.
+
+- Switched on, a stall ends the process with code 3 after its line and its dump (`exit=on`), and tini and the restart policy restart the container.
+- The line, the dump and the log's flush each wait at most 2 s, so a lock or a write the stalled thread holds does not hold the exit.
+- The exit budget allows 3 exits within 30 min, counted in `watchdog-exits.json` of the cache directory, which a restart keeps, and a recreate too where the directory is a volume, as in `docker-compose.yml`.
+- A further stall logs `exit=skipped` and the process keeps running; a file that cannot be read counts as empty, and a failed write adds `budget_error` to the line.
+- With the switch off a stall logs `exit=off`.
+- With the switch on and an exit left in the budget, the timer exits too, with `faulthandler`'s code 1; the budget does not count that exit, since C code cannot write its file.
+
+Reading a stall on production: [Operations](../how-to/operations.md#2-read-the-logs).
+
+### Stuck requests
+
+A request can hang while the loop still runs, on a wait that no time bound ends.
+The request watch names it: `RequestWatchMiddleware` (`interfaces/api/middleware.py`) notes each request's task, route class, start and `request_id` in `GracefulShutdown`, beside the count of requests in flight, and forgets it when the request ends, cancelled or not.
+
+- `watch_requests` (`infrastructure/telemetry/watchdog.py`), the background task `request_watch`, reads the noted requests every 30 s on the loop and logs `request_stuck` once for each one past its route class's limit (warning, with `route`, `age_s`, `request_id` and `stack`), counted in `scavengarr_requests_stuck_total{route}`.
+- The route class comes from the path: `stremio_stream` and `stremio_catalog` after 5 min (a stream request answers by its deadline, 60 s by default), `torznab` for the Torznab searches and the `.crawljob` downloads after 10 min (a search has no overall bound), and `other` for the rest after 5 min; each class has a zero series from the start.
+- The requests under `/api/v1/stremio/play/` and `/api/v1/stremio/proxy/` last as long as a playback and are never noted.
+- `stack` follows the task's await chain, outermost first, down to the innermost wait (its innermost 4000 characters), since `Task.get_stack()` holds only the outermost frame of a suspended coroutine; the chain ends at a future, another task's included, and the lines name no source.
+- The middleware is the innermost one: `log_requests` and the rate limit run the app below them in a task of their own (Starlette's `BaseHTTPMiddleware`), so the noted task is the one that runs the route.
+- The check starts after the startup and stops beside the stall monitor, first at the shutdown.
 
 ### Queries
 
@@ -152,6 +202,15 @@ histogram_quantile(0.9, sum by (le, kind) (rate(scavengarr_browser_page_wait_sec
 
 # Readiness checks that failed at a scrape of the last day (0) or never (1)
 min_over_time(scavengarr_network_ok[1d])
+
+# Background tasks that died in the last day
+sum by (task) (increase(scavengarr_background_task_deaths_total[1d])) > 0
+
+# Stuck requests in the last day, by route class
+sum by (route) (increase(scavengarr_requests_stuck_total[1d])) > 0
+
+# Ticks later than 5 s in the last day: stalls the loop survived
+sum(increase(scavengarr_event_loop_lag_seconds_count[1d])) - sum(increase(scavengarr_event_loop_lag_seconds_bucket{le="5.0"}[1d]))
 ```
 
 ### Request id
@@ -168,7 +227,7 @@ uvicorn's own access log is off (`access_log=False`): it repeated each request w
 A playback the shutdown bound cancels logs Uvicorn's cancel line as a warning and no `Exception in ASGI application`; the stop's last lines are written before the process ends ([Shutdown](architecture.md#shutdown)).
 
 Log lines name a CDN by its second-level domain (`cdn=dropcdn`, `extract_domain()`), never by its URL: the path and the query of a video URL carry tokens and the client's address.
-That holds for the HLS proxy's CDN errors (`hls_proxy_cdn_error`, `hls_proxy_network_error`), a body the CDN cut (`hls_proxy_file_cut`, `hls_proxy_segment_cut`) and its resumes (`hls_proxy_file_resumed`, `hls_proxy_segment_resumed` with `how=range` or `how=restart`), the fetches ahead (`hls_readahead_retried`, `hls_readahead_failed`), `/play`'s redirect (`stremio_play_resolved`), the playback check (`playback_check_failed`) and the resolvers' results.
+That holds for the HLS proxy's CDN errors (`hls_proxy_cdn_error`, `hls_proxy_network_error`), a body the CDN cut (`hls_proxy_file_cut`, `hls_proxy_segment_cut`) and its resumes (`hls_proxy_file_resumed`, `hls_proxy_segment_resumed` with `how=range` or `how=restart`), the first answer of a stream (`hls_proxy_first_answer`, `file_proxy_first_answer`: `cdn_host`, the host only) and a player's abort (`proxy_client_abort`), the fetches ahead (`hls_readahead_retried`, `hls_readahead_failed`), `/play`'s redirect (`stremio_play_resolved`), the playback check (`playback_check_failed`, `playback_check_moov_unread`) and the resolvers' results.
 Third-party records show URLs by their origin only (`_shorten_urls` in `infrastructure/logging/setup.py`).
 httpx's line for each outgoing request, written at `logging.level: DEBUG` only, reads `HTTP Request: GET https://cdn.example.net "HTTP/1.1 200 OK"`, and the same holds for URLs in their tracebacks.
 
@@ -254,5 +313,8 @@ Reading production's metrics, logs and records: [Operations](../how-to/operation
 - `src/scavengarr/infrastructure/telemetry/`: `Telemetry`, the scrape-time collectors and the tracing.
 - `src/scavengarr/infrastructure/plugins/history.py`: the plugin record.
 - `src/scavengarr/infrastructure/network_probe.py`: the readiness probe.
+- `src/scavengarr/infrastructure/telemetry/watchdog.py`: the stall monitor, its exit budget and the stuck-request check.
+- `src/scavengarr/interfaces/api/middleware.py`: the request watch and the route classes.
+- [0016](../target/decisions/0016-in-process-stall-monitor.md): the monitor in the process, its exit switch off.
 - `docker/grafana-dashboard.json`, `docker/prometheus-alerts.yml`, `docker/tempo.yaml`: the dashboard, the alert rules and Tempo.
 - [Metrics](../reference/metrics.md), [Operations](../how-to/operations.md), [Architecture](architecture.md).

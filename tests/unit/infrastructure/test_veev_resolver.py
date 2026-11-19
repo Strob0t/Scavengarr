@@ -6,8 +6,15 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.entities.stremio import StreamQuality
+from scavengarr.application.stremio.stream_builder import (
+    FILE_NAME,
+    build_stream_from_resolved,
+)
+from scavengarr.domain.entities.stremio import StreamQuality, StremioStream
 from scavengarr.domain.ports.hoster_resolver import ClientBoundResolverPort
+from scavengarr.infrastructure.hoster_resolvers.registry import (
+    HosterResolverRegistry,
+)
 from scavengarr.infrastructure.hoster_resolvers.veev import (
     VeevResolver,
     _build_array,
@@ -15,6 +22,7 @@ from scavengarr.infrastructure.hoster_resolvers.veev import (
     _lzw_decode,
     _unwrap,
 )
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 # Real vectors captured from https://veev.to/e/5pi5uz0jufew (2026-09-28)
 _TOKEN = "311020030Ă-92-5pi5uz0jufew-Ą9-1790604Ġ7Ċb4a74536ĩ071e0d505Ķc559a916c1"
@@ -166,6 +174,41 @@ class TestVeevResolver:
 
         assert isinstance(resolver, ClientBoundResolverPort)
         assert resolver.bound_headers == ("user-agent", "accept-language")
+
+    def test_declares_that_its_cdn_resets_idle_connections(self) -> None:
+        """veevcdn reset 10 of 10 connections that stopped reading for 30 to
+        300 s (decision 0017), so its file goes through the file proxy,
+        which resumes it."""
+        assert VeevResolver.idle_reset is True
+
+    @respx.mock
+    async def test_its_stream_goes_through_the_file_proxy(self) -> None:
+        """The registry stamps the flag on the resolved stream, and the
+        builder gives the player the proxy's file path instead of /play."""
+        respx.get(_EMBED).respond(200, text=_EMBED_HTML)
+        respx.get(_API).respond(
+            200, json={"status": "success", "file": {"dv": [{"s": _SOURCE_S}]}}
+        )
+
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(resolvers=[VeevResolver(client)])
+            resolved = await registry.resolve(_EMBED, hoster="veev")
+
+        assert resolved is not None
+        assert resolved.idle_reset is True
+        assert resolved.address_bound is False
+        stream = build_stream_from_resolved(
+            StremioStream(name="Scavengarr", description="", url=""),
+            resolved,
+            _EMBED,
+            "sid1",
+            "http://localhost:7979",
+            DEFAULT_USER_AGENT,
+        )
+        assert stream is not None
+        assert stream.url == (
+            f"http://localhost:7979/api/v1/stremio/proxy/sid1/{FILE_NAME}"
+        )
 
     @respx.mock
     async def test_resolves_as_the_player_asking(self) -> None:

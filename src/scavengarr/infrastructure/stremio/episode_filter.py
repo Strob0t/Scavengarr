@@ -17,6 +17,15 @@ from scavengarr.infrastructure.stremio.release_guess import guess_release
 
 log = structlog.get_logger(__name__)
 
+# A link kept for a later season only because its label names no season
+# ("Folge 5"): the diagnosis of a stream of the wrong season
+SEASONLESS_PASS_EVENT = "episode_filter_seasonless_pass"
+SEASON_FIELD = "season"
+EPISODE_FIELD = "episode"
+LABEL_FIELD = "label"
+# Labels are cut to this length in the log
+LOG_LABEL_CHARS = 40
+
 
 # Matches episode labels in download_links.
 # Patterns: "1x5", "1x05", "2X10", "S01E05", "s1e5", "S02E10 Episode Title".
@@ -86,6 +95,15 @@ def filter_links_by_episode(
         if episode is not None and l_episode is not None and l_episode != episode:
             continue
 
+        if l_season is None and season is not None and season > 1:
+            log.info(
+                SEASONLESS_PASS_EVENT,
+                **{
+                    SEASON_FIELD: season,
+                    EPISODE_FIELD: episode,
+                    LABEL_FIELD: label[:LOG_LABEL_CHARS],
+                },
+            )
         matched.append(link)
 
     if not has_episode_info:

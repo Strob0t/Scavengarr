@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from structlog.testing import capture_logs
 
 from scavengarr.domain.plugins.base import SearchResult
 from scavengarr.infrastructure.stremio.episode_filter import (
@@ -441,6 +442,47 @@ class TestWithoutLeaks:
         r = _make_search_result(title="Severance E05", metadata={"season": 2})
         assert filter_by_episode([r], season=2, episode=5) == [r]
         assert filter_by_episode([r], season=1, episode=5) == []
+
+
+class TestSeasonlessPassLog:
+    """A link kept for a later season only because its label names no
+    season logs ``episode_filter_seasonless_pass``; the filter is unchanged."""
+
+    def test_folge_label_on_season_2_is_logged(self) -> None:
+        links = [{"url": "https://voe.sx/e/3", "label": "Folge 3"}]
+
+        with capture_logs() as logs:
+            kept = filter_links_by_episode(links, season=2, episode=3)
+
+        assert kept == links
+        [line] = [e for e in logs if e["event"] == "episode_filter_seasonless_pass"]
+        assert (line["season"], line["episode"], line["label"]) == (2, 3, "Folge 3")
+
+    def test_label_with_season_is_not_logged(self) -> None:
+        links = [{"url": "https://voe.sx/e/3", "label": "2x3"}]
+
+        with capture_logs() as logs:
+            kept = filter_links_by_episode(links, season=2, episode=3)
+
+        assert kept == links
+        assert not [e for e in logs if e["event"] == "episode_filter_seasonless_pass"]
+
+    def test_season_1_is_not_logged(self) -> None:
+        links = [{"url": "https://voe.sx/e/3", "label": "Folge 3"}]
+
+        with capture_logs() as logs:
+            filter_links_by_episode(links, season=1, episode=3)
+
+        assert not [e for e in logs if e["event"] == "episode_filter_seasonless_pass"]
+
+    def test_long_label_is_cut(self) -> None:
+        links = [{"url": "https://voe.sx/e/3", "label": "Folge 3 " + "x" * 60}]
+
+        with capture_logs() as logs:
+            filter_links_by_episode(links, season=2, episode=3)
+
+        [line] = [e for e in logs if e["event"] == "episode_filter_seasonless_pass"]
+        assert len(line["label"]) == 40
 
 
 class TestEpisodeWords:

@@ -3,7 +3,7 @@
 Usage (against a running server):
     poetry run python scripts/stremio_round.py --base https://scavengarr.example.lan \\
         [--insecure] [--ids-file .cache/live/round-titles.txt] [--out FILE] \\
-        [--no-playcheck] [--portainer [--container scavengarr]]
+        [--no-playcheck] [--cpu]
 
 The ids file is local and untracked (``.cache/`` is ignored): one ``movie/<imdb id>``
 or ``series/<imdb id>`` per line with an optional ``# title``, so the maintainer's
@@ -23,9 +23,9 @@ names the failing hosters and that count) and a summary row with medians
 and totals, then a table of the streams per hoster and codec pair (the
 play check's ``video/audio``); ``--out`` appends it to a Markdown file.
 
-``--portainer`` adds the CPU seconds the container's Python and Chromium
-processes used during the round (``stremio_profile.py``'s reading;
-``PORTAINER_URL`` and ``PORTAINER_API_KEY`` as in ``portainer.py``).
+``--cpu`` adds the CPU seconds the app's Python process used during the
+round (``process_cpu_seconds_total`` of ``/metrics`` before and after it;
+Chromium's processes are not in it).
 
 Load: a round asks every plugin's site for every title, so run it against
 production at most once an hour.
@@ -44,12 +44,14 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from portainer import Portainer, credentials
+from digest import parse_metrics
 from stremio_measure import _source
 from stremio_playcheck import check_stream, verdict_codecs
-from stremio_profile import cpu_seconds
 
 DEFAULT_IDS_FILE = Path(__file__).resolve().parents[1] / ".cache/live/round-titles.txt"
+# The app process's CPU seconds since its start (the Python process, not its
+# Chromium children)
+_CPU = "process_cpu_seconds_total"
 
 # A first answer waits for the plugins' search (deadline 60 s in production)
 _STREAM_TIMEOUT = 120.0
@@ -174,7 +176,7 @@ def _playable(playable: int | None, streams: int) -> str:
     return "–" if playable is None else f"{playable} of {streams}"
 
 
-def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
+def render(rows: list[Row], cpu: float | None = None) -> str:
     """The round table: one row per title, a summary row, titles without stream."""
     lines = [
         "| Title | First answer | Streams | X-Cache | Complete "
@@ -218,8 +220,8 @@ def render(rows: list[Row], cpu: dict[str, float] | None = None) -> str:
     )
     if cpu is not None:
         lines.append(
-            f"CPU of the container during the round: Python {cpu['python']:.1f} s, "
-            f"Chromium {cpu['chrome']:.1f} s."
+            f"CPU of the app's Python process during the round: {cpu:.1f} s"
+            " (Chromium's processes are not in it)."
         )
     lines.extend(_codec_table(rows))
     return "\n".join(lines) + "\n"
@@ -239,6 +241,19 @@ def _codec_table(rows: list[Row]) -> list[str]:
     return lines
 
 
+async def process_cpu(client: httpx.AsyncClient, base: str) -> float | None:
+    """The app process's CPU seconds since its start; None when ``/metrics``
+    does not answer them."""
+    try:
+        resp = await client.get(f"{base}/metrics")
+    except httpx.HTTPError:
+        return None
+    if not resp.is_success:
+        return None
+    samples = parse_metrics(resp.text)
+    return next((v for name, labels, v in samples if name == _CPU and not labels), None)
+
+
 async def run(args: argparse.Namespace) -> str:
     """Measure every id of the ids file one after another; return the table."""
     if not args.ids_file.exists():
@@ -249,12 +264,13 @@ async def run(args: argparse.Namespace) -> str:
     ids = read_ids(args.ids_file)
     if not ids:
         raise SystemExit(f"no ids in {args.ids_file}")
-    container = Portainer(args.container, *credentials()) if args.portainer else None
-    before = cpu_seconds(container) if container else None
     rows: list[Row] = []
     async with httpx.AsyncClient(
         verify=not args.insecure, follow_redirects=True, timeout=_HTTP_TIMEOUT
     ) as client:
+        before = await process_cpu(client, args.base) if args.cpu else None
+        if args.cpu and before is None:
+            print("--cpu: /metrics answers no process_cpu_seconds_total")
         for sid, title in ids:
             row = await measure(
                 client, args.base, sid, title, playcheck=not args.no_playcheck
@@ -269,11 +285,10 @@ async def run(args: argparse.Namespace) -> str:
             if row.full_bodies:
                 print(f"   {row.full_bodies}× {_FULL_BODY}")
             rows.append(row)
-    cpu = None
-    if container and before:
-        after = cpu_seconds(container)
-        cpu = {kind: after[kind] - before[kind] for kind in after}
-    return render(rows, cpu)
+        after = await process_cpu(client, args.base) if before is not None else None
+    # A restart during the round starts the counter anew
+    cpu = after - before if before is not None and after is not None else None
+    return render(rows, cpu if cpu is None or cpu >= 0 else None)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -284,9 +299,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, help="Markdown file to append to")
     parser.add_argument("--no-playcheck", action="store_true")
     parser.add_argument(
-        "--portainer", action="store_true", help="the container's CPU (Portainer)"
+        "--cpu", action="store_true", help="the app process's CPU (/metrics)"
     )
-    parser.add_argument("--container", default="scavengarr")
     args = parser.parse_args(argv)
 
     table = asyncio.run(run(args))

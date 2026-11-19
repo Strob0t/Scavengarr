@@ -36,16 +36,23 @@ _RESOLUTION_CLASSES = (
 )
 
 
+# A cropped frame keeps its class when its width falls this short of the
+# class's: an encoder cuts the width to a multiple of 16, so a 2.40:1 crop of
+# 1280x720 is 1248x520
+_WIDTH_TOLERANCE = 0.95
+
+
 def quality_from_resolution(width: int | None, height: int | None) -> StreamQuality:
     """The quality class of a video resolution, ``UNKNOWN`` without one.
 
     By width or by height, whichever gives the higher class: a letterboxed
-    1080p encode (1920x800) is 720p by its height alone.
+    1080p encode (1920x800) is 720p by its height alone. The width counts
+    with a small tolerance for crops (1248x520 is 720p).
     """
     if width is None or height is None:
         return StreamQuality.UNKNOWN
     for min_width, min_height, quality in _RESOLUTION_CLASSES:
-        if width >= min_width or height >= min_height:
+        if width >= min_width * _WIDTH_TOLERANCE or height >= min_height:
             return quality
     return StreamQuality.SD
 
@@ -61,17 +68,27 @@ class StreamLanguage:
 
 @dataclass(frozen=True)
 class RankedStream:
-    """A single stream link with quality and language metadata for ranking."""
+    """A single stream link with quality and language metadata for ranking.
+
+    ``quality_guessed``: a word that names no resolution ("HD", "WEBRIP")
+    gave the quality, which ranks the stream but shows no label.
+    ``link_label``, ``label_season`` and ``label_episode``: the download
+    link's label and the season and episode it names, for the log.
+    """
 
     url: str
     hoster: str
     quality: StreamQuality = StreamQuality.UNKNOWN
+    quality_guessed: bool = False
     language: StreamLanguage | None = None
     size: str | None = None
     release_name: str | None = None
     title: str = ""
     source_plugin: str = ""
     rank_score: int = 0
+    link_label: str = ""
+    label_season: int | None = None
+    label_episode: int | None = None
 
 
 @dataclass(frozen=True)
@@ -261,7 +278,8 @@ class CachedStreamLink:
     redirects to ``video_url`` and the HLS proxy fetches it (with
     ``video_headers``) while it is fresh (``resolved_at``), else they
     resolve the hoster URL again. An address-bound file (``address_bound``)
-    is fetched by the proxy as well.
+    and a file whose CDN resets idle connections (``idle_reset``) are
+    fetched by the proxy as well.
     """
 
     stream_id: str
@@ -273,6 +291,7 @@ class CachedStreamLink:
     is_hls: bool = False  # whether the stream is HLS
     resolved_at: float = 0.0  # time.time() of video_url's resolution; 0: none
     address_bound: bool = False  # the file plays through /proxy/<id>/file
+    idle_reset: bool = False  # the file plays through /proxy/<id>/file
 
 
 @dataclass(frozen=True)
@@ -294,6 +313,9 @@ class ResolvedStream:
     # The CDN binds the URL to the address that resolved it (the resolver's
     # ``address_bound``): a player fetches the file through Scavengarr
     address_bound: bool = False
+    # The CDN resets a connection that stops reading (the resolver's
+    # ``idle_reset``): the file goes through Scavengarr, which resumes it
+    idle_reset: bool = False
 
 
 @dataclass(frozen=True)

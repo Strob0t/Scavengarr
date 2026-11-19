@@ -12,8 +12,10 @@ Scrapes kinoking.cc (German streaming site for movies & TV series) with:
 
 Movie servers that are skipped: aggregator players (meinecloud, vidsync,
 cinesrc), servers tagged with another language than German (``(EN)``,
-``(FR)``) and the ``group_kk_*`` servers, which match by title only and mix
-up sequels. Each server contributes at most ``_MAX_MIRRORS_PER_SERVER`` links.
+``(FR)``) and the ``group_kk_*`` and ``group_filmo_*`` servers, which match
+by title only and mix up films. Each server contributes at most
+``_MAX_MIRRORS_PER_SERVER`` links. A link without a language tag (series
+episodes, untagged movie servers) has the language ``unknown``.
 
 No alternative domains found. No authentication required.
 """
@@ -71,8 +73,13 @@ _LINK_SPLIT_RE = re.compile(r"[\s,;|]+")
 
 # Players that aggregate other hosters (or are gone) rather than host a file
 _AGGREGATOR_HOSTS = frozenset({"meinecloud", "vidsync", "cinesrc"})
-# Servers that match by title only (mix up e.g. Iron Man 1-3)
-_TITLE_MATCH_SERVER_PREFIX = "group_kk_"
+# Server groups that match by title only: "group_kk_" mixes up e.g. Iron
+# Man 1-3, "group_filmo_" gave Conan the Barbarian (1982) on the page of
+# Musk (2026, tmdb 1096228)
+_TITLE_MATCH_SERVER_PREFIXES = ("group_kk_", "group_filmo_")
+# The link language when the site names none (a series episode, a movie
+# server without a language tag): shown as such, not as the plugin default
+_UNKNOWN_LANGUAGE = "unknown"
 
 
 def _load_json_array(pattern: re.Pattern[str], html: str) -> list[Any]:
@@ -123,11 +130,12 @@ def _movie_links(html: str) -> list[dict[str, str]]:
     for server in _load_json_array(_SERVERS_RE, html):
         if not isinstance(server, dict):
             continue
-        if str(server.get("id", "")).startswith(_TITLE_MATCH_SERVER_PREFIX):
+        if str(server.get("id", "")).startswith(_TITLE_MATCH_SERVER_PREFIXES):
             continue
         lang = _SERVER_LANG_RE.search(str(server.get("name", "")))
         if lang and lang.group(1) != "DE":
             continue
+        language = "de" if lang else _UNKNOWN_LANGUAGE
         mirrors = server.get("mirrors")
         if not isinstance(mirrors, list):
             continue
@@ -137,6 +145,7 @@ def _movie_links(html: str) -> list[dict[str, str]]:
             if link is None or link["link"] in seen:
                 continue
             seen.add(link["link"])
+            link["language"] = language
             links.append(link)
             taken += 1
             if taken == _MAX_MIRRORS_PER_SERVER:
@@ -151,6 +160,7 @@ def _episode_links(ep: dict[str, Any]) -> list[dict[str, str]]:
     for url in dict.fromkeys(_LINK_SPLIT_RE.split(raw)):
         link = _link(url)
         if link is not None:
+            link["language"] = _UNKNOWN_LANGUAGE
             links.append(link)
     return links
 

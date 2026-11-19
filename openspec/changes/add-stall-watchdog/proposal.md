@@ -26,7 +26,7 @@ The maintainer's choice of 2026-10-20: diagnosis with an exit switch that is off
   - `monitor_loop_lag`'s tick (every 0.5 s) also stamps a heartbeat; a daemon thread reads it every 5 s.
   - When the heartbeat is older than `watchdog.stall_seconds` (default 120, 0 turns the monitor off), it logs `event_loop_stalled` once per stall with the stall's age and the main thread's stack, and dumps every thread's traceback to standard error (`faulthandler`).
   - When the loop runs again, `event_loop_recovered` names the stall's length.
-- **A backstop for a held interpreter.** Code that holds the GIL starves the monitor thread too; a `faulthandler.dump_traceback_later` timer at twice the limit, re-armed by the heartbeat, dumps the tracebacks from C.
+- **A backstop for a held interpreter.** Code that holds the GIL starves the monitor thread too; a `faulthandler.dump_traceback_later` timer at twice the limit, re-armed at every check of the monitor thread, dumps the tracebacks from C.
 - **The exit switch, off.**
   - With `watchdog.exit_on_stall: true` the monitor ends the process after the log line and the dump (`os._exit(3)`), so `restart: unless-stopped` restarts the container.
   - The exit never waits on a lock or a write the stalled thread may hold: the structured line and the log's flush get bounded waits, the dump and the exit do not depend on them.
@@ -56,3 +56,4 @@ The maintainer's choice of 2026-10-20: diagnosis with an exit switch that is off
   - The Compose file: the restart policy is already `unless-stopped`.
   - No new dependency: `threading`, `faulthandler` and `sys._current_frames()` are stdlib.
 - **Order:** the task deaths first (group 1, small), then the monitor and the stuck requests (groups 2 and 3); the switch stays off until the readings of group 4 and the maintainer's decision.
+- **Approval:** the maintainer approved the whole change on 2026-10-21; group 1 is row 156 of `docs/backlog.md`, groups 2, 3 and 4.1 are row 157.

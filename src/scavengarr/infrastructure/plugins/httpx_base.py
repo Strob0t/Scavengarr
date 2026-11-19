@@ -773,29 +773,19 @@ class HttpxPluginBase:
         resolved = await asyncio.gather(*(_one(link) for link in links))
         return [link for link in resolved if link is not None]
 
-    async def _resolve_result_links(
-        self, results: list[SearchResult]
-    ) -> list[SearchResult]:
-        """Apply ``_resolve_own_links()`` to final results (after capping).
+    async def _resolve_link_out(self, url: str) -> list[str]:
+        """The download link behind one link-out on the plugin's own host, for
+        a grab (``GrabResolvingPlugin.resolve_download``).
 
-        Results left without any usable link are dropped. Call this on the
-        results actually returned so only their links cost a round trip.
+        For sites that let only a few link-outs through per second
+        (serienfans, filmfans): resolving every result's at search time took
+        minutes, a grab resolves one release's. A link on another host is
+        kept as it is; a link-out that does not leave its host gives none.
         """
-        sem = self._new_semaphore()
-
-        async def _one(result: SearchResult) -> SearchResult | None:
-            links = result.download_links or [
-                {"hoster": "", "link": result.download_link}
-            ]
-            resolved = await self._resolve_own_links(links, sem)
-            if not resolved:
-                return None
-            result.download_link = resolved[0]["link"]
-            result.download_links = resolved
-            return result
-
-        updated = await asyncio.gather(*(_one(r) for r in results))
-        return [r for r in updated if r is not None]
+        if urlparse(url).hostname != urlparse(self.base_url).hostname:
+            return [url]
+        target = await self._resolve_redirect(url, context="grab")
+        return [target] if target else []
 
     def _request_kwargs(
         self, client: httpx.AsyncClient, url: str = ""

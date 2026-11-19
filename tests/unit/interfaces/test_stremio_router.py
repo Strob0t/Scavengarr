@@ -7,7 +7,9 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -19,6 +21,7 @@ from scavengarr.domain.entities.stremio import (
     StremioMetaPreview,
     StremioStream,
 )
+from scavengarr.infrastructure.stremio import hls_proxy
 from scavengarr.interfaces.api.stremio.router import (
     _BodyResponse,
     _parse_stream_id,
@@ -565,6 +568,46 @@ class TestPlayEndpoint:
             "https://voe.sx/e/test", "voe", refresh=False
         )
 
+    @pytest.mark.parametrize(
+        ("video_url", "is_hls", "media_kind"),
+        [
+            ("https://cdn.test/hls/master.m3u8?t=x", True, "hls"),
+            ("https://cdn.test/video/abc.MP4?t=x", False, "file"),
+            ("https://cdn.test/get?id=abc", False, "other"),
+        ],
+    )
+    def test_the_redirect_logs_its_media_kind_and_hoster(
+        self, video_url: str, is_hls: bool, media_kind: str
+    ) -> None:
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            title="Iron Man",
+            hoster="voe",
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        registry = AsyncMock()
+        # The headers make an extension-less URL a video (is_direct_video_url)
+        registry.resolve = AsyncMock(
+            return_value=ResolvedStream(
+                video_url=video_url, is_hls=is_hls, headers={"Referer": "x"}
+            )
+        )
+        client = TestClient(
+            _make_app(stream_link_repo=repo, hoster_resolver_registry=registry),
+            follow_redirects=False,
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            resp = client.get("/api/v1/stremio/play/abc123")
+
+        assert resp.status_code == 302
+        resolved = [e for e in logs if e["event"] == "stremio_play_resolved"]
+        assert len(resolved) == 1
+        assert resolved[0]["media_kind"] == media_kind
+        assert resolved[0]["hoster"] == "voe"
+
     def test_head_redirects_too(self) -> None:
         """A streaming server asks with HEAD first; a 405 ended streams in
         error 83 before."""
@@ -703,8 +746,8 @@ class TestPlayEndpoint:
 
 
 class TestProxyFileLink:
-    """The file route serves address-bound files only; the other links keep
-    their routes."""
+    """The file route serves address-bound and idle-reset files only; the
+    other links keep their routes."""
 
     _FILE = "/api/v1/stremio/proxy/abc123/file"
 
@@ -715,11 +758,18 @@ class TestProxyFileLink:
         return TestClient(_make_app(stream_link_repo=repo))
 
     @pytest.mark.parametrize(
-        ("is_hls", "address_bound"),
-        [(True, True), (True, False), (False, False)],
-        ids=["hls", "hls-without-flag", "file-without-flag"],
+        ("is_hls", "address_bound", "idle_reset"),
+        [
+            (True, True, False),
+            (True, False, True),
+            (True, False, False),
+            (False, False, False),
+        ],
+        ids=["hls", "hls-idle-reset", "hls-without-flag", "file-without-flag"],
     )
-    def test_other_links_are_refused(self, is_hls: bool, address_bound: bool) -> None:
+    def test_other_links_are_refused(
+        self, is_hls: bool, address_bound: bool, idle_reset: bool
+    ) -> None:
         link = CachedStreamLink(
             stream_id="abc123",
             hoster_url="https://mixdrop.ag/e/test",
@@ -728,6 +778,7 @@ class TestProxyFileLink:
             is_hls=is_hls,
             resolved_at=time.time(),
             address_bound=address_bound,
+            idle_reset=idle_reset,
         )
 
         resp = self._client(link).get(self._FILE)
@@ -739,6 +790,49 @@ class TestProxyFileLink:
 
     def test_without_the_repository(self) -> None:
         assert TestClient(_make_app()).get(self._FILE).status_code == 503
+
+
+class TestProxySegmentLog:
+    """The segment route logs the stream's first segment answer once, with
+    the link's hoster; HEAD logs nothing."""
+
+    def test_the_first_segment_is_logged_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hls_proxy, "_first_answers", {})
+        link = CachedStreamLink(
+            stream_id="abc123",
+            hoster_url="https://voe.sx/e/test",
+            hoster="voe",
+            video_url="https://cdn.test/hls/master.m3u8?t=secret",
+            is_hls=True,
+            resolved_at=time.time(),
+        )
+        repo = AsyncMock()
+        repo.get = AsyncMock(return_value=link)
+        app = _make_app(stream_link_repo=repo)
+
+        def _cdn(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"Content-Type": "video/mp2t"}, content=b"\x47" * 188
+            )
+
+        app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(_cdn))
+        client = TestClient(app)
+
+        with structlog.testing.capture_logs() as logs:
+            client.head("/api/v1/stremio/proxy/abc123/seg-1.ts")
+            first = client.get("/api/v1/stremio/proxy/abc123/seg-1.ts")
+            second = client.get("/api/v1/stremio/proxy/abc123/seg-2.ts")
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        logged = [e for e in logs if e["event"] == "hls_proxy_first_answer"]
+        assert len(logged) == 1
+        assert logged[0]["hoster"] == "voe"
+        assert logged[0]["kind"] == "segment"
+        assert logged[0]["cdn_host"] == "cdn.test"
+        assert logged[0]["first_bytes_hex"] == "47" * 8
+        assert [e for e in logs if e["event"] == "proxy_client_abort"] == []
 
 
 class TestBodyResponse:

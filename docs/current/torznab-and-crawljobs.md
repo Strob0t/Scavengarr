@@ -2,7 +2,7 @@
 
 > **Purpose:** Scavengarr answers Prowlarr and the Arr apps as a Torznab indexer whose items each link to a CrawlJob: a stored bundle of the result's validated links that the download endpoint serves as a JDownloader `.crawljob` file.
 > **Status:** current
-> **As of:** 4bb4aaa2
+> **As of:** 47a786e6
 
 ## Purpose
 
@@ -152,6 +152,7 @@ In `dev` the cache is cleared at every start, so the jobs do not outlive a resta
 ### Grab-time resolution
 
 Some sites hide their real links behind a captcha or count every unlocked link against a download quota, and resolving them for every search result would spend the quota on results nobody downloads.
+Others let only a few link-outs through per second, so resolving every result's at the search takes minutes.
 Their plugins implement the optional `GrabResolvingPlugin` protocol (`domain/plugins/base.py`):
 
 ```python
@@ -168,6 +169,7 @@ async def resolve_download(self, url: str) -> list[str]: ...
 |---|---|---|
 | `nox` | `/media/<slug>?release=<id>` | The release's online links, unlocked by one ALTCHA proof of work solved in-process (`infrastructure/captcha/altcha.py`); a refusal logs `nox_unlock_refused` with its `reason` (`hourly_limit`, `weekly_limit`). |
 | `animeloads` | `/media/<slug>?release=<n>` | The media page's release tab in the browser, its image captcha solved in the page, the Click'n'Load packages decrypted (`infrastructure/plugins/clicknload.py`); one captcha per episode without an account, one per release with one. |
+| `serienfans`, `filmfans` | The release's `/external/<hash>` link-outs on the site's own host, passed to the job unvalidated (behind Cloudflare the validator cannot follow them) | Each link-out followed to its first off-site `Location` without loading it (`_resolve_link_out()` of `HttpxPluginBase`), a filecrypt container or a hoster; a link-out that does not leave the site gives none, so a release whose link-outs are all dead shows at the grab (502), not at the search. The site lets about one link-out through per 2 s, and a release has two or three. |
 
 ### A CrawlJob's life
 

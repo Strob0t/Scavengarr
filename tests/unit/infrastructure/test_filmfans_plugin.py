@@ -12,8 +12,11 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.domain.plugins.base import GrabResolvingPlugin, PluginUnreachableError
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+# The real link-out resolution, before the fixture below replaces it
+_RESOLVE_REDIRECT = HttpxPluginBase._resolve_redirect
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "filmfans.py"
 
@@ -760,37 +763,75 @@ class TestCloudflareBrowserFallback:
         assert fetcher.fetch_text.await_count == 3  # search, page, api v1
 
 
-class TestExternalLinkResolution:
-    """/external/<hash> links are replaced by their off-site targets."""
+class TestGrabTimeLinks:
+    """/external/<hash> link-outs are resolved when a release is grabbed:
+    the site lets about one through per 2 s, so resolving every result's at
+    search time took minutes."""
 
-    async def test_links_resolved_and_dead_ones_dropped(self) -> None:
+    _RELEASE = {
+        "release_name": "Batman.Begins.2005.German.2160p.x265-PaTrol",
+        "size": "20 GB",
+        "download_links": [
+            {"hoster": "ddownload", "link": "https://filmfans.org/external/a"},
+            {"hoster": "rapidgator", "link": "https://filmfans.org/external/b"},
+        ],
+    }
+
+    def test_resolves_links_at_grab_time(self) -> None:
+        assert isinstance(_make_plugin(), GrabResolvingPlugin)
+
+    async def test_search_keeps_the_link_outs_unresolved(self) -> None:
         plugin = _make_plugin()
-        release = {
-            "release_name": "Batman.Begins.2005.German.2160p.x265-PaTrol",
-            "size": "20 GB",
-            "download_links": [
-                {"hoster": "ddownload", "link": "https://filmfans.org/external/a"},
-                {"hoster": "rapidgator", "link": "https://filmfans.org/external/dead"},
-            ],
-        }
         plugin._search_api = AsyncMock(
             return_value=[{"url_id": "batman-begins", "title": "Batman Begins"}]
         )
-        plugin._fetch_movie_page = AsyncMock(return_value=[release])
-
-        async def _resolve(url: str, *, context: str = "") -> str | None:
-            if url.endswith("/a"):
-                return "https://filecrypt.cc/Container/a.html"
-            return None
-
-        plugin._resolve_redirect = _resolve
+        plugin._fetch_movie_page = AsyncMock(return_value=[self._RELEASE])
+        plugin._resolve_redirect = AsyncMock()
 
         results = await plugin.search("batman")
 
-        assert results[0].download_link == "https://filecrypt.cc/Container/a.html"
-        assert results[0].download_links == [
-            {"hoster": "ddownload", "link": "https://filecrypt.cc/Container/a.html"}
-        ]
+        plugin._resolve_redirect.assert_not_awaited()
+        links = ["https://filmfans.org/external/a", "https://filmfans.org/external/b"]
+        assert [link["link"] for link in results[0].download_links] == links
+        # Validation cannot follow them either (Cloudflare): the grab does
+        assert results[0].validated_links == links
+
+    @respx.mock
+    async def test_a_grab_follows_the_link_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_resolve_redirect", _RESOLVE_REDIRECT)
+        respx.get("https://filmfans.org/external/a").mock(
+            return_value=httpx.Response(
+                302, headers={"Location": "https://filecrypt.cc/Container/A.html"}
+            )
+        )
+        plugin = _make_plugin()
+
+        links = await plugin.resolve_download("https://filmfans.org/external/a")
+
+        assert links == ["https://filecrypt.cc/Container/A.html"]
+
+    @respx.mock
+    async def test_a_dead_link_out_gives_no_link(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_resolve_redirect", _RESOLVE_REDIRECT)
+        respx.get("https://filmfans.org/external/dead").mock(
+            return_value=httpx.Response(404, text="gone")
+        )
+        plugin = _make_plugin()
+
+        assert await plugin.resolve_download("https://filmfans.org/external/dead") == []
+
+    async def test_a_link_on_another_host_is_kept(self) -> None:
+        plugin = _make_plugin()
+        plugin._resolve_redirect = AsyncMock()
+
+        links = await plugin.resolve_download("https://filecrypt.cc/Container/B.html")
+
+        assert links == ["https://filecrypt.cc/Container/B.html"]
+        plugin._resolve_redirect.assert_not_awaited()
 
 
 class TestMoviePageErrors:

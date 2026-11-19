@@ -63,6 +63,20 @@ class TestFormatStream:
         ranked = RankedStream(url="https://voe.sx/e/abc", hoster="voe")
         assert format_stream(ranked).name == "Scavengarr"
 
+    def test_guessed_quality_shows_no_label(self) -> None:
+        # "HD" ranks like 720p, but no source said 720p
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            quality=StreamQuality.HD_720P,
+            quality_guessed=True,
+            release_name="Movie.2024.German.1080p.WEB",
+        )
+        stream = format_stream(ranked)
+        assert stream.name == "Scavengarr"
+        # Nor does a guess rewrite the site's release name
+        assert stream.description.split("\n")[0] == "Movie.2024.German.1080p.WEB"
+
     def test_description_lines(self) -> None:
         ranked = RankedStream(
             url="https://voe.sx/e/abc",
@@ -174,6 +188,95 @@ class TestFormatStream:
         hints = format_stream(ranked).behavior_hints
         assert hints is not None
         assert "filename" not in hints
+
+    @pytest.mark.parametrize(
+        ("release_name", "quality", "shown"),
+        [
+            # The measurement sets the quality, whatever the release name says
+            (
+                "Movie.2024.German.DL.1080p.WEB-GRP",
+                StreamQuality.HD_720P,
+                "Movie.2024.German.DL.720p.WEB-GRP",
+            ),
+            (
+                "Movie.2024.German.720p.WEB-GRP",
+                StreamQuality.SD,
+                "Movie.2024.German.SD.WEB-GRP",
+            ),
+            (
+                "Movie 2024 German 4K WEB",
+                StreamQuality.HD_1080P,
+                "Movie 2024 German 1080p WEB",
+            ),
+            (
+                "Movie.2024.German.480p.WEB",
+                StreamQuality.HD_1080P,
+                "Movie.2024.German.1080p.WEB",
+            ),
+            # A token that agrees stays as the site wrote it
+            (
+                "Movie.2024.German.1080i.HDTV",
+                StreamQuality.HD_1080P,
+                "Movie.2024.German.1080i.HDTV",
+            ),
+            (
+                "Movie.2024.German.2160p.WEB",
+                StreamQuality.UHD_4K,
+                "Movie.2024.German.2160p.WEB",
+            ),
+            (
+                "Movie.2024.German.576p.DVD",
+                StreamQuality.SD,
+                "Movie.2024.German.576p.DVD",
+            ),
+            # No resolution token: none is added
+            (
+                "Movie.2024.German.DL.WEB-GRP",
+                StreamQuality.HD_720P,
+                "Movie.2024.German.DL.WEB-GRP",
+            ),
+            # No measured or named resolution class: the name stays
+            (
+                "Movie.2024.German.1080p.WEB",
+                StreamQuality.UNKNOWN,
+                "Movie.2024.German.1080p.WEB",
+            ),
+            (
+                "Movie.2024.German.1080p.HDTS",
+                StreamQuality.TS,
+                "Movie.2024.German.1080p.HDTS",
+            ),
+            # Digits that are no resolution token
+            (
+                "Movie.1080.German.720p.WEB",
+                StreamQuality.HD_720P,
+                "Movie.1080.German.720p.WEB",
+            ),
+        ],
+    )
+    def test_release_name_shows_the_ranked_quality(
+        self, release_name: str, quality: StreamQuality, shown: str
+    ) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            release_name=release_name,
+            quality=quality,
+        )
+        stream = format_stream(ranked)
+        assert stream.description.split("\n")[0] == shown
+        assert stream.behavior_hints is not None
+        # Subtitle addons match the site's release name
+        assert stream.behavior_hints["filename"] == release_name
+
+    def test_a_site_title_keeps_its_quality(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            title="Movie 2024 1080p",
+            quality=StreamQuality.HD_720P,
+        )
+        assert format_stream(ranked).description.split("\n")[0] == "Movie 2024 1080p"
 
 
 # ---------------------------------------------------------------------------
@@ -479,10 +582,32 @@ class TestBuildStreamFromResolved:
         )
         assert result.url.endswith(f"/proxy/{self._SID}/{HLS_MASTER}")
 
+    def test_an_idle_reset_file_goes_through_the_file_proxy(self) -> None:
+        """VEEV's CDN resets a connection the paused player left idle
+        (decision 0017): the proxy fetches the file with its bound headers
+        and resumes it, so the player needs no headers."""
+        result = self._build(
+            ResolvedStream(
+                video_url="https://cdn.veev.example/v.mp4",
+                headers={
+                    "User-Agent": DEFAULT_USER_AGENT,
+                    "Referer": "https://veev.to/",
+                },
+                idle_reset=True,
+            )
+        )
+        assert result.url == (
+            f"{self._BASE_URL}/api/v1/stremio/proxy/{self._SID}/{FILE_NAME}"
+        )
+        assert result.behavior_hints == {
+            "bingeGroup": "scavengarr|de",
+            "notWebReady": True,
+        }
+
     def test_a_client_bound_file_stays_on_play(self) -> None:
-        """VEEV binds the URL to the player's headers, not to the address:
-        /play resolves it for the player, which then fetches the CDN
-        itself."""
+        """A file bound to the player's headers whose CDN keeps idle
+        connections: /play resolves it for the player, which then fetches
+        the CDN itself."""
         result = self._build(
             ResolvedStream(
                 video_url="https://cdn.veev.example/v.mp4",
@@ -561,6 +686,20 @@ class TestStreamLinks:
             is False
         )
 
+    def test_the_link_carries_the_idle_reset_flag(self) -> None:
+        ranked = RankedStream(url="https://veev.to/e/a", hoster="veev")
+        resolved = ResolvedStream(
+            video_url="https://cdn.veev.example/a.mp4", idle_reset=True
+        )
+
+        assert build_cache_link("sid", ranked, resolved).idle_reset is True
+        assert (
+            build_cache_link(
+                "sid", ranked, ResolvedStream(video_url="https://cdn.example/a.mp4")
+            ).idle_reset
+            is False
+        )
+
     def test_the_link_keeps_the_time_of_the_resolution(self) -> None:
         """A resolution from the registry's cache can be an hour old."""
         ranked = RankedStream(url="https://voe.sx/e/a", hoster="voe")
@@ -610,6 +749,28 @@ class TestMeasurements:
         merged = apply_resolution(ranked, ResolvedStream(self._VIDEO))
 
         assert merged is ranked
+
+    def test_guess_stays_one_without_a_measurement(self) -> None:
+        ranked = replace(
+            self._RANKED, quality=StreamQuality.HD_720P, quality_guessed=True
+        )
+
+        assert apply_resolution(ranked, ResolvedStream(self._VIDEO)).quality_guessed
+
+    @pytest.mark.parametrize(
+        "measured", [StreamQuality.HD_720P, StreamQuality.HD_1080P]
+    )
+    def test_measurement_settles_a_guess(self, measured: StreamQuality) -> None:
+        # A measurement that agrees with the guess confirms it
+        ranked = replace(
+            self._RANKED, quality=StreamQuality.HD_720P, quality_guessed=True
+        )
+        resolved = ResolvedStream(self._VIDEO, quality=measured)
+
+        merged = apply_resolution(ranked, resolved)
+
+        assert merged.quality is measured
+        assert not merged.quality_guessed
 
     def test_measured_size_fills_a_missing_one(self) -> None:
         resolved = ResolvedStream(self._VIDEO, size_bytes=1_500_000_000)

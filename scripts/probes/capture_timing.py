@@ -1,7 +1,11 @@
 """A browser-capture resolver's capture, timed in the container.
 
-    probe capture_timing -- URL [--hoster filemoon] [--runs 2] [--timeout S]
-        [--diagnose] [--block DOMAIN ...] [--restore] [--autoplay-wait S]
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/capture_timing.py
+
+with ARGS ``URL [--hoster filemoon] [--runs 2] [--timeout S] [--diagnose]
+[--block DOMAIN ...] [--restore] [--autoplay-wait S]``, run by the
+maintainer in the production container (in the dev container:
+``xvfb-run -a poetry run python scripts/probes/capture_timing.py [ARGS]``).
 
 Resolves the hoster page *URL* (a link as the plugins store it) with the
 app's resolver for ``--hoster`` (one that captures in the stealth browser:

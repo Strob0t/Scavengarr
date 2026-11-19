@@ -4,6 +4,211 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## v0.6.0 - 2026-11-19
+
+Stremio streams: kinoking no longer gives another film's links (its `group_filmo_*` servers match by title only), a link without a source language shows "Sprache unbekannt" instead of the plugin default, and the new setting `stremio.preferred_audio_language` makes the HLS proxy start a stream with several audio tracks in that language. Title matching: the IMDb fallback takes only the requested id, a title without a year is no fuzzy match, and a film's follow-up with another year is another film. Playback: proxied files go on after every interruption of their CDN, VEEV plays through the file proxy, an MP4 file's header measures its quality, and a StreamUp HLS stream must answer its first segment. Diagnostics: season, episode and plugin per stream, the proxy's first CDN answer and player aborts, stuck requests and a stalled event loop are logged. Dependencies: minor and patch updates (fastapi 0.162.2, patchright 1.64.4, ruff 0.17.4 and others).
+
+### Fixed: kinoking Gives No Other Film's Links, Unknown Link Languages Shown as Such
+
+- kinoking's `group_filmo_*` servers match by title only, like the `group_kk_*` servers: on the page of Musk (2026, tmdb 1096228) "VOE (FILMO DE)" and "BYSE (FILMO DE)" pointed at `Conan.der.Barbar.1982.mp4`. The plugin now drops both groups.
+- A link whose source names no language was labelled with the plugin's default language ("German Dub"), also for kinoking series episodes with Japanese audio. kinoking now gives such links the language `unknown` (series episodes, movie servers without a language tag; a "(DE)" server stays German), and `parse_language` shows `unknown` as "Sprache unbekannt" instead of the plugin default. A release name with a language still wins.
+- Tests: `test_kinoking_plugin.py` (the live server list of the Musk page as fixture `tests/fixtures/html/kinoking/movie-musk-servers.json`, link languages), `test_release_parser.py` (unknown link language).
+
+### Added: Preferred Audio Track of HLS Streams (`stremio.preferred_audio_language`)
+
+- An HLS master playlist with several audio renditions (filmo/filemoon: English DEFAULT=YES, Deutsch DEFAULT=NO) started in the playlist's default language. The new setting `stremio.preferred_audio_language` (a language code, unset by default) makes the HLS proxy mark the rendition of that language `DEFAULT=YES` and `AUTOSELECT=YES` and the other renditions of its group `DEFAULT=NO`. Unset, or without a rendition in that language, the playlist is unchanged. No language is set in the code.
+- Docs: `configuration.md` regenerated.
+- Tests: `test_hls_proxy.py` (`prefer_audio_language`: set, unset, no match, one rendition, media playlist, region subtag, missing attribute).
+
+### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
+
+- A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.
+- Docs: `configuration.md` states the rate limit notes exactly (a 429 or 503 with a CDN cache-hit header feeds nothing back, link checks pass the bucket without a token), and the `rate_limiter.py` docstring names the 10 % raise as multiplicative.
+- The description of `http.rate_limit_adaptive` no longer says AIMD: both steps are multiplicative (+10 % on success, halved on 429/503); `configuration.md` regenerated.
+
+### Added: The Proxy's First CDN Answer and Player Aborts in the Log
+
+- A player that reported an unsupported source left no line of what it got: the proxy passes the CDN's content type through and does not check the bytes. The proxy now logs the CDN's first answer of a stream once per stream id and kind: `hls_proxy_first_answer` (master, playlist, segment) and `file_proxy_first_answer` (file), with `stream_id`, `hoster`, `kind`, `cdn_host`, `status`, `content_type`, `content_length` and `first_bytes_hex` (the first 8 bytes already read, no extra fetch; the last 512 stream ids remembered). A player that stops before a segment's or a file's body ends logs `proxy_client_abort` with `bytes_sent`, `expected_bytes` and `seconds_since_first`; a normal end logs none. `stremio_play_resolved` adds `media_kind` (`hls`, `file`, `other`). Hosts only, no URL or token; the proxy's answers are unchanged.
+- Docs: `stremio-addon.md` (Observability), `observability.md` (log lines name a CDN by its host or domain).
+- Tests: `test_hls_proxy.py` (first segment logged once with content type and first bytes, another stream and kind logged, the bound, an abort with the bytes sent, no abort at a normal end, a segment fetched ahead, the file proxy's first answer once and its abort), `test_stremio_router.py` (the segment route logs once with the hoster and not for HEAD, `media_kind` per link).
+
+### Added: Season, Episode and Plugin per Stremio Stream in the Log
+
+- A series stream of the right show but the wrong season did not show in the log which plugin and which link label gave it. Each answered stream now logs `stremio_stream_item` with the request's `imdb_id`, `req_season` and `req_episode`, the `plugin`, the `hoster`, the `link_label` (40 characters), the `label_season` and `label_episode` parsed from it and the `stream_id` (no URL). The episode filter logs `episode_filter_seasonless_pass` when it keeps a link for a season after the first only because its label names no season (`Folge 3`); the filter's behaviour is unchanged.
+- Docs: `stremio-addon.md` (Observability).
+- Tests: `test_episode_filter.py` (`Folge 3` on a season 2 request logged, `2x3` and season 1 not, the label cut), `test_stremio_stream.py` (one `stremio_stream_item` per answered stream with plugin and label numbers).
+
+### Added: A StreamUp HLS Stream Must Answer Its First Segment
+
+- A signed StreamUp (filmpalast) HLS link can expire while its playlists still answer, so the player opened a stream that failed at its first segment. With the new setting `stremio.verify_hls_segment` (default on) the registry walks the playlists to one segment and asks for its first bytes (`segment_is_gone()`, 4 s in total, in parallel for all candidates, as part of each resolution). A 403, 404 or 410 drops the stream (not cached); a timeout, a network error or any other status keeps it. Streams of other hosters are not probed.
+- Docs: `hoster-resolvers.md` (CDN checks, configuration), `stremio-addon.md`, `README.md`, `configuration.md` regenerated.
+- Tests: `test_hls_segment_check.py` (404, 403 and 410 drop; 200, 206, 500, timeout and network error keep; setting off; other hosters untouched; the playlist walk; the 4 s bound).
+
+### Fixed: A Kept `/play` Stream Object of a Proxied File Plays Through the File Proxy
+
+- A stream object the player kept with a `/play` URL (Continue Watching, the next episode's autoplay) redirected an address-bound or idle-reset file to its CDN, past the file proxy and its resumes, also after a new resolution had stamped the flag. `/play` now redirects such a file to `/api/v1/stremio/proxy/<id>/file`: a stored link with the flag at once, a link stored before the flag once its new resolution carries it (a player's own link for a client-bound hoster). Other files keep the redirect to the CDN.
+- Tests: `test_stremio_endpoint.py` (a kept address-bound and idle-reset link, a stale link resolved again with the flag, a client-bound player's own flagged link played through the file proxy).
+
+### Fixed: A File's Resume Must Name the Opening Answer's File Size
+
+- A resume of a proxied file went on with any 206 from the next byte. After a new resolution the URL can lead to another variant of the file (another size), whose bytes from the same offset were spliced onto the player's file. A resume now goes on only when its `Content-Range` names the file size of the opening answer (its `Content-Length` for a 200, its `Content-Range` size for a 206; no check when that size is `*`); another size closes the answer and counts as a failed attempt.
+- Tests: `test_hls_proxy.py` (another size after a new resolution, another size at the same URL).
+
+### Changed: The File Proxy's Docs Name Every Resume Outcome and Every Idle-Reset Route
+
+- The stage `file_resume` also ends `cut` (the player left while the resume ran) and `error` (an exception other than a transport error or the attempt's timeout, such as a new resolution that raised); `docs/reference/metrics.md` and the Stremio addon doc name all four outcomes.
+- The dispatch flowchart of the hoster resolvers asks the address binding first and the idle reset second, as the stream builder does: any `idle_reset` resolver is proxied, client-bound or not. The docstrings of `proxy_hls`, `_proxy_file` and `_hls_kind` name idle-reset files beside address-bound ones.
+- `_resume` in `hls_proxy.py` serves segments only: its file branches were unreachable since every file gets a `FileResume` and goes on by `_resume_file`. No behaviour changed.
+
+### Changed: The File Stall Bound and the Attempt After a New Resolution Are Named
+
+- `stremio.file_stall_timeout_seconds` times a piece of 64 KiB, not a byte: a body slower than 64 KiB per timeout counts as stalled while bytes flow (at the 1 s minimum, about 520 kbit/s). The setting's description, the Stremio addon doc and decision 0017 say so. No behaviour changed.
+- The attempt after a new resolution does not count against the three and the resolution's time lies outside their 33 s: the decision, the spec, the design and the docs now say once per offset (as the code does), not once per interruption, and name the extra attempt.
+
+### Fixed: An MP4 File's Quality Comes From Its Video Track Only
+
+- The measured size was the largest track header of any track, so a cover or text track larger than the video, or a disabled track, could set the quality label, and a track header of a version above 1 was read with version 0's offsets. A track now counts when it is enabled, its handler is `vide` and its header is version 0 or 1; a track whose handler the 4 KiB cut names nothing.
+- Tests: `test_mp4_header.py` (a larger cover or text track, a disabled track, a track without a handler in the bytes, a header of version 2).
+
+### Fixed: Readiness Answers 503 When the Cache Check Raises
+
+- `/api/v1/readyz` answered 500 when the cache backend's ping raised an error that is no Redis error (a `RuntimeError` "handler is closed" of a closed transport). Any exception of the probe now gives 503 with `{"status": "not_ready", "reason": "cache"}`; the log line `readyz_check_failed` names the exception's type only.
+- Tests: `test_health_routes.py` (a ping that raises gives 503 without the error's text, a ping that works gives 200).
+
+### Fixed: A Film's Follow-Up With Another Year Is Another Film
+
+- A film one year after the reference passed the movie tolerance, and a title that adds a subtitle to the reference's scored 1.0 by the subset ratio: a series' first film was mapped to its follow-up ("Film A" and "Film A: Subtitle", one year apart). A movie result with another year is now dropped (reason `year`) when its title extends a reference title by a subtitle or a number, or the other way round, and none of its candidates is a reference title itself; the same year keeps a shortened title ("Dune" 2021 for "Dune: Part One"), and series results keep the rule as it was (a result's year may be its season's).
+- Tests: `test_title_matcher.py` (`TestFollowUpTitle`: both directions, a number suffix, the same year, an alt title without the subtitle, a series season).
+
+### Fixed: A Title Without a Year Is No Fuzzy Match
+
+- The year gate needs a year on both sides; without one the fuzzy text score alone decided, and a film's sequel passed (a sequel's title one letter longer scored 0.909 against the first film's, threshold 0.7). Without a year on the result or the reference, a candidate now counts only when its words are the reference title's words or a part of them ("Dune" for "Dune: Part One"); a sequel's spelling, added words and typos are dropped. With both years known the rules stay as they were.
+- Tests: `test_title_matcher.py` (`TestMissingYear`; the extra-words and sequel-penalty cases now carry a year where they test the penalties).
+
+### Fixed: The IMDb Fallback Takes Only the Requested Id's Entry
+
+- Without a TMDB key, a suggest answer that did not list the requested id gave the title and year of its first entry, another film (the first film for its sequel), and cached it for 24 h. The answer now gives no title (`imdb_suggest_id_missing`) and nothing is cached; a cached entry of another id is not served.
+- Tests: `test_imdb_fallback.py` (an answer without the requested id, an answer that lists the first film before its sequel, a cached entry of another id).
+
+### Fixed: moflix's Search Survives a Page After the Cloudflare Challenge
+
+- When Cloudflare challenged moflix's API, the browser passed the challenge but handed back a page instead of the API's JSON, with only the clearance cookie and without the site's session; the adoption had dropped the session httpx held. The plugin logged `moflix_invalid_json` and answered a search without results, and a background refresh of a cached Stremio search replaced the title's moflix result (its 1080p mirrors) with nothing and stored the entry complete. Cloudflare challenges the API only, not the homepage, and the clearance lets httpx through.
+- The search now starts a new session (over httpx once the clearance is adopted) and asks the API once more (`moflix_search_new_session`); no JSON again fails the search (`SearchApiError`: a plugin search error and a circuit breaker failure), so the cache keeps the earlier results and names moflix missing. No answer at first (a 4xx) and an empty JSON search keep their outcomes.
+- Tests: `test_moflix_plugin.py` (the browser's page with the clearance only, then the API over httpx with a new session; a page answered once and twice, a refusal after a page, a first refusal not asked again; at most two calls).
+
+### Fixed: A Cropped Frame Keeps the Quality Class of Its Width
+
+- A 2.40:1 crop of a 1280x720 encode is 1248x520: the encoder cuts the width to a multiple of 16, so it reaches neither 1280 wide nor 720 high, and the measured file was labelled SD. `quality_from_resolution()` now counts a width within 5 % of a class's (1216 for 720p, 1824 for 1080p, 3648 for 2160p) as reaching it; 1920x800 stays 1080p, 3840x1600 stays 2160p, and 720x576 and 640x360 stay SD.
+- Tests: `test_stremio_entities.py` (`TestQualityFromResolution`: the crops, the tolerance's edge and the SD sizes).
+
+### Changed: VEEV Plays Through the File Proxy
+
+- A resolver flag `idle_reset` marks a hoster whose CDN resets a connection that stops reading; the registry stamps it on the resolved stream and the stored link keeps it, like `address_bound`. VEEV declares it (its CDN reset 10 of 10 connections left idle for 30 to 300 s), so its files now play through `/api/v1/stremio/proxy/<id>/file`, which resumes them after a pause, instead of a `/play` redirect to the CDN ([0017](docs/target/decisions/0017-idle-reset-files-resumed.md)).
+- The proxy fetches a VEEV file with the browser `User-Agent` it was resolved with; the production host now carries the bytes of every VEEV playback, and a restart cuts a running one (the player asks again with a range). A link stored before the flag keeps `/play` until its hoster resolves again.
+- Tests: `test_veev_resolver.py` (the flag, and a VEEV resolution through the registry built as a `/proxy/<id>/file` stream), `test_hoster_registry.py`, `test_stream_link_cache.py` (the flag round-trips, an old record reads false), `test_stremio_stream_builder.py`, `test_stremio_router.py`, `test_stremio_endpoint.py` (the file route serves an idle-reset file with its bound headers).
+
+### Changed: A Proxied File Goes On After Every Interruption of Its CDN
+
+- The file proxy resumed a file once per answer; a CDN that resets a connection the player left idle (a pause with a full buffer) cut every later pause. It now resumes after every interruption for as long as the answer runs: a reset or an end short of the promised length at once, and a body that sends no byte for `stremio.file_stall_timeout_seconds` (new setting, default 10 s, 1 to 30) once it flowed. The opening answer still waits up to 60 s for its first byte.
+- A resume asks for the rest of the span from the next byte with the transfer's headers, within one stall timeout for the answer and its first byte, and goes on only with a 206 from that byte; at one offset at most three attempts run, after waits of 0, 1 and 2 s, and the count starts again once bytes flow. A refused resume (403, 404, 410) resolves the hoster URL again once per offset. After the third failed attempt the player's connection aborts (`FileCut`), as before after the one resume. HLS segments keep their one resume.
+- New metrics `scavengarr_file_resume_total{hoster,reason,outcome}` and `scavengarr_file_resume_seconds{hoster,reason}` (`reason`: `reset`, `eof`, `stall`; `outcome`: `resumed`, `gave_up`); `hls_proxy_file_resumed` names the reason and the attempt, `hls_proxy_file_cut` the resumes.
+- Tests: `test_hls_proxy.py` (a local CDN that resets, ends early and stalls, the player getting exactly the file's bytes; resumes per interruption, three attempts with their waits, the count after bytes flow, a CDN that resets every new connection, one new resolution per refusal, the stall timeout for resumes and not for the opening answer's first byte), `test_stremio_endpoint.py` (the setting, the hoster label, the new resolution through the stored links), `test_stremio_config.py` (the setting's bounds).
+
+### Decided: Files of CDNs That Reset Idle Connections Go Through the File Proxy
+
+- The VEEV CDN resets a connection that stops reading while the player pauses (10 of 10 pauses of 30 to 300 s), and Stremio's streaming server does not reconnect inside a response, so the playback lost its sound after a pause. A new connection with `Range` at the offset answered 206 in 0.25 to 1.3 s in 10 of 10 cases. Decision [0017](docs/target/decisions/0017-idle-reset-files-resumed.md): a resolver flag `idle_reset` sends such a file through the file proxy, which resumes every proxied file after each interruption; the change is planned in `openspec/changes/resume-idle-reset-files/` (backlog row 168).
+
+### Changed: An MP4 File's Header Measures Its Quality
+
+- The playback check measured a quality for HLS streams only (the largest `RESOLUTION` of a master playlist); a file got its size but no quality, so a stream whose site named none showed no label, whatever it played. It now reads an MP4 file's track headers (`tkhd`; `infrastructure/hoster_resolvers/_mp4.py`) and ranks and labels the stream by them like a playlist's resolution: from the 4 KiB it fetches anyway when the file's `moov` box comes first, else from one more 4 KiB `Range` read where the `moov` starts behind the media data, within the check's 6 s and only for a file that starts with `ftyp` and whose total the first answer named. That read failing logs `playback_check_moov_unread` and measures nothing; the stream stays playable.
+- Not measured: a video track behind an audio track's tables (past the 4 KiB of the `moov`), a file that is no MP4 (Matroska), and a `moov` behind the media data from a server whose answer names no `Content-Range` total (a fast-start file is measured without one). The box layouts are the standard's, tested on built boxes; no hoster's file was read from the development machine.
+- Tests: `test_mp4_header.py` (fast-start and moov-at-the-end files, a 64-bit media data size, version 1 track headers, an audio track first, cut headers, a file without `ftyp`), `test_check_playable.py` (no second read for a fast-start file, the second read's range and headers, a failed, foreign or late answer measures nothing, the registry's quality from a file).
+
+### Fixed: Streams Show the Quality Their Site States, and No Guessed One
+
+- A badge that names its resolution among other words lost it: the badge table knew whole values only ("HD", "1080P"), so link badges such as "HD-1080p" and "1080p/5.1" left the stream without a quality and its name without a label. A badge now names its quality as a whole in any spelling ("Full HD", "Blu-Ray"), else by its best part that names one ("HD-1080p" is 1080p, "4K/UHD" 4K; `parse_quality()` of `infrastructure/stremio/release_parser.py`).
+- A word that names no resolution (`HD`, `WEBRIP`, `WEB-DL`, `BDRIP`, `BluRay`) showed as one (`HD` as "720p"). It still ranks the stream as before, but the name shows no label (`RankedStream.quality_guessed`) and the release name keeps its token until a measurement settles the guess; inside a composite badge ("HD/Deutsch") such a word counts for nothing.
+- moflix names a mirror's quality only in its hoster label ("VEEV (1080p)"), whose bracket goes when the hoster name is normalised: the link carries the quality itself now (`test_moflix_plugin.py`, and `test_real_pages.py`: the captured mirrors convert to 1080p).
+- movie2k gave a link without a quality image the default "HD", and its result the first link's quality, which then stood in for every link without one; mediathek wrote "720p" for an HD file whose name names no height. Now such a movie2k link has no quality, and the mediathek file is "HD" (ranked as before, without a label): no plugin passes a quality its site does not state (`test_movie2k_plugin.py`: a link without an image stays unknown beside 1080p links; `test_real_pages.py`: the series page's episode links state none; `test_mediathek_plugin.py`).
+- Tests: `test_release_parser.py` (composite badges, guessed words, a resolution token over a guessed word, a composite of a guessed word only), `test_stream_converter.py` (the guess reaches the stream), `test_stremio_stream_builder.py` (a guess shows no label and keeps the release name, a measurement settles it).
+
+### Changed: The Rate Limit's Unused Timeout Feedback Is Gone
+
+- `TokenBucket.record_timeout()` and `DomainRateLimiter.record_timeout()` would lower a site's adaptive rate by a quarter on a timeout, but nothing has called them since the adaptive limiter came: `RetryTransport` feeds back answers and 429/503 only, so production has never lowered a rate on a timeout, while the docs said it did.
+- Both methods and their three tests are gone, and the code follows production: every request to a site shares its bucket, and one that fell on timeouts would slow them all for one slow site.
+- The description of `http.rate_limit_adaptive`, its generated row in `docs/reference/configuration.md` and the note on `http.rate_limit_rps` no longer name a timeout; the note also names the answers that raise the rate (any but a 429, a 503 or a challenge) and that link validation's checks pass the bucket.
+
+### Changed: serienfans and filmfans Resolve Their Link-outs at the Grab
+
+- serienfans and filmfans list their hoster links as `/external/<hash>` link-outs on their own host, and their searches followed every returned result's link-out to its target. The site lets about one through per 2 s and answers the rest with 429, so a Torznab search spent minutes on them (on the dev machine 359 s for one series search, 78 retried requests), then validated the filecrypt containers they led to, and could outlast its client's timeout.
+- The searches now return the link-outs as the result's links, passed to the job unvalidated (`validated_links`: behind Cloudflare the validator cannot follow them), and both plugins implement `GrabResolvingPlugin`: a grab follows one release's link-outs to their first off-site `Location` (`_resolve_link_out()` of `HttpxPluginBase`, which replaces `_resolve_result_links()`). The same search took 17.9 s with 73 items; six grabs resolved their two or three link-outs to filecrypt containers in 0.1 to 10.5 s, and a second grab served the stored links.
+- Accepted trade-off: a dead link-out shows at the grab (502 when none of a release's leaves the site), not at the search. The Stremio addon does not search download plugins, so nothing changes there.
+- Tests: `test_serienfans_plugin.py` and `test_filmfans_plugin.py` (the search requests no link-out and passes them as validated, season packs and episodes; a grab follows a 302, a dead link-out gives none, a link on another host is kept), and `test_httpx_base.py` checks the redirect bound through `_resolve_own_links()`. `docs/current/torznab-and-crawljobs.md`, `docs/current/plugins.md`, `docs/current/known-issues.md`, `docs/how-to/new-plugin.md` and the README say so.
+
+### Fixed: Link Checks No Longer Wait for a Site's Rate Limit
+
+- The same search's validation spent its first 231 s without a 429 of its own: other requests drew 39 retried 429s from filecrypt.cc meanwhile, each halving the site's shared token bucket down to its floor of 0.5 per second, which only an answer other than a 429, a 503 or a challenge raises again. So the validation's 130 links, 129 of them valid, waited for the bucket's token one by one.
+- A link check (`LINK_CHECK`) now passes `RetryTransport`'s rate limit too: it takes no token and feeds no answer back, bounded by the validator's own 4 at a time per host and its stop at a host's first 429. Plugin and resolver requests keep the bucket and its feedback.
+- Tests: `test_retry_transport.py` (a link check takes no token and reports nothing, a plain request on the same transport does both), `test_link_validator.py` (130 links on a site whose bucket has no token left at 0.5 per second end within 5 s).
+
+### Fixed: Link Validation No Longer Waits Out a Rate Limit
+
+- A serienfans Torznab search answered after 632.7 s, 365 s of them in its link validation: its 130 links on filecrypt.cc drew 25 retried 429s there, and the shared client's `RetryTransport` waited out each `Retry-After` of up to 10 s inside `validate_batch()`, far beyond the validator's 3 s timeout.
+- HEAD and the GET fallback are link checks now: they carry the request extension `LINK_CHECK`, which `RetryTransport` sends once, so a 429 or 503 comes back at once. Every other request, a plugin's own search among them, still waits it out and retries.
+- A 429 counts as valid without the GET fallback, and the host's other links count as valid for 60 s without a request (`_RATE_LIMITED_HOST_TTL`), none of them cached; `link_host_rate_limited` logs the mark. `link_head_result` and `link_get_fallback_result` lose their `valid` field, since the status alone no longer decides it.
+- Tests: `test_retry_transport.py` (a link check's 429 and 503 come back at once, other requests on the same transport still retry), `test_link_validator.py` (a 429 counts, on the GET fallback too, the host is not asked again for 60 s, nothing presumed is cached, HEAD and GET carry the extension, and 130 links on a host answering 429 with a `Retry-After` of 10 s end within 5 s through the shared client's transport with production's settings, after at most 4 requests), `test_httpx_base.py` (a plugin's request through the same shared client still waits out a 429).
+
+
+### Changed: A Stream's Release Name Shows Its Measured Quality
+
+- A stream whose site named a 1080p release but whose hoster serves a single 720p variant showed "720p" in the name column and "1080p" in the description's release name, and was listed below German 720p streams with a hoster bonus: it read as a German 1080p ranked below 720p.
+- The measurement sets the quality, whatever the release name says (the maintainer's decision): `format_stream()` (`application/stremio/stream_builder.py`) puts the name column's label (4K, 1080p, 720p, SD) in place of a release name's resolution token that contradicts the ranked quality. A token that agrees stays as written (1080i, 2160p), a name without one gets none, an unknown, TS or CAM quality changes nothing, and `behaviorHints.filename` keeps the site's release name for subtitle add-ons. The order is unchanged: it already followed the measurement.
+- A pattern in the application finds the token (`_with_quality()`): the replacement needs the token's place in the name, which a quality carried from the converter would not give, and the application imports no infrastructure.
+- Tests: `test_stremio_stream_builder.py` (contradicting tokens replaced, agreeing ones kept, no token added, unknown and TS kept, digits that are no token, a site title kept, `filename` unchanged). `docs/current/stremio-addon.md` says so.
+
+### Fixed: A German Dub with English Subtitles Ranks as German
+
+- `_language_from_guessit()` (`infrastructure/stremio/release_parser.py`) read guessit's subtitle language before the audio, so a release named "German.DL.EngSub" or "German.DL.ENG.SUB" was an English Sub (score 200) and ranked below every German stream, though its audio is German.
+- German audio now wins over any subtitle language, German subtitles over a foreign audio ("English.German.Subbed" stays `de-sub`), and otherwise the subtitle's language comes first as before; every audio and subtitle language guessit names counts, not only the first.
+- Tests: `test_release_parser.py` (German audio with English, `mul` and no subtitles; German subtitles over German, English and Japanese audio; English audio with English subtitles; forced subs without an audio language keeping the plugin's default). `docs/current/stremio-addon.md` says so.
+
+### Added: Stuck Requests Are Logged
+
+- A request that hung while the event loop ran left no trace until it ended, if it ended.
+- `RequestWatchMiddleware` (`interfaces/api/middleware.py`), a pure ASGI middleware and the innermost one, notes each request's task, route class, start and `request_id` in `GracefulShutdown` and forgets it in a `finally`, so a cancelled or disconnected request leaves too. `route_class()` maps the path to `stremio_stream`, `stremio_catalog`, `torznab` (the Torznab searches and the `.crawljob` downloads) or `other`; play and proxy requests are never noted.
+- `watch_requests()` (`infrastructure/telemetry/watchdog.py`), the background task `request_watch`, reads them every 30 s on the loop and logs `request_stuck` once per request past its limit (5 min for Stremio and the rest, 10 min for Torznab) with `route`, `age_s`, `request_id` and the task's await chain, counted in `scavengarr_requests_stuck_total{route}` through `TelemetryPort.record_request_stuck()`, with a zero series per route class. It starts after the startup and stops beside the stall monitor, first at the shutdown.
+- Group 3 of the OpenSpec change `add-stall-watchdog`; design D8 names the ninth task. Tests: `test_request_watch.py` (the route classes, a request watched while it runs and forgotten after it, a cancelled one, a playback never watched, the lifespan passing through, and under the app's own middleware the noted task runs the route, not `call_next`), `test_watchdog.py` (the limits, one line per request, the await chain, the check's interval), `test_graceful_shutdown.py`, `test_telemetry.py`, `test_background_task.py` and `test_background_tasks_lifespan.py`. `docs/current/observability.md` (Stuck requests), `docs/current/architecture.md`, `docs/how-to/operations.md`, `docs/reference/metrics.md` and the README say so.
+
+### Added: A Stall Monitor Names a Stalled Event Loop
+
+- A synchronous call that held the event loop stopped every request and the health routes with it: Docker marked the container unhealthy and restarted nothing, and the log named no cause.
+- `StallMonitor` (`infrastructure/telemetry/watchdog.py`) reads a heartbeat that `monitor_loop_lag`'s tick stamps every 0.5 s, from a daemon thread every 5 s. A heartbeat older than `watchdog.stall_seconds` (120 s; 0 starts no thread) logs `event_loop_stalled` once with `age_s`, `limit_s`, `exit` and the loop thread's stack, and `faulthandler` dumps every thread's traceback to standard error; `event_loop_recovered` names the stall's length. The monitor starts after `app_startup_complete` (`stall_monitor_started` with its settings) and stops first at the shutdown (`stall_monitor_stopped`).
+- A `faulthandler` timer at twice the limit, armed again at every check of the monitor's thread, dumps a stall in which no Python thread runs; a failed check (`stall_monitor_check_failed`) and the thread's end cancel it. The OpenSpec change's "re-armed by the heartbeat" changed with it: armed on the loop, the timer would start a thread at every tick and, with the switch on, exit a stall whose exit the budget had skipped.
+- `watchdog.exit_on_stall` (off) ends the process with code 3 after the line and the dump; the line, the dump and the log's flush each wait at most 2 s. At most 3 exits within 30 min, counted in `watchdog-exits.json` of the cache directory; a file that cannot be read counts as empty. With the switch on, a stall that holds the interpreter exits through `faulthandler` with code 1, which the budget does not count.
+- `scavengarr_event_loop_lag_seconds` gains the buckets 5, 10, 30, 60 and 120 s, so a stall the loop survived stays in the scraped metrics.
+- Group 2 of the OpenSpec change `add-stall-watchdog`, with decision record 0016. Tests: `test_watchdog.py` (the decision with a fake clock, the budget, the thread, the switch, the timer, and subprocesses whose loop `time.sleep` or a C call that holds the interpreter blocks), `test_telemetry.py` (the heartbeat, the buckets), `test_config_loading.py` (the settings) and `test_background_tasks_lifespan.py` (the monitor from the startup to the shutdown). `docs/current/observability.md` (Stalls), `docs/current/architecture.md`, `docs/how-to/operations.md` (reading a stall), `docs/target/architecture.md`, `docs/reference/configuration.md`, `docs/reference/metrics.md`, `data/config.yaml` and the README say so.
+
+### Changed: Production Diagnostics Read Through Komodo
+
+- Komodo replaced Portainer on the production host, and Portainer's API answers no more. `scripts/komodo.py` reads the `scavengarr` container with two of Komodo Core's read requests, `POST {KOMODO_URL}/read` with `InspectContainer` and `GetContainerLog` and the headers `X-Api-Key` and `X-Api-Secret`, and uses no other path: the key reaches every container of the host. `inspect()` keeps the state (status, health, start, restarts, OOM kill) and the CPU and memory limits and drops the rest of Docker's inspect object, the container's environment and its secrets among it; `log()` asks for the last 5000 lines, Komodo's cap, and merges the answer's stdout and stderr by their times. `credentials()` reads `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET`, `KOMODO_SERVER` and `PRODCTL_BASE_URL` (production's public base URL); the request budget (100 per minute for every process on the machine), the retry and `mask()` carry over from `portainer.py`, and `mask()` also replaces the hosts it is given.
+- The measurement scripts read the app's CPU from `/metrics`: `playback_under_load.py` and `stremio_round.py` trade `--portainer` for `--cpu` (`process_cpu_seconds_total`, the app's Python process without Chromium's), `stremio_profile.py` keeps `--docker` on the Docker host, and `scripts/probes/header_binding.py` loses its production source and its links' source column. `docs/how-to/performance-measurement.md` says so.
+- `scripts/prodctl.py` reads production through `komodo.py`: `ps` is one `InspectContainer` request (status, health, start, restarts, OOM kill); `stats` takes the limits from it and two `GET /metrics` 5 s apart (the app process's CPU cores, memory and open files, Chromium's processes not in them); `logs` is one `GetContainerLog` request filtered by `--since`, ending with the time the log reaches back to when it begins later; `metrics`, `state` and the digest's two endpoints come through `PRODCTL_BASE_URL`; and the digest's first line names the shorter window its log covers. `-c`/`--container` and `probe` are gone, and `--insecure` moved before the command (`prodctl.py --insecure check`).
+- `check` reads the container's state and start from `InspectContainer`, its container row names the restarts and an OOM kill, and `--base` defaults to `PRODCTL_BASE_URL` with `/api/v1/stremio`. Checks 2 to 4 read the log from the start on (a restart keeps the container's log), and when its 5000 lines begin after the start they warn that the log no longer reaches it instead of failing.
+- `scripts/portainer.py` and its test are gone, and `.env.devcontainer.example` names the five variables. The container probes run by the maintainer's `docker exec -i scavengarr python - [ARGS] < scripts/probes/NAME.py`, which each one's docstring names (a test keeps it so); `redis_cache`'s output, which prodctl masked, is not masked there. `docs/how-to/operations.md` (the prerequisites, each command's requests, the log's window, the probes, troubleshooting), `dev-container.md`, `new-resolver.md`, `docs/reference/configuration.md` and AGENTS.md say so.
+- Tests: respx answers for every Komodo and app request (`test_komodo_script.py`, `test_prodctl_script.py`, no network), the check's cut log and restart (`test_deploy_check.py`), the digest's shorter window (`test_digest_script.py`).
+
+### Fixed: A Dead Background Task No Longer Stops the Shutdown
+
+- The lifespan's shutdown cancelled its six background tasks and awaited each with only `CancelledError` suppressed, and both writers' `aclose()` did the same with their own task. A task that had died before the shutdown re-raised its exception at that await, and the rest of the shutdown was skipped: the writers' last snapshots, the browsers' cleanup, the closes of the HTTP client and the cache and the telemetry's flush. The same `suppress` also swallowed a cancellation of the shutdown itself.
+- `stop_task()` (`infrastructure/telemetry/background.py`, beside `watch_task`) cancels a task and waits for its end with `asyncio.wait`, which raises neither its exception (`watch_task` has logged the death and retrieved it) nor swallows the caller's cancellation. The shutdown uses it for all eight tasks in its order, the writers' `aclose()` for theirs.
+- Tests: `stop_task` with a running, a dead, a cancelled and a returned task and with a cancelled caller; each writer's `aclose()` writes its last snapshot after its task died; a started app whose pass keeper and warm-up died before the shutdown still closes the cache and logs `app_shutdown_complete`. `stop_task` put back to a plain `await` under `suppress(CancelledError)` fails five of them.
+
+### Added: Background Tasks Log Their Death
+
+- A long-lived task of the service that ended with an exception left no log line until the shutdown awaited it: the event-loop monitor had no guard, and the writers of the hoster state and the plugin history guard only their write. Its work (the lag samples, the page budget, the snapshots) stopped without a trace.
+- `watch_task()` (`infrastructure/telemetry/background.py`) attaches a done-callback: a task that ends with an exception logs `background_task_died` once (with `task`, the exception's type and its traceback) and counts `scavengarr_background_task_deaths_total{task}` through `TelemetryPort.record_background_task_death()`; a cancelled task and one that returns log and count nothing. The composition root watches `loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup` and `pass_keeper`, the two writers their own task (`hoster_state_store`, `plugin_history`); the names are the fixed set `BackgroundTaskName`, each with a zero series from the start.
+- Group 1 of the OpenSpec change `add-stall-watchdog`. Tests: `test_background_task.py` (a death, a cancellation, a return, the zero series), the two writers' `TestDeath`, and `test_background_tasks_lifespan.py` (all eight tasks of a started app carry the callback). `docs/current/observability.md` (Background tasks) and `docs/reference/metrics.md` say so.
+
 ## v0.5.1 - 2026-10-20
 
 Security: certifi's CA bundle drops the root whose intermediate CAs lost their keys (GHSA-6q48-6c7w-9gw2); every httpx client of the app verifies TLS against it, so the image carries the fix with its rebuild. Repository upkeep: CI ends in the one check `main`'s ruleset requires and runs weekly on `main`; Dependabot takes a version a week after its release, updates pre-commit's hooks too, and its green minor and patch updates merge into `staging` by themselves; pre-commit runs the venv's ruff, pinned in `pyproject.toml` only; every release tag gets its page; and the tests check a URL's host exactly.

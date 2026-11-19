@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from scavengarr.domain.entities.stremio import RankedStream
 from scavengarr.domain.plugins.base import SearchResult, link_url
+from scavengarr.infrastructure.stremio.episode_filter import parse_episode_from_label
 from scavengarr.infrastructure.stremio.release_parser import (
     parse_language,
     parse_quality,
@@ -112,7 +113,7 @@ def _convert_single_result(
             if not url:
                 continue
 
-            quality = parse_quality(
+            parsed = parse_quality(
                 release_name=result.release_name,
                 quality_badge=result.metadata.get("quality"),
                 link_quality=link.get("quality"),
@@ -124,21 +125,27 @@ def _convert_single_result(
             )
             hoster = _hoster_name(url, link.get("hoster") or "", canonical_hoster)
             size = link.get("size") or result.size
+            label = link.get("label") or ""
+            label_season, label_episode = parse_episode_from_label(label)
 
             streams.append(
                 RankedStream(
                     url=url,
                     hoster=hoster,
-                    quality=quality,
+                    quality=parsed.quality,
+                    quality_guessed=parsed.guessed,
                     language=language,
                     size=size,
                     release_name=result.release_name,
                     title=result.title,
                     source_plugin=source_plugin,
+                    link_label=label,
+                    label_season=label_season,
+                    label_episode=label_episode,
                 )
             )
     elif result.download_link:
-        quality = parse_quality(
+        parsed = parse_quality(
             release_name=result.release_name,
             quality_badge=result.metadata.get("quality"),
             link_quality=None,
@@ -154,7 +161,8 @@ def _convert_single_result(
             RankedStream(
                 url=result.download_link,
                 hoster=hoster,
-                quality=quality,
+                quality=parsed.quality,
+                quality_guessed=parsed.guessed,
                 language=language,
                 size=result.size,
                 release_name=result.release_name,

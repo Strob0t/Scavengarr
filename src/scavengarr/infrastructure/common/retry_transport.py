@@ -3,6 +3,10 @@
 A 403 or 503 that is a Cloudflare challenge (``cf-mitigated: challenge``,
 or a challenge page) is the edge talking, not the origin: it is returned
 at once, neither retried nor fed back to the rate limiter.
+
+A request with the ``LINK_CHECK`` extension goes out once, past the rate
+limit: its 429 or 503 comes back at once instead of being waited out, and
+no answer of it is fed back.
 """
 
 from __future__ import annotations
@@ -23,6 +27,12 @@ _DEFAULT_RETRYABLE = frozenset({429, 503})
 _CACHED_STATUSES = frozenset({"HIT", "STALE", "UPDATING"})
 # Statuses a Cloudflare challenge page comes with
 _CHALLENGE_STATUSES = frozenset({403, 503})
+# Request extension of link validation: whether a URL answers is all it
+# asks. Waiting out a site's Retry-After (up to max_backoff, per retry), or
+# for the site's token while other requests' 429s hold its bucket at the
+# floor, outlasts its short timeout many times over; the validator bounds
+# its requests per host itself
+LINK_CHECK = "scavengarr.link_check"
 
 
 async def _is_challenge(response: httpx.Response) -> bool:
@@ -61,7 +71,8 @@ class RetryTransport(httpx.AsyncBaseTransport):
     """Wraps an httpx transport with rate limiting and retry on 429/503.
 
     **Proactive:** calls ``DomainRateLimiter.acquire()`` before every
-    request to throttle per-domain request rate.
+    request but a link check (``LINK_CHECK``) to throttle per-domain
+    request rate.
 
     **Reactive:** on retryable HTTP status codes (429, 503 by default),
     waits using exponential backoff (with jitter) and retries up to
@@ -90,7 +101,12 @@ class RetryTransport(httpx.AsyncBaseTransport):
 
         On retryable status codes, retries with exponential backoff.
         Feeds back success/throttle signals to the adaptive rate limiter.
+        A link check (``LINK_CHECK``) goes out once: no rate limit, no retry,
+        no feedback.
         """
+        if request.extensions.get(LINK_CHECK):
+            return await self._wrapped.handle_async_request(request)
+
         url_str = str(request.url)
         last_response: httpx.Response | None = None
 

@@ -26,13 +26,14 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import EpisodeRef, StreamQuality
 from scavengarr.infrastructure.plugins import devideosrc
 from scavengarr.infrastructure.plugins.episode_index import (
     EpisodeRow,
     SeasonPageParser,
     locate,
 )
+from scavengarr.infrastructure.stremio.stream_converter import convert_search_results
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PAGES = _ROOT / "tests" / "fixtures" / "html"
@@ -610,10 +611,12 @@ class TestKinoking:
         links = _plugin_module("kinoking")._movie_links(
             _page("kinoking", "movie-oppenheimer")
         )
-        assert len(links) == 19
+        # 19 links before the "group_filmo_" servers (title match) were dropped
+        assert len(links) == 15
         assert links[0] == {
             "hoster": "filemoon",
             "link": "https://filemoon.to/e/fwzwu9ny19jk",
+            "language": "de",
         }
 
     def test_movie_year_and_genres(self) -> None:
@@ -637,7 +640,11 @@ class TestKinoking:
         picked = mod._pick_episodes(episodes, 1, 5)
         assert [(e["season_number"], e["episode_number"]) for e in picked] == [(1, 5)]
         assert mod._episode_links(episodes[0]) == [
-            {"hoster": "voe", "link": "https://voe.sx/e/jwf9glrkk7sd"}
+            {
+                "hoster": "voe",
+                "link": "https://voe.sx/e/jwf9glrkk7sd",
+                "language": "unknown",
+            }
         ]
 
 
@@ -762,20 +769,21 @@ class TestMovie2k:
 
     def test_series_page_lists_every_episode(self) -> None:
         """Episodes are ``<table data-episode-id="base64(tt…-s1e1-…)">`` with
-        ``<a href="#" onclick="return loadMirror('<url>')">`` mirrors."""
+        ``<a href="#" onclick="return loadMirror('<url>')">`` mirrors, which
+        show no quality image."""
         detail = _detail("movie2k", self._BASE, "detail-the-last-of-us")
         assert detail.episodes_listed
         assert detail.stream_links[:2] == [
             {
                 "hoster": "vidoza.net",
                 "link": "https://vidoza.net/n1318q60i9gh.html",
-                "quality": "HD",
+                "quality": "",
                 "label": "1x1 vidoza.net",
             },
             {
                 "hoster": "vinovo.to",
                 "link": "https://vinovo.to/d/kgv90ek1s821qg",
-                "quality": "HD",
+                "quality": "",
                 "label": "1x1 vinovo.to",
             },
         ]
@@ -1049,6 +1057,10 @@ class TestMoflix:
         ]
         assert results[0].metadata["imdb_id"] == "tt15398776"
         assert not other_titles.called
+        # Each mirror's quality is the site's own, kept past the hoster name
+        assert {s.quality for s in convert_search_results(results)} == {
+            StreamQuality.HD_1080P
+        }
 
 
 class TestFilmo:

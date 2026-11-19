@@ -1,4 +1,4 @@
-"""Tests for adaptive AIMD rate limiting."""
+"""Tests for adaptive (multiplicative) rate limiting."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter, Tok
 
 
 class TestTokenBucketAdaptive:
-    """AIMD behavior on TokenBucket."""
+    """Adaptive rate behavior on TokenBucket."""
 
     def test_record_success_increases_rate(self) -> None:
         bucket = TokenBucket(rate=10.0, adaptive=True, min_rate=0.5, max_rate=50.0)
@@ -20,11 +20,6 @@ class TestTokenBucketAdaptive:
         bucket.record_throttle()
         assert bucket.rate == pytest.approx(5.0)  # 10 * 0.5
 
-    def test_record_timeout_reduces_by_25_percent(self) -> None:
-        bucket = TokenBucket(rate=10.0, adaptive=True, min_rate=0.5, max_rate=50.0)
-        bucket.record_timeout()
-        assert bucket.rate == pytest.approx(7.5)  # 10 * 0.75
-
     def test_rate_does_not_exceed_max(self) -> None:
         bucket = TokenBucket(rate=48.0, adaptive=True, min_rate=0.5, max_rate=50.0)
         bucket.record_success()  # 48 * 1.1 = 52.8 → capped at 50
@@ -35,16 +30,10 @@ class TestTokenBucketAdaptive:
         bucket.record_throttle()  # 0.8 * 0.5 = 0.4 → floored at 0.5
         assert bucket.rate == pytest.approx(0.5)
 
-    def test_timeout_does_not_go_below_min(self) -> None:
-        bucket = TokenBucket(rate=0.6, adaptive=True, min_rate=0.5, max_rate=50.0)
-        bucket.record_timeout()  # 0.6 * 0.75 = 0.45 → floored at 0.5
-        assert bucket.rate == pytest.approx(0.5)
-
     def test_non_adaptive_ignores_feedback(self) -> None:
         bucket = TokenBucket(rate=10.0, adaptive=False)
         bucket.record_success()
         bucket.record_throttle()
-        bucket.record_timeout()
         assert bucket.rate == 10.0  # unchanged
 
     def test_multiple_successes_compound(self) -> None:
@@ -54,7 +43,7 @@ class TestTokenBucketAdaptive:
         expected = 10.0 * (1.1**5)
         assert bucket.rate == pytest.approx(expected)
 
-    def test_aimd_recovery_after_throttle(self) -> None:
+    def test_recovery_after_throttle(self) -> None:
         """After throttle (halve), success slowly recovers."""
         bucket = TokenBucket(rate=10.0, adaptive=True, min_rate=0.5, max_rate=50.0)
         bucket.record_throttle()  # 10 → 5
@@ -66,7 +55,7 @@ class TestTokenBucketAdaptive:
 
 
 class TestDomainRateLimiterAdaptive:
-    """Per-domain AIMD feedback via DomainRateLimiter."""
+    """Per-domain adaptive feedback via DomainRateLimiter."""
 
     @pytest.mark.asyncio()
     async def test_record_success_on_known_domain(self) -> None:
@@ -114,11 +103,29 @@ class TestDomainRateLimiterAdaptive:
         bucket = limiter._buckets["example"]
         assert bucket.rate == 10.0  # unchanged
 
-    def test_record_timeout_on_known_domain(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_hosts_share_a_bucket_by_second_level_label(self) -> None:
+        """``www.example.com`` and ``example.org`` share one bucket: a 429
+        for one URL slows the other (the label before the top-level domain
+        names the bucket)."""
         limiter = DomainRateLimiter(default_rps=10.0, adaptive=True, max_rate=50.0)
-        # Manually create a bucket to test timeout
-        limiter._buckets["example"] = TokenBucket(
-            rate=10.0, adaptive=True, min_rate=0.5, max_rate=50.0
-        )
-        limiter.record_timeout("https://example.com/page")
-        assert limiter._buckets["example"].rate == pytest.approx(7.5)
+        await limiter.acquire("https://www.example.com/a")
+        await limiter.acquire("https://example.org/b")
+        assert len(limiter._buckets) == 1
+
+        limiter.record_throttle("https://www.example.com/a")
+
+        assert limiter._buckets["example"].rate == pytest.approx(5.0)
+        await limiter.acquire("https://example.org/b")
+        limiter.record_success("https://example.org/b")
+        assert limiter._buckets["example"].rate == pytest.approx(5.5)
+
+    @pytest.mark.asyncio()
+    async def test_subdomain_does_not_name_the_bucket(self) -> None:
+        """Two sites that differ only in their subdomain are one bucket, and
+        sites that differ in the second-level label are two."""
+        limiter = DomainRateLimiter(default_rps=10.0, adaptive=True, max_rate=50.0)
+        await limiter.acquire("https://a.example.com/")
+        await limiter.acquire("https://b.example.com/")
+        await limiter.acquire("https://www.other.com/")
+        assert sorted(limiter._buckets) == ["example", "other"]

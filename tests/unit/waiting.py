@@ -18,3 +18,11 @@ async def eventually(check: Callable[[], bool], timeout: float = 2.0) -> None:
     while not check():
         assert time.monotonic() < end, "condition not met in time"
         await asyncio.sleep(0.01)
+
+
+def until(check: Callable[[], bool], timeout: float = 2.0) -> None:
+    """``eventually()`` for a test without a loop: what another thread does."""
+    end = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < end, "condition not met in time"
+        time.sleep(0.01)

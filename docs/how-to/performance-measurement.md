@@ -2,7 +2,7 @@
 
 > **Purpose:** Measuring stream requests, a playback under load and the title set before and after a change.
 > **Status:** how-to
-> **As of:** 9d2fc4c7
+> **As of:** de34a922
 
 ## Goal
 
@@ -12,7 +12,7 @@ Compare the numbers before and after a change.
 ## Prerequisites
 
 - A running instance: the dev server (`poetry run start --port 7979`, with `PYTHONPATH=src` in a worktree) or production behind its reverse proxy.
-- For the container's CPU: `PORTAINER_URL` and `PORTAINER_API_KEY` in `.env.devcontainer` (`--portainer`), or the docker CLI on the Docker host (`--docker`).
+- For the app's CPU: `/metrics` of the instance (`--cpu`), which counts the app's Python process and not Chromium's processes; for the CPU of every process in the container, the docker CLI on the Docker host (`--docker`).
 - For the title set of step 3: the local, untracked ids file `.cache/live/round-titles.txt`, one `movie/<imdb id>` or `series/<imdb id>` per line with an optional `# title`, so the maintainer's titles stay out of the repository.
 - For outbound request counts: the JSON log format (the production default) and `logging.level: DEBUG`, since httpx writes its `HTTP Request:` lines at that level only.
 - For a CPU profile: `cap_add: [SYS_PTRACE]` on the container.
@@ -26,9 +26,10 @@ The scripts print no URLs; `--insecure` skips the TLS check for a local CA.
 `scripts/stremio_profile.py` measures the ids given, or its baseline set of three titles, against a running container.
 Per request it reports the wall time, the CPU of the Python and Chromium processes (read from `/proc` before and after) and the httpx requests per host from the container log.
 At the end it reports the event-loop lag from `/api/v1/stats/metrics`.
+It runs on the Docker host: `--docker` runs its commands in the container through the docker CLI, which Komodo's read requests cannot.
 
 ```bash
-poetry run python scripts/stremio_profile.py --portainer \
+poetry run python scripts/stremio_profile.py --docker \
   --base https://scavengarr.example.lan --insecure \
   --connect-to scavengarr.example.lan:<production host address> --repeat 2 --py-spy
 ```
@@ -36,7 +37,6 @@ poetry run python scripts/stremio_profile.py --portainer \
 - `--repeat 2` runs a cold and a warm pass over the ids.
 - `--py-spy` samples the app process during all requests (100 Hz, threads holding the GIL only) and prints the CPU share per category; py-spy is installed into the container's `/tmp` and runs as root.
 - `--connect-to HOST:IP` resolves the host to that address, as curl's option does, for a name the machine's DNS does not know.
-- On the Docker host, `--docker` uses the docker CLI instead of Portainer.
 
 A local server is profiled with `py-spy record -r 100 -f raw -- python -m scavengarr.interfaces.cli …`.
 
@@ -46,9 +46,9 @@ A local server is profiled with `py-spy record -r 100 -f raw -- python -m scaven
 
 ```bash
 poetry run python scripts/playback_under_load.py --base https://scavengarr.example.lan --insecure \
-  --stream-id <id from prodctl.py probe links> --segments 20 --portainer --label idle
+  --stream-id <id from the links probe> --segments 20 --cpu --label idle
 poetry run python scripts/playback_under_load.py --base https://scavengarr.example.lan --insecure \
-  --stream-id <id> --segments 20 --portainer --label search --search movie/<Movie B>
+  --stream-id <id> --segments 20 --cpu --label search --search movie/<Movie B>
 ```
 
 - The player takes the variant with the highest bandwidth and fetches `--segments` media segments one after another, the next when the previous segment's duration (`EXTINF`) has passed since its fetch began.
@@ -56,7 +56,7 @@ poetry run python scripts/playback_under_load.py --base https://scavengarr.examp
 - The `--search` ids are requested one after another from `--search-at` seconds into the playback, which goes on until `--tail` seconds after the last answer; each answer's wall time, streams and `X-Cache` and `X-Search-Complete` headers are reported.
 - Without `--search` the run is the idle reference.
 - `/metrics` before and after the run gives the server's view: the proxy's segment stage, the read-ahead's fetches and outcomes, the plugin searches' durations and the event-loop lag; the quantiles are histogram bucket bounds.
-- `--portainer` samples the container's CPU about every 5 s, and `--out FILE` appends the two Markdown rows (the player's view, the server's view).
+- `--cpu` samples the app process's CPU from `/metrics` about every 5 s (`process_cpu_seconds_total`: the Python process, not Chromium's), and `--out FILE` appends the two Markdown rows (the player's view, the server's view).
 
 It runs from a machine on the server's network; the dev container reaches production through its reverse proxy.
 
@@ -66,13 +66,13 @@ It runs from a machine on the server's network; the dev container reaches produc
 
 ```bash
 poetry run python scripts/stremio_round.py --base https://scavengarr.example.lan --insecure \
-  --out <notes file> --portainer
+  --out <notes file> --cpu
 ```
 
 - Per title it prints the wall time, the streams and the `X-Cache` and `X-Search-Complete` headers of both answers.
 - Under each title it names the failing streams as `hoster: verdict` and counts the Range requests answered with 200 instead of 206.
 - It ends with a summary row of medians and totals and a table of the streams per hoster and codec pair.
-- `--ids-file` names another ids file, `--no-playcheck` skips the play check, and `--portainer` adds the CPU seconds the container's Python and Chromium processes used.
+- `--ids-file` names another ids file, `--no-playcheck` skips the play check, and `--cpu` adds the CPU seconds the app's Python process used during the run (from `/metrics` before and after; Chromium's processes are not in it).
 
 ### 4. Check every stream like a player
 
@@ -112,4 +112,4 @@ The groups run one after another with a pause in between (default 120 s), since 
 ## References
 
 - `scripts/stremio_profile.py`, `scripts/playback_under_load.py`, `scripts/stremio_round.py`, `scripts/stremio_playcheck.py`, `scripts/stremio_measure.py`.
-- [Operations](operations.md): `prodctl.py probe links` for a stream id.
+- [Operations](operations.md): the links probe for a stream id, a container probe that the maintainer runs on the Docker host.

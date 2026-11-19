@@ -49,6 +49,32 @@ class TelemetryConfig(BaseModel):
         return value
 
 
+class WatchdogConfig(BaseModel):
+    """The stall monitor (``docs/current/observability.md``)."""
+
+    stall_seconds: float = Field(
+        default=120.0,
+        ge=0,
+        description=(
+            "Seconds without an event-loop tick that make a stall: the stall "
+            "monitor logs event_loop_stalled with the loop thread's stack and "
+            "dumps every thread's traceback to standard error, and a "
+            "faulthandler timer at twice the limit dumps them where no Python "
+            "thread runs. 0 turns the monitor off."
+        ),
+    )
+    exit_on_stall: bool = Field(
+        default=False,
+        description=(
+            "End the process with code 3 after a stall's line and dump, so "
+            "that the container's restart policy restarts it; after 3 exits "
+            "within 30 min a stall is only logged. The faulthandler timer "
+            "then exits too, with code 1, which the budget does not count. "
+            "Off until readings of real stalls choose the limit."
+        ),
+    )
+
+
 class ScoringConfig(BaseModel):
     """Background plugin scoring and probing configuration."""
 
@@ -361,6 +387,34 @@ class StremioConfig(BaseModel):
         ),
     )
 
+    file_stall_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=30.0,
+        description=(
+            "Seconds a file played through Scavengarr's proxy may send no "
+            "byte once it flowed before the proxy asks its CDN again from the "
+            "next byte; also a resume attempt's wait for its answer and first "
+            "byte. The bound times a piece of 64 KiB, not a byte: a body "
+            "slower than 64 KiB per timeout counts as stalled while bytes "
+            "flow (at 1 s, about 520 kbit/s). It must stay well under the "
+            "60 s a player's proxy waits for a byte: three attempts and their "
+            "waits of 0, 1 and 2 s end within 33 s at 10 s, and a new "
+            "resolution after a refusal adds the resolution (up to the "
+            "resolve bound) and one more attempt."
+        ),
+    )
+
+    preferred_audio_language: str | None = Field(
+        default=None,
+        description=(
+            'Language code (e.g. "de") of the audio track an HLS master '
+            "playlist with several audio renditions starts with: the proxy "
+            "marks that rendition DEFAULT=YES and the others DEFAULT=NO. "
+            "Unset, the playlist's own default is kept."
+        ),
+    )
+
     allow_hls_transcoding: bool = Field(
         default=False,
         description=(
@@ -380,6 +434,15 @@ class StremioConfig(BaseModel):
             "with the playback headers); error pages, HTML and broken HLS "
             "playlists are dropped instead of shown in Stremio. Off, only "
             "resolvers without a check of their own (SuperVideo) are checked."
+        ),
+    )
+    verify_hls_segment: bool = Field(
+        default=True,
+        description=(
+            "Before a StreamUp (filmpalast) HLS stream is offered, fetch the "
+            "first bytes of one segment (4 s in total, at most one segment per "
+            "stream, in parallel for all candidates). A 403, 404 or 410 drops "
+            "the stream; a timeout or network error keeps it."
         ),
     )
     probe_concurrency: int = Field(
@@ -481,6 +544,9 @@ class AppConfig(BaseModel):
 
     # Metrics and tracing (YAML section: telemetry)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+
+    # The stall monitor (YAML section: watchdog)
+    watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
 
     # HTTP engine (YAML section: http.*)
     http_timeout_seconds: float = Field(
@@ -654,8 +720,9 @@ class AppConfig(BaseModel):
             AliasPath("http", "rate_limit_adaptive"),
         ),
         description=(
-            "Enable AIMD adaptive rate limiting per domain. "
-            "Rate increases on success, halves on 429/503, reduces on timeout."
+            "Enable adaptive rate limiting per domain. Both steps are "
+            "multiplicative: the rate grows by 10 % on success and halves "
+            "on 429/503."
         ),
     )
     rate_limit_min_rps: float = Field(

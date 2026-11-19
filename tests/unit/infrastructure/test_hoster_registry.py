@@ -157,12 +157,29 @@ class TestHosterResolverRegistry:
         assert result.address_bound is True
 
     @pytest.mark.asyncio
+    async def test_an_idle_reset_resolver_marks_its_stream(self) -> None:
+        resolver = MagicMock()
+        resolver.name = "veev"
+        resolver.idle_reset = True
+        resolver.resolve = AsyncMock(
+            return_value=ResolvedStream(video_url="https://cdn.example.com/v.mp4")
+        )
+        registry = HosterResolverRegistry(resolvers=[resolver])
+
+        result = await registry.resolve("https://veev.to/e/abc", hoster="veev")
+
+        assert result is not None
+        assert result.idle_reset is True
+        assert result.address_bound is False
+
+    @pytest.mark.asyncio
     async def test_a_resolver_without_the_attribute_gives_an_unbound_stream(
         self,
     ) -> None:
         resolver = MagicMock()
         resolver.name = "voe"
         del resolver.address_bound
+        del resolver.idle_reset
         resolver.resolve = AsyncMock(
             return_value=ResolvedStream(video_url="https://cdn.example.com/v.mp4")
         )
@@ -172,6 +189,7 @@ class TestHosterResolverRegistry:
 
         assert result is not None
         assert result.address_bound is False
+        assert result.idle_reset is False
 
     @pytest.mark.asyncio
     async def test_extracts_hoster_from_url_when_not_provided(self) -> None:

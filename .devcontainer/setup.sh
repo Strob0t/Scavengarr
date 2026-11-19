@@ -43,12 +43,12 @@ if ! command -v openspec >/dev/null 2>&1; then
 fi
 
 # Caveman: CLI (`caveman claude`) + Claude Code skills from JuliusBrussee/caveman.
-# Optional tooling, so failures only warn. Only the locally useful skills: every
-# installed skill description costs context tokens in every session. Left out:
-# the Caveman Cloud skills (discover, evidence-review, learn, manage, optimize,
-# setup) and caveman-commit, which collides with the project `commit` skill.
-SKILLS_CLI="skills@1.7.2"
-CAVEMAN_SKILLS=(caveman cavecrew caveman-explore caveman-review caveman-compress caveman-help caveman-stats)
+# Optional tooling, so failures only warn. Only the skill docs/agents/skills.md
+# records: every installed skill description costs context tokens in every
+# session. Left out: the other caveman skills, the Caveman Cloud skills and
+# caveman-commit, which collides with the project `commit` skill.
+SKILLS_CLI="skills@1.8.1"
+CAVEMAN_SKILLS=(caveman)
 echo "[devcontainer] Installing caveman CLI + skills..."
 npm install -g @caveman-ai/cli \
   || echo "WARN: caveman CLI install failed (optional)"
@@ -57,12 +57,13 @@ npx -y "$SKILLS_CLI" add JuliusBrussee/caveman -g -a claude-code -s "${CAVEMAN_S
 
 # The skill set of docs/agents/skills.md: one `skills add` per source repository,
 # non-interactive, with the pinned CLI. Optional tooling, so failures only warn.
+# `@<tag>` pins a source; humanizer stays on v3.1.0, whose rewrites add no facts.
 SKILL_SOURCES=(
   "obra/superpowers brainstorming writing-plans test-driven-development executing-plans subagent-driven-development dispatching-parallel-agents systematic-debugging verification-before-completion requesting-code-review receiving-code-review"
   "mattpocock/skills handoff writing-for-agents grill-me domain-modeling research codebase-design"
   "pwguler/skills recall reflect rubric"
   "DietrichGebert/ponytail ponytail ponytail-review ponytail-audit ponytail-debt"
-  "blader/humanizer humanizer"
+  "blader/humanizer@v3.1.0 humanizer"
   "addyosmani/agent-skills spec-driven-development documentation-and-adrs api-and-interface-design incremental-implementation code-simplification observability-and-instrumentation performance-optimization ci-cd-and-automation"
   "pbakaus/impeccable impeccable"
   "cathrynlavery/diagram-design diagram-design"

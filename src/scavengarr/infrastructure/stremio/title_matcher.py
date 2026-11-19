@@ -43,6 +43,9 @@ _YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
 # Excludes 4-digit years like "2008".
 _SEQUEL_RE = re.compile(r"\s+(\d{1,2})\s*$")
 
+# The German umlaut spellings "ae", "oe", "ue" ("Ueber" for "Über")
+_DIGRAPH_RE = re.compile(r"([aou])e")
+
 # An IMDb title id: "tt0388629", or the digits alone (a site's API may store
 # the number, which loses the leading zeros)
 _IMDB_RE = re.compile(r"(?:tt)?(\d+)")
@@ -296,6 +299,39 @@ def _wrong_kind(result: SearchResult, animation: bool | None) -> bool:
     return kind is not None and kind != animation
 
 
+def _words(norm: str) -> set[str]:
+    """The words of a normalised title, the German umlaut spellings folded
+    ("ueber" and "uber", the transliteration of "über", are one word)."""
+    return {_DIGRAPH_RE.sub(r"\1", word) for word in norm.split()}
+
+
+def _names_title(norm_res: str, norm_ref: str) -> bool:
+    """Whether the result's words are the reference title's words or a part
+    of them ("Dune" for "Dune: Part One"). Without a year on both sides a
+    fuzzy score is no proof of the title: a sequel's title one letter
+    longer scores 0.909 against the first film's (backlog row 174)."""
+    words = _words(norm_res)
+    return bool(words) and words <= _words(norm_ref)
+
+
+def _extends(norm_a: str, norm_b: str) -> bool:
+    """Whether one title's words begin the other's longer title: a subtitle
+    or a number added ("Film A: Subtitle" for "Film A", "Iron Man 2" for
+    "Iron Man")."""
+    a, b = norm_a.split(), norm_b.split()
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    return bool(short) and len(short) < len(long) and long[: len(short)] == short
+
+
+def _names_follow_up(candidates: list[str], norm_refs: list[str]) -> bool:
+    """Whether the result names a title that extends a reference title, or
+    one a reference title extends, and no reference title itself: with
+    another year it is the film before or after (backlog row 174)."""
+    if any(c.split() == r.split() for c in candidates for r in norm_refs):
+        return False
+    return any(_extends(c, r) for c in candidates for r in norm_refs)
+
+
 def _identity_verdict(
     result: SearchResult, reference: TitleMatchInfo
 ) -> TitleScore | None:
@@ -370,9 +406,22 @@ def score_title(
         _normalize(_strip_year(title))
         for title in [reference.title, *reference.alt_titles]
     ]
+    year_known = reference.year is not None and result_year is not None
+    # A movie's follow-up shares the title's first words; a series result's
+    # year may be its season's
+    if (
+        year_known
+        and reference.year != result_year
+        and reference.content_type != "series"
+        and _names_follow_up(candidates, norm_refs)
+    ):
+        return TitleScore(0.0, "year")
+
     best = 0.0
     for norm_res in candidates:
         for norm_ref in norm_refs:
+            if not year_known and not _names_title(norm_res, norm_ref):
+                continue
             s = _score_single_title(
                 norm_ref,
                 norm_res,

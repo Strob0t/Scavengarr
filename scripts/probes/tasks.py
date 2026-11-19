@@ -1,9 +1,13 @@
 """Where the app's asyncio tasks wait: ``python -m asyncio pstree`` of the app.
 
+Run by the maintainer in the production container:
+
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/tasks.py
+
 Shows which coroutine a hanging request waits in (a plugin's browser fetch, a
 semaphore, a resolver). Read-only: the remote-debugging interface of Python
 3.14 reads the process, it does not stop it. ``ps`` style arguments pass
-through, e.g. ``probe tasks ps`` for a flat task table.
+through, e.g. ARGS ``ps`` for a flat task table.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 > **Purpose:** Writing a new plugin, from the site analysis to the regenerated plugin list.
 > **Status:** how-to
-> **As of:** 7a6eb282
+> **As of:** 47a786e6
 
 ## Goal
 
@@ -124,7 +124,7 @@ results = [r for r in gathered if isinstance(r, SearchResult)]
 Encode search terms (`quote_plus`, or `quote(term, safe="")` in a path segment), resolve relative links with `urljoin(self.base_url, href)`, and read URLs from attributes (`href`, `data-url`, an embed's `src`), not from text.
 On a missing optional field return a partial result and log a warning; skip an item without its required fields instead of aborting the search.
 A series page that lists every episode labels its links with `episode_label()`, and the plugin keeps the requested one with `filter_episodes()`.
-Links on the plugin's own host that redirect off-site go through `_resolve_result_links()`, on the capped result list only.
+Links on the plugin's own host that redirect off-site go through `_resolve_own_links()`, on the capped result list only; a site that lets only a few through per second keeps them in the result (`validated_links`) and resolves them at the grab: `resolve_download()` returns `await self._resolve_link_out(url)` (`GrabResolvingPlugin`, as serienfans does).
 
 ### 5. Parse pages with selectolax
 

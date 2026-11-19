@@ -13,15 +13,16 @@ import pytest
 _SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
 
 
-def _load() -> ModuleType:
+def _load(name: str) -> ModuleType:
     sys.path.insert(0, str(_SCRIPTS))
     try:
-        return importlib.import_module("deploy_check")
+        return importlib.import_module(name)
     finally:
         sys.path.remove(str(_SCRIPTS))
 
 
-_mod = _load()
+_mod = _load("deploy_check")
+_komodo = _load("komodo")
 
 _START = 1791628020.0  # 2026-10-10T10:27:00Z
 
@@ -67,38 +68,52 @@ class TestParseTime:
         assert _mod.parse_time("2026-10-10T10:27:00Z") == _START
 
 
+def _state(**changes: Any) -> Any:
+    fields: dict[str, Any] = {
+        "status": "running",
+        "health": "healthy",
+        "started_at": "2026-10-10T10:27:00.123456789Z",
+        "oom_killed": False,
+        "restarts": 0,
+        "memory": 0,
+        "nano_cpus": 0,
+        "cpu_quota": 0,
+        "cpu_period": 0,
+    }
+    return _komodo.ContainerState(**{**fields, **changes})
+
+
 class TestContainer:
     def test_running_and_healthy_passes(self) -> None:
-        rows = [
-            {
-                "Names": ["/scavengarr"],
-                "State": "running",
-                "Status": "Up 2 hours (healthy)",
-            }
-        ]
+        check = _mod.container_check(_state())
 
-        check = _mod.container_check(rows, "scavengarr")
+        assert (check.status, check.detail) == ("pass", "running, healthy, restarts 0")
 
-        assert (check.status, check.detail) == ("pass", "running, Up 2 hours (healthy)")
+    def test_restarts_and_an_oom_kill_show(self) -> None:
+        check = _mod.container_check(_state(restarts=3, oom_killed=True))
+
+        assert (check.status, check.detail) == (
+            "pass",
+            "running, healthy, restarts 3, OOM-killed",
+        )
 
     @pytest.mark.parametrize(
-        "row",
+        "changes",
         [
-            {
-                "Names": ["/scavengarr"],
-                "State": "running",
-                "Status": "Up 5 days (unhealthy)",
-            },
-            {
-                "Names": ["/scavengarr"],
-                "State": "exited",
-                "Status": "Exited (1) 2 min ago",
-            },
-            {"Names": ["/other"], "State": "running", "Status": "Up 1 hour (healthy)"},
+            {"health": "unhealthy"},
+            {"health": "starting"},
+            {"health": None},
+            {"status": "exited", "health": None},
+            {"status": "restarting"},
         ],
+        ids=["unhealthy", "starting", "no-health-check", "exited", "restarting"],
     )
-    def test_anything_else_fails(self, row: dict[str, Any]) -> None:
-        assert _mod.container_check([row], "scavengarr").status == "fail"
+    def test_anything_else_fails(self, changes: dict[str, Any]) -> None:
+        assert _mod.container_check(_state(**changes)).status == "fail"
+
+    def test_no_health_check_is_named(self) -> None:
+        detail = _mod.container_check(_state(health=None)).detail
+        assert detail == "running, no health check, restarts 0"
 
 
 class TestStartup:
@@ -148,6 +163,30 @@ class TestStartup:
         records = [_record("app_startup_complete", **fields)]
 
         assert _mod.startup_checks(records, _START)[0].status == "fail"
+
+    def test_a_log_cut_after_the_start_warns_instead_of_failing(self) -> None:
+        """Komodo answers the log's last 5000 lines: after a long run they
+        begin hours after the start, and its records are gone."""
+        checks = _mod.startup_checks([], _START, cut_at=_START + 3600)
+
+        assert [(c.name, c.status) for c in checks] == [
+            ("startup", "warn"),
+            ("unknown keys", "warn"),
+            ("hoster_state_restored", "warn"),
+            ("plugin_history_restored", "warn"),
+        ]
+        assert {c.detail for c in checks} == {
+            "the log no longer reaches the container's start (it begins at"
+            " 11:27:00 UTC)"
+        }
+        assert not _mod.failed(checks)
+
+    def test_a_cut_log_that_still_reaches_the_start_is_judged(self) -> None:
+        records = _startup_records()
+
+        checks = _mod.startup_checks(records, _START, cut_at=_START - 60)
+
+        assert checks == _mod.startup_checks(records, _START)
 
 
 class TestStreams:

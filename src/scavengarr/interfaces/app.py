@@ -18,7 +18,10 @@ from scavengarr.infrastructure.graceful_shutdown import GracefulShutdown
 from scavengarr.infrastructure.network_probe import NetworkProbe
 from scavengarr.infrastructure.telemetry import CONTENT_TYPE, Telemetry
 from scavengarr.infrastructure.version import APP_VERSION, build_identity
-from scavengarr.interfaces.api.middleware import RateLimitMiddleware
+from scavengarr.interfaces.api.middleware import (
+    RateLimitMiddleware,
+    RequestWatchMiddleware,
+)
 from scavengarr.interfaces.app_state import AppState
 from scavengarr.interfaces.composition import lifespan
 
@@ -44,6 +47,10 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state = AppState()
     app.state.config = config
     app.state.graceful_shutdown = GracefulShutdown()
+
+    # The request watch, innermost (added first: each later middleware wraps
+    # the earlier ones), so the task it notes is the one that runs the route
+    app.add_middleware(RequestWatchMiddleware, shutdown=app.state.graceful_shutdown)
 
     # API rate limiting (per-IP sliding window)
     if config.api_rate_limit_rpm > 0:
@@ -88,13 +95,24 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/api/v1/readyz")
     async def readyz() -> Response:
         """Readiness probe — 200 after startup complete, 503 before it and
-        at the shutdown, and 503 while the network is lost: the cache
-        backend and the DNS have failed for over 5 min (``NetworkProbe``)."""
+        at the shutdown, 503 while the network is lost (the cache backend
+        and the DNS have failed for over 5 min, ``NetworkProbe``) and 503
+        when the cache check raises."""
         gs: GracefulShutdown = app.state.graceful_shutdown
         if not gs.is_ready:
             return JSONResponse({"status": "not_ready"}, status_code=503)
         probe: NetworkProbe = app.state.network_probe
-        if await probe.lost():
+        try:
+            lost = await probe.lost()
+        except Exception as exc:
+            # A ping that raises (a closed transport, a failed lookup) is a
+            # failed check, not a crash: 503. Only the type is logged and
+            # none of the text, which can carry the Redis URL
+            log.warning("readyz_check_failed", check="cache", error=type(exc).__name__)
+            return JSONResponse(
+                {"status": "not_ready", "reason": "cache"}, status_code=503
+            )
+        if lost:
             return JSONResponse(
                 {"status": "not_ready", "reason": "network"}, status_code=503
             )

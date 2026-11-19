@@ -1,15 +1,18 @@
 """sto's hoster link-outs (``/r?t=<token>``): do they leave the site?
 
-``probe sto_linkout [QUERY] [SEASON] [EPISODE]`` (default: Haus des Geldes
-S01E01) creates the sto plugin from the app's registry, finds the series with
+With ARGS ``[QUERY] [SEASON] [EPISODE]`` (default: Haus des Geldes S01E01)
+the probe creates the sto plugin from the app's registry, finds the series with
 the plugin's own search, reads the episode page's hoster buttons without
 resolving them and follows the first two link-outs with the plugin's client,
 headers and the episode page as ``Referer``, one hop at a time, as the plugin
 does. Per link: the status of each hop, the hops, the final host, whether the
 last body looks like a gate (Turnstile, Cloudflare challenge) and the time;
 then the plugin's own resolution of the same link (``_resolve_redirect``, no
-browser). Runs in the production container (``prodctl.py probe``) and in the
-dev container (``poetry run python scripts/probes/sto_linkout.py``).
+browser). Runs in the dev container and, by the maintainer, in the production
+container:
+
+    poetry run python scripts/probes/sto_linkout.py [ARGS]
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/sto_linkout.py
 
 Read-only: no cache writes, no browser. Prints hosts only, never a path or a
 token.

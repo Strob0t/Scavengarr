@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import replace
 from typing import Any
@@ -26,8 +27,9 @@ _ADDON_NAME = "Scavengarr"
 # playlist under it, whatever the CDN names it (a new resolution may change
 # the name and its tokens)
 HLS_MASTER = "scavengarr.m3u8"
-# The proxy path of an address-bound file (``ResolvedStream.address_bound``):
-# a byte-range pass-through of the current video URL
+# The proxy path of an address-bound file (``ResolvedStream.address_bound``)
+# and of a file whose CDN resets idle connections (``idle_reset``): a
+# byte-range pass-through of the current video URL
 FILE_NAME = "file"
 
 _QUALITY_LABELS: dict[StreamQuality, str] = {
@@ -38,6 +40,41 @@ _QUALITY_LABELS: dict[StreamQuality, str] = {
     StreamQuality.TS: "TS",
     StreamQuality.CAM: "CAM",
 }
+
+# A release name's resolution token, as guessit reads its screen size
+_RESOLUTION_TOKEN_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:(2160|1080|720|576|480|360)[pi]|4k)(?![a-z0-9])"
+)
+_TOKEN_QUALITY: dict[str, StreamQuality] = {
+    "2160": StreamQuality.UHD_4K,
+    "1080": StreamQuality.HD_1080P,
+    "720": StreamQuality.HD_720P,
+}
+_RESOLUTION_CLASSES = frozenset(
+    {
+        StreamQuality.UHD_4K,
+        StreamQuality.HD_1080P,
+        StreamQuality.HD_720P,
+        StreamQuality.SD,
+    }
+)
+
+
+def _with_quality(release_name: str, quality: StreamQuality) -> str:
+    """*release_name* with *quality*'s label in place of a resolution token
+    that contradicts it: the measurement sets the quality, whatever the
+    release name says. A token that agrees stays as written (1080i, 2160p),
+    and a name without one gets none."""
+    if quality not in _RESOLUTION_CLASSES:
+        return release_name
+
+    def replaced(match: re.Match[str]) -> str:
+        height = match[1] or "2160"
+        if _TOKEN_QUALITY.get(height, StreamQuality.SD) is quality:
+            return match[0]
+        return _QUALITY_LABELS[quality]
+
+    return _RESOLUTION_TOKEN_RE.sub(replaced, release_name)
 
 
 def format_stream(
@@ -64,10 +101,18 @@ def format_stream(
     quality and hoster the next episode has). ``filename`` gives subtitle
     addons the release name to match.
     """
-    quality_label = _QUALITY_LABELS.get(ranked.quality)
+    # A guessed quality ranks the stream but claims no resolution
+    quality_label = (
+        None if ranked.quality_guessed else _QUALITY_LABELS.get(ranked.quality)
+    )
     name = f"{_ADDON_NAME}\n{quality_label}" if quality_label else _ADDON_NAME
 
-    title = ranked.release_name or ranked.title or reference_title
+    if ranked.release_name and ranked.quality_guessed:
+        title = ranked.release_name
+    elif ranked.release_name:
+        title = _with_quality(ranked.release_name, ranked.quality)
+    else:
+        title = ranked.title or reference_title
     if title and not ranked.release_name:
         if season is not None and episode is not None:
             # Sites title the series; the stream was filtered to this episode
@@ -111,19 +156,25 @@ def apply_resolution(ranked: RankedStream, resolved: ResolvedStream) -> RankedSt
     """*ranked* with what its resolution measured, *ranked* itself when that
     changes nothing.
 
-    A measured quality replaces the site's badge: sites label a release once,
-    a hoster may serve another copy. A measured size shows only where the
-    site gave none.
+    A measured quality replaces the site's badge, a guessed one too: sites
+    label a release once, a hoster may serve another copy. A measured size
+    shows only where the site gave none.
     """
     quality = ranked.quality
+    guessed = ranked.quality_guessed
     if resolved.quality is not StreamQuality.UNKNOWN:
         quality = resolved.quality
+        guessed = False
     size = ranked.size
     if not size and resolved.size_bytes:
         size = format_size(resolved.size_bytes)
-    if quality is ranked.quality and size == ranked.size:
+    if (
+        quality is ranked.quality
+        and guessed is ranked.quality_guessed
+        and size == ranked.size
+    ):
         return ranked
-    return replace(ranked, quality=quality, size=size)
+    return replace(ranked, quality=quality, quality_guessed=guessed, size=size)
 
 
 def hoster_key(stream: RankedStream) -> tuple[str, str] | None:
@@ -268,6 +319,7 @@ def with_resolution(
         video_headers=json.dumps(resolved.headers) if resolved.headers else "",
         is_hls=resolved.is_hls,
         address_bound=resolved.address_bound,
+        idle_reset=resolved.idle_reset,
         # A resolution from the registry's cache can be an hour old
         resolved_at=resolved.resolved_at or time.time(),
     )
@@ -293,15 +345,17 @@ def build_stream_from_resolved(
     to a playlist fails on Android, stremio-bugs #1574; the proxy also
     sends the CDN's headers on every sub-request), a file through
     ``/play/`` (a redirect to the current video URL), unless its CDN plays
-    it only for the address that resolved it (``address_bound``): such a
-    file goes through the proxy's ``FILE_NAME`` path, a byte-range
-    pass-through, so the player needs no headers of its own.
+    it only for the address that resolved it (``address_bound``) or resets
+    a connection the paused player leaves idle (``idle_reset``, decision
+    0017): such a file goes through the proxy's ``FILE_NAME`` path, a
+    byte-range pass-through that resumes it, so the player needs no headers
+    of its own.
     """
     if not is_direct_video_url(resolved, original_url):
         return None
 
     playback: dict[str, Any]
-    if resolved.is_hls or resolved.address_bound:
+    if resolved.is_hls or resolved.address_bound or resolved.idle_reset:
         name = HLS_MASTER if resolved.is_hls else FILE_NAME
         url = f"{base_url}/api/v1/stremio/proxy/{sid}/{name}"
         playback = {"notWebReady": True}

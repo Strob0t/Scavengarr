@@ -1,11 +1,18 @@
 """Read-only look into the app's Redis cache.
 
-    probe redis_cache keys PATTERN [LIMIT]  matching keys with type and TTL (SCAN)
-    probe redis_cache ttl KEY               seconds left (-1: none, -2: missing)
-    probe redis_cache get KEY               the value's type, size, first 2000 bytes
+Run by the maintainer in the production container:
 
-Only SCAN, TYPE, TTL, STRLEN and GET: nothing is written. prodctl masks the
-output (values hold video URLs and the client's address).
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/redis_cache.py
+
+with ARGS one of:
+
+    keys PATTERN [LIMIT]  matching keys with type and TTL (SCAN)
+    ttl KEY               seconds left (-1: none, -2: missing)
+    get KEY               the value's type, size, first 2000 bytes
+
+Only SCAN, TYPE, TTL, STRLEN and GET: nothing is written. The output is not
+masked (values hold video URLs and the client's address): redact it before
+it leaves the host.
 """
 
 from __future__ import annotations

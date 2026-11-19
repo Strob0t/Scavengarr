@@ -32,7 +32,15 @@ from prometheus_client import (
 )
 from prometheus_client.exposition import CONTENT_TYPE_PLAIN_0_0_4
 
-from scavengarr.domain.ports.telemetry import AttributeValue, StageName, ValueName
+from scavengarr.domain.ports.telemetry import (
+    BACKGROUND_TASKS,
+    ROUTE_CLASSES,
+    AttributeValue,
+    BackgroundTaskName,
+    RouteClass,
+    StageName,
+    ValueName,
+)
 from scavengarr.infrastructure.telemetry.collectors import ContainerCollector
 from scavengarr.infrastructure.version import build_identity
 
@@ -112,6 +120,16 @@ _STAGES: dict[StageName, _StageSpec] = {
         (),
         (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 7.0, 15.0),
         "HLS segments fetched ahead of the player",
+        traced=False,
+    ),
+    # A proxied file's resume after its CDN interrupted it, by hoster (a
+    # resolver name, else ``other``) and reason (reset, eof, stall); its
+    # outcome resumed, gave_up, or cut and error (the stage's own: the
+    # request left, a new resolution raised). Three attempts end within 33 s
+    "file_resume": _StageSpec(
+        ("hoster", "reason"),
+        (0.25, 0.5, 1.0, 2.0, 4.0, 7.0, 15.0, 33.0),
+        "Resumes of proxied files",
         traced=False,
     ),
     # The stealth browser's pages: the wait for one and the work on it, by
@@ -245,13 +263,35 @@ class Telemetry:
                 registry=self.registry,
             ),
         }
+        # Up to the stall monitor's limit: a stall the loop survived stays in
+        # the scraped metrics after the container's log is gone
         self._loop_lag = Histogram(
             "scavengarr_event_loop_lag_seconds",
             "How late a 0.5 s event-loop timer fired",
-            buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+            buckets=(
+                *(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+                *(5.0, 10.0, 30.0, 60.0, 120.0),
+            ),
             registry=self.registry,
         )
         self._loop_lag_ms: deque[float] = deque(maxlen=LAG_WINDOW)
+        self._task_deaths = Counter(
+            "scavengarr_background_task_deaths",
+            "Background tasks that ended with an exception",
+            ("task",),
+            registry=self.registry,
+        )
+        # A zero series per task, so increase() sees the first death
+        for task in BACKGROUND_TASKS:
+            self._task_deaths.labels(task=task)
+        self._requests_stuck = Counter(
+            "scavengarr_requests_stuck",
+            "Requests that ran past their route class's limit",
+            ("route",),
+            registry=self.registry,
+        )
+        for route in ROUTE_CLASSES:
+            self._requests_stuck.labels(route=route)
         # One series by construction: its labels name the build, not a set
         Info(
             "scavengarr_build", "Scavengarr version and build", registry=self.registry
@@ -280,6 +320,12 @@ class Telemetry:
             child.set(value)
         else:
             child.inc(value)
+
+    def record_background_task_death(self, task: BackgroundTaskName, /) -> None:
+        self._task_deaths.labels(task=task).inc()
+
+    def record_request_stuck(self, route: RouteClass, /) -> None:
+        self._requests_stuck.labels(route=route).inc()
 
     def finish(
         self, name: StageName, labels: dict[str, str], outcome: str, seconds: float

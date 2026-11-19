@@ -12,8 +12,9 @@
   - `docs/current/hoster-resolvers.md`: the outcome and the cooldown;
   - `docs/current/observability.md`: the outcomes;
   - `CHANGELOG.md`.
-- [ ] 1.10 Production after the deploy: Filemoon's and Dropload's outcomes over a day, recorded in `docs/plans/challenge-reactions.md` against its baseline.
+- [x] 1.10 Production after the deploy: Filemoon's and Dropload's outcomes over a day, recorded in `docs/plans/challenge-reactions.md` against its baseline.
   - First reading, 9ee49115, the container's first 8 h: no request of the maintainer, so no request's capture to judge. Filemoon's 15 streams were the pass keeper's captures and its 10 lookups came from the restored resolver cache; Dropload had one lookup from the cache, and its breaker came back open from the kept state with its probe due. A day of the maintainer's use on one container is still to read.
+  - The day's reading, 671e303f then 5321c32f, 26 h of the log over seven starts (the counters went with the containers, so the log archive is the record): Filemoon gave the maintainer's 51 requests 20 streams, all without a challenge, in 2.6 to 7.8 s, and 8 `unplayable`; Dropload had 7 trials through the captcha's browser fallback, none with a stream, and its breaker refused 35 links in between; the pass keeper's 42 captures kept their pass.
 
 ## 2. Row 90: the background completion (R2)
 

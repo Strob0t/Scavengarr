@@ -83,6 +83,18 @@ _WIKIDATA_EMPTY_SEARCH = json.dumps(
 
 _EMPTY_RESPONSE = json.dumps({"d": [], "q": "tt9999999", "v": 1})
 
+# A suggest answer that lists another film before the requested one
+_ALIEN_FIRST_RESPONSE = json.dumps(
+    {
+        "d": [
+            {"id": "tt0078748", "l": "Alien", "q": "feature", "y": 1979},
+            {"id": "tt0090605", "l": "Aliens", "q": "feature", "y": 1986},
+        ],
+        "q": "tt0090605",
+        "v": 1,
+    }
+)
+
 
 class _FakeCache:
     """Minimal async cache for testing."""
@@ -177,6 +189,35 @@ class TestGetTitleAndYear:
     async def test_not_found_returns_none(self) -> None:
         client, _ = _make_client(response_text=_EMPTY_RESPONSE)
         assert await client.get_title_and_year("tt9999999") is None
+
+    @pytest.mark.asyncio
+    async def test_requested_id_missing_in_answer_returns_none(self) -> None:
+        """An answer without the requested id names another title: no
+        title, nothing cached (backlog row 174)."""
+        client, cache = _make_client(response_text=_ALIEN_FIRST_RESPONSE)
+        assert await client.get_title_and_year("tt9999999") is None
+        assert await client.find_by_imdb_id("tt9999999") is None
+        assert await cache.get("imdb:suggest:tt9999999") is None
+
+    @pytest.mark.asyncio
+    async def test_cached_entry_of_another_id_is_ignored(self) -> None:
+        """A cached first-entry fallback of the old rule is not served."""
+        client, cache = _make_client(response_text=_ALIEN_FIRST_RESPONSE)
+        await cache.set(
+            "imdb:suggest:tt9999999", {"id": "tt0078748", "l": "Alien", "y": 1979}
+        )
+        assert await client.get_title_and_year("tt9999999") is None
+
+    @pytest.mark.asyncio
+    async def test_matched_entry_wins_over_first_entry(self) -> None:
+        """Title and year come from the entry with the requested id, not
+        from the first entry (the sequel's answer lists the first film
+        first)."""
+        client, _ = _make_client(response_text=_ALIEN_FIRST_RESPONSE)
+        result = await client.get_title_and_year("tt0090605", language="en")
+        assert result is not None
+        assert result.title == "Aliens"
+        assert result.year == 1986
 
     @pytest.mark.asyncio
     async def test_wikidata_german_title_becomes_primary(self) -> None:

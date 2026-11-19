@@ -2,7 +2,7 @@
 
 > **Purpose:** A plugin knows how to search one site and returns normalised `SearchResult` objects.
 > **Status:** current
-> **As of:** 7a6eb282
+> **As of:** 47a786e6
 
 ## Purpose
 
@@ -114,7 +114,7 @@ Shared helpers:
 - `_fetch_text()`, a GET that loads the URL through the browser when the site answers with a Cloudflare challenge, and then goes on in httpx with the browser's session (its cookies and User-Agent);
 - `_fetch_search_page()`, the search page's GET or POST in the raising mode (see [Failures of the site](#failures-of-the-site));
 - `_safe_fetch()` and `_safe_parse_json()`, which log and return `None` instead of raising (`_safe_fetch(raising=True)` is the raising mode);
-- `_resolve_redirect()`, `_resolve_own_links()` and `_resolve_result_links()`, which replace link-outs on the plugin's own host by their off-site targets;
+- `_resolve_redirect()` and `_resolve_own_links()`, which replace link-outs on the plugin's own host by their off-site targets, and `_resolve_link_out()`, which does it for one link-out at a grab (`GrabResolvingPlugin`);
 - `mirror_group`, for sites that front one database (see [Plugin selection](#plugin-selection-for-a-stremio-request));
 - `domain_list_url` and `domain_marker`, for a site that publishes an official list of its addresses;
 - the app's cache (`set_cache()`), for what a plugin keeps across requests under a key of its own.
@@ -175,6 +175,7 @@ A failure of the site on the first search page is a failure of the search, so th
 - A timeout after the connection (the answer too slow) raises `TimeoutError`; no other domain is tried.
 - Every other answer is the helper's: a challenge counts in the challenge record (`_fetch_text()` passes it in the browser first), and a 4xx is `None`.
 - Detail pages and later result pages stay lenient (`None` with the log line): a missing one is a partial result.
+- moflix's search API answering a page instead of its JSON fails the search too: after a Cloudflare challenge the browser can hand back a page and only the clearance cookie, without the site's session. The search starts a new session (over httpx once the clearance is adopted) and asks once more (`moflix_search_new_session`); no JSON again raises `SearchApiError`. The Stremio search logs it as `stremio_plugin_search_error` and counts a circuit breaker failure, and its cache keeps the title's earlier moflix results and names moflix missing instead of storing a search without results ([The search cache](stremio-addon.md#the-search-cache)); the Torznab search answers with its error answer. No answer at first (a 4xx) stays a search without results.
 
 Every httpx plugin fetches the first page of its search this way, the XenForo forums their login page too.
 A site with one domain whose answer the plugin reads as a response (its headers, its JSON) calls `_safe_fetch(raising=page == 1)` instead, with the same outcomes; a listing without a query (the latest uploads) stays lenient.
@@ -230,7 +231,7 @@ Each entry is one broadcast with the broadcaster's own files: a result links the
 - **Versions**: the versions for accessibility (audio description, sign language, plain language) and the subtitled twin of a German version drop. "(OmU)" is `German Sub`, "(Englisch)" `English`, "(Originalversion)" `Original` (`parse_language()` reads it as `ov`), every other entry `German`. Of arte's channels only `ARTE.DE` stays, named `ARTE`.
 - **Categories**: an entry without numbers is a film or documentary (2000) when arte sent it, its topic is a collection ("Spielfilme", "Dokumentationen"), its title ends in a genre ("– Fernsehfilm"), or its title is its topic; every other entry is an episode (5000) of the series its topic names. The plugin serves 2000 and 5000.
 - **Numbers**: "(S03/E05)", "(Staffel 3, Folge 5)" or a part "(5/8)" in the title; a part or a lone "Folge 5" counts in the season the title or the topic names ("Staffel 3"), else in the first.
-- **Quality** comes from the file name: a height marker, ZDF's and arte's version codes, else 720p for an MP4 of the HD field; an unknown height stays out of the release name.
+- **Quality** comes from the file name: a height marker, ZDF's and arte's version codes, else `HD` for an MP4 of the HD field (720 lines or more, no height: it ranks as 720p and shows no resolution label); an unknown quality stays out of the release name.
 - **Release name**: the title, the numbers and the episode's title, then the channel, the broadcast day and the quality, as in `Title (2022) (ZDF, dd.mm.yy, 1080p)` or `Series S03E05 Episode (ZDF, dd.mm.yy, 1080p)`. The day is written `dd.mm.yy`, which guessit reads as a date, not as the film's year, and `BR` is written "Bayerischer Rundfunk", which guessit does not read as Brazilian Portuguese.
 - **Metadata**: `channel`, the `year` the title or the description names (films), and the stated `season` and `episode`.
 
@@ -238,6 +239,7 @@ Each entry is one broadcast with the broadcaster's own files: a result links the
 
 Some sites list hoster links as link-outs on their own host (`/redirect/<hash>`, `/external/<hash>`, sto's `/r?t=<token>`).
 The httpx base follows a link-out to its first off-site `Location` and drops a link that never leaves the site.
+serienfans and filmfans let only about one link-out through per 2 s, so their searches keep the link-outs and a grab resolves one release's (`resolve_download()`, [Grab-time resolution](torznab-and-crawljobs.md#grab-time-resolution)).
 sto redirects a link-out only when it is opened from the episode page that lists it, so it sends that page as `Referer`.
 
 When none of an episode's link-outs leaves the site, sto gates them for the session.

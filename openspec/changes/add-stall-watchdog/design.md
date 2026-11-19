@@ -37,10 +37,10 @@ What the code answers in each failure (Mr. Fable's research, read from the code;
 - **D2, a daemon thread, stdlib only.** It wakes every 5 s, compares the stamp with `watchdog.stall_seconds` and keeps the decision in a pure function (the stamp, the clock, the limit, the stall in progress), so tests drive it with a fake clock.
 - **D3, the dump goes to standard error.** `faulthandler.dump_traceback(all_threads=True)` writes from C without the logging path; `docker logs` keeps standard error across a restart. The structured `event_loop_stalled` line carries the main thread's stack from `sys._current_frames()`, size-bounded.
 - **D4, the exit is code 3 through tini.** `os._exit(3)` skips the graceful shutdown, which needs the stalled loop; tini exits with the child's code and the restart policy restarts the container. The structured line runs in a helper thread joined with a timeout, the log's flush likewise; then the exit follows regardless.
-- **D5, the budget lives in a file.** A restart keeps the container's file system, so a small JSON file in `cache.dir` with the last exits' times survives it; a recreate starts it empty, and a corrupt file counts as empty. After 3 exits within 30 min a stall is logged with its exit skipped.
+- **D5, the budget lives in a file.** A small JSON file in `cache.dir` with the last exits' times survives a restart, which keeps the container's file system, and a recreate too while `cache.dir` lies on a volume, as in `docker-compose.yml` (without one a recreate starts it empty); a corrupt file counts as empty. After 3 exits within 30 min a stall is logged with its exit skipped.
 - **D6, the switch is off.** `watchdog.exit_on_stall` defaults to false; turning it on is one setting in production's Compose, with the limit chosen from the readings of group 4.
 - **D7, stuck requests are checked on the loop.** In that failure the loop still runs, and `Task.get_stack()` is read on the loop's own thread. The middleware notes each request's task and start beside the in-flight count of `GracefulShutdown`.
-- **D8, fixed label sets.** The task names (`loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup`, `pass_keeper`, `hoster_state_store`, `plugin_history`) and the route classes (`stremio_stream`, `stremio_catalog`, `torznab`, `other`) are `Literal` sets; no path, title or id goes into a label.
+- **D8, fixed label sets.** The task names (`loop_lag`, `page_budget`, `plugin_health`, `scoring`, `browser_warmup`, `pass_keeper`, `hoster_state_store`, `plugin_history`, `request_watch`) and the route classes (`stremio_stream`, `stremio_catalog`, `torznab`, `other`) are `Literal` sets; no path, title or id goes into a label.
 - **D9, the monitor's lifetime.** It starts after `mark_ready()`, so plugin loading and the browser's start are no stall, and it stops first at shutdown, so the bounded shutdown is none either.
 
 ## Risks / Trade-offs
@@ -51,7 +51,11 @@ What the code answers in each failure (Mr. Fable's research, read from the code;
   - Up to 30 s of hoster state and up to 1 min of plugin history are lost.
   - A proxied playback is cut, but a stalled loop has already stopped it. A direct stream plays from the hoster's CDN and does not notice.
 - **The warm-up after a restart.** About 30 s until the browser is up (Chromium about 13 s, then the stealth context).
-- **A held interpreter.** A C call that holds the GIL starves the monitor thread; the `faulthandler` timer dumps from C. With the switch on it exits too (`exit=True`), at twice the limit.
+- **A held interpreter.** A C call that holds the GIL starves the monitor thread; the `faulthandler` timer dumps from C at twice the limit.
+  - The monitor thread arms the timer again at every check, so in a stall it sees the timer never fires: its dump stays the only one.
+  - With the switch on and an exit left in the budget the timer exits too (`exit=True`), with `faulthandler`'s code 1; the budget does not count that exit, since C code cannot write its file.
+  - Armed by the heartbeat instead, the timer would exit a stall the budget had spared, at twice the limit, and start a thread on the loop at every tick.
+  - A failed check and the thread's end cancel the timer, so it never fires on a healthy loop.
 - **A blocked log output.** If the log driver blocks standard output, the structured line may not get out and the dump may block; the exit does not wait on either (D4).
 
 ## Migration Plan

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 import structlog
 
 from scavengarr.domain.entities.stremio import ResolvedStream
+from scavengarr.infrastructure.hoster_resolvers import _mp4
 from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
@@ -24,6 +27,10 @@ _ERROR_PAGE_NAMES = frozenset({"404", "error", "errors"})
 _SNIFF_BYTES = 4096
 _VERIFY_TIMEOUT_S = 8.0
 _PLAYBACK_CHECK_TIMEOUT_S = 6.0
+# The whole segment probe (up to two playlists and one segment)
+_SEGMENT_PROBE_TIMEOUT_S = 4.0
+# What a CDN answers for a signed link that has expired or was never valid
+_SEGMENT_GONE_STATUSES = frozenset({403, 404, 410})
 # A CDN that does not allow HEAD is asked for the first bytes instead
 _HEAD_NOT_ALLOWED = 405
 
@@ -72,11 +79,13 @@ async def _first_bytes(
     url: str,
     headers: dict[str, str],
     timeout: float,
+    start: int = 0,
 ) -> _Answer:
-    """Fetch the first ``_SNIFF_BYTES`` of *url* with a Range GET (redirects
-    followed); the body is read below status 400 only. A failed request
-    (timeout, reset) raises ``httpx.HTTPError``."""
-    headers = {**headers, "Range": f"bytes=0-{_SNIFF_BYTES - 1}"}
+    """Fetch ``_SNIFF_BYTES`` of *url* from byte *start* with a Range GET
+    (redirects followed); the body is read below status 400 only. A failed
+    request (timeout, reset) raises ``httpx.HTTPError``."""
+    end = start + _SNIFF_BYTES - 1
+    headers = {**headers, "Range": f"bytes={start}-{end}"}
     async with http_client.stream(
         "GET", url, headers=headers, follow_redirects=True, timeout=timeout
     ) as resp:
@@ -152,7 +161,8 @@ async def verify_video_url(
 @dataclass(frozen=True)
 class PlaybackCheck:
     """What the playback check saw: whether a player could play the stream,
-    the largest resolution of an HLS master playlist and a file's size."""
+    the largest resolution of an HLS master playlist or an MP4 file's
+    video, and a file's size."""
 
     playable: bool
     width: int | None = None
@@ -170,6 +180,47 @@ def _total_size(content_range: str | None) -> int | None:
     return int(match[1]) if match else None
 
 
+async def _file_video_size(
+    http_client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    answer: _Answer,
+    deadline: float,
+) -> tuple[int, int] | None:
+    """The video size an MP4 file's header names: from the checked bytes
+    when its ``moov`` comes first, else from one more read of
+    ``_SNIFF_BYTES`` where its ``moov`` starts, before the check's
+    *deadline* (``time.monotonic()``). A failed read measures nothing.
+
+    The checked bytes are left-stripped; a box under 144 MiB starts with a
+    byte below 0x09, which ``lstrip()`` keeps.
+    """
+    size = _mp4.video_size(answer.head)
+    total = _total_size(answer.content_range)
+    if size is not None or total is None:
+        return size
+    offset = _mp4.moov_offset(answer.head, total)
+    left = deadline - time.monotonic()
+    if offset is None or left <= 0:
+        return None
+    try:
+        async with asyncio.timeout(left):
+            moov = await _first_bytes(http_client, url, headers, left, start=offset)
+    except (httpx.HTTPError, TimeoutError) as exc:
+        log.info(
+            "playback_check_moov_unread",
+            cdn=extract_domain(url),
+            error=type(exc).__name__,
+        )
+        return None
+    # A CDN that ignores the range answers from the file's start
+    if moov.status != 206 or not (moov.content_range or "").startswith(
+        f"bytes {offset}-"
+    ):
+        return None
+    return _mp4.video_size(moov.head)
+
+
 async def check_playable(
     http_client: httpx.AsyncClient,
     stream: ResolvedStream,
@@ -181,13 +232,16 @@ async def check_playable(
     such as mixdrop's answer other agents with 403.  An error status, an
     HTML page, or (for HLS) a body that is no playlist means the player
     would fail, so the stream is not playable. A playable stream comes with
-    what the bytes tell without another request: the largest variant of a
-    master playlist and the total size of a file's range answer.
+    what the bytes tell: the largest variant of a master playlist, the total
+    size of a file's range answer and an MP4 file's video size
+    (``_file_video_size``: one more read for a ``moov`` at the end, within
+    the check's 6 s).
 
     A failed request (timeout, reset) raises ``httpx.HTTPError``: it says
     nothing about the stream.
     """
     headers = {"User-Agent": DEFAULT_USER_AGENT, **stream.headers}
+    deadline = time.monotonic() + _PLAYBACK_CHECK_TIMEOUT_S
     answer = await _first_bytes(
         http_client, stream.video_url, headers, _PLAYBACK_CHECK_TIMEOUT_S
     )
@@ -197,15 +251,87 @@ async def check_playable(
         reason = "html"
     elif stream.is_hls and not answer.head.startswith(b"#EXTM3U"):
         reason = "no playlist"
-    else:
-        variant = _largest_variant(answer.head) if stream.is_hls else None
-        width, height = variant or (None, None)
+    elif stream.is_hls:
+        width, height = _largest_variant(answer.head) or (None, None)
         # A playlist's range answer sizes the playlist, not the video
-        size = None if stream.is_hls else _total_size(answer.content_range)
-        return PlaybackCheck(True, width, height, size)
+        return PlaybackCheck(True, width, height)
+    else:
+        video = await _file_video_size(
+            http_client, stream.video_url, headers, answer, deadline
+        )
+        width, height = video or (None, None)
+        return PlaybackCheck(True, width, height, _total_size(answer.content_range))
     log.info(
         "playback_check_failed",
         cdn=extract_domain(stream.video_url),
         reason=reason,
     )
     return PlaybackCheck(False)
+
+
+def _first_uri(playlist: bytes) -> str | None:
+    """The first URI line of an HLS playlist (a variant or a segment)."""
+    for raw in playlist.decode("utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            return line
+    return None
+
+
+async def _segment_url(
+    http_client: httpx.AsyncClient, stream: ResolvedStream, headers: dict[str, str]
+) -> str | None:
+    """The first segment of an HLS stream: the first variant of a master
+    playlist, then that media playlist's first segment. A segment URL
+    without a query takes the stream URL's, as the HLS proxy sends it. None
+    when a playlist is not one or lists no segment."""
+    url = stream.video_url
+    for _ in range(2):
+        answer = await _first_bytes(http_client, url, headers, _SEGMENT_PROBE_TIMEOUT_S)
+        if answer.status >= 400 or not answer.head.startswith(b"#EXTM3U"):
+            return None
+        uri = _first_uri(answer.head)
+        if uri is None:
+            return None
+        target = urljoin(url, uri)
+        if b"#EXT-X-STREAM-INF" not in answer.head:
+            query = urlparse(stream.video_url).query
+            if query and not urlparse(target).query:
+                target = f"{target}?{query}"
+            return target
+        url = target
+    return None
+
+
+async def segment_is_gone(
+    http_client: httpx.AsyncClient, stream: ResolvedStream
+) -> bool:
+    """Whether the first segment of an HLS *stream* answers 403, 404 or 410.
+
+    Walks the playlists to one segment and asks for its first bytes (a
+    ``Range`` GET with the playback headers and the player's User-Agent),
+    all within ``_SEGMENT_PROBE_TIMEOUT_S``. A signed CDN link can expire
+    or be refused while its playlists still answer, so the player would
+    open a stream that fails at its first segment. Any other result (a
+    timeout, a network error, a playlist that is gone or lists nothing,
+    another status) is no verdict and returns ``False``: the stream stays.
+    """
+    if not stream.is_hls:
+        return False
+    headers = {"User-Agent": DEFAULT_USER_AGENT, **stream.headers}
+    cdn = extract_domain(stream.video_url)
+    try:
+        async with asyncio.timeout(_SEGMENT_PROBE_TIMEOUT_S):
+            segment = await _segment_url(http_client, stream, headers)
+            if segment is None:
+                return False
+            answer = await _first_bytes(
+                http_client, segment, headers, _SEGMENT_PROBE_TIMEOUT_S
+            )
+    except (httpx.HTTPError, TimeoutError) as exc:
+        log.info("hls_segment_probe_unread", cdn=cdn, error=type(exc).__name__)
+        return False
+    if answer.status in _SEGMENT_GONE_STATUSES:
+        log.info("hls_segment_probe_gone", cdn=cdn, status=answer.status)
+        return True
+    return False

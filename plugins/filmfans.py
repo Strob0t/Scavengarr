@@ -197,6 +197,8 @@ class FilmfansPlugin(HttpxPluginBase):
             title=display_title,
             download_link=primary_link,
             download_links=dl_links_list if dl_links_list else None,
+            # Behind Cloudflare the validator cannot follow the link-outs
+            validated_links=[link["link"] for link in dl_links_list] or None,
             source_url=source_url,
             release_name=release_name or None,
             size=size,
@@ -256,9 +258,17 @@ class FilmfansPlugin(HttpxPluginBase):
             if len(results) >= self.effective_max_results:
                 break
 
-        # /external/<hash> links sit behind Cloudflare: resolve them to the
-        # hoster / link container (only for the results returned)
-        return await self._resolve_result_links(results[: self.effective_max_results])
+        # /external/<hash> link-outs resolve when a release is grabbed
+        # (resolve_download): the site lets about one through per 2 s
+        return results[: self.effective_max_results]
+
+    # ------------------------------------------------------------------
+    # Grab-time links (GrabResolvingPlugin)
+    # ------------------------------------------------------------------
+
+    async def resolve_download(self, url: str) -> list[str]:
+        """The hoster or link container behind one ``/external/`` link-out."""
+        return await self._resolve_link_out(url)
 
 
 # Used to add timestamp to external links for cache busting

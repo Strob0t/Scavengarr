@@ -12,8 +12,11 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.domain.plugins.base import GrabResolvingPlugin, PluginUnreachableError
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
+
+# The real link-out resolution, before the fixture below replaces it
+_RESOLVE_REDIRECT = HttpxPluginBase._resolve_redirect
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "serienfans.py"
 
@@ -986,6 +989,90 @@ class TestEpisodeTitles:
 # ---------------------------------------------------------------------------
 # Detail page error handling tests
 # ---------------------------------------------------------------------------
+
+
+class TestGrabTimeLinks:
+    """/external/<hash> link-outs are resolved when a release is grabbed:
+    the site lets about one through per 2 s, so resolving every result's at
+    search time took minutes."""
+
+    _LINKS = [
+        {"hoster": "1fichier", "link": "https://serienfans.org/external/2/a"},
+        {"hoster": "rapidgator", "link": "https://serienfans.org/external/2/b"},
+    ]
+
+    def _plugin(self) -> object:
+        plugin = _make_plugin()
+        plugin._collect_items = AsyncMock(return_value=[{"url_id": "show-a"}])
+        plugin._fetch_detail_page = AsyncMock(
+            return_value={"series_id": "7", "title": "Show A", "year": 2020}
+        )
+        plugin._fetch_season = AsyncMock(
+            return_value=(
+                [
+                    {
+                        "release_name": "Show.A.S01.German.1080p.WEB-GRP",
+                        "download_links": self._LINKS,
+                    }
+                ],
+                [
+                    {
+                        "episode_num": "1",
+                        "episode_title": "",
+                        "download_links": self._LINKS,
+                    }
+                ],
+            )
+        )
+        plugin._resolve_redirect = AsyncMock()
+        return plugin
+
+    def test_resolves_links_at_grab_time(self) -> None:
+        assert isinstance(_make_plugin(), GrabResolvingPlugin)
+
+    @pytest.mark.parametrize("episode", [None, 1])
+    async def test_search_keeps_the_link_outs_unresolved(
+        self, episode: int | None
+    ) -> None:
+        plugin = self._plugin()
+
+        results = await plugin.search("show a", season=1, episode=episode)
+
+        plugin._resolve_redirect.assert_not_awaited()
+        links = [link["link"] for link in self._LINKS]
+        assert [link["link"] for link in results[0].download_links] == links
+        # Validation cannot follow them either (Cloudflare): the grab does
+        assert results[0].validated_links == links
+
+    @respx.mock
+    async def test_a_grab_follows_the_link_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_resolve_redirect", _RESOLVE_REDIRECT)
+        respx.get("https://serienfans.org/external/2/a").mock(
+            return_value=httpx.Response(
+                302, headers={"Location": "https://filecrypt.cc/Container/A.html"}
+            )
+        )
+        plugin = _make_plugin()
+
+        links = await plugin.resolve_download("https://serienfans.org/external/2/a")
+
+        assert links == ["https://filecrypt.cc/Container/A.html"]
+
+    @respx.mock
+    async def test_a_dead_link_out_gives_no_link(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(HttpxPluginBase, "_resolve_redirect", _RESOLVE_REDIRECT)
+        respx.get("https://serienfans.org/external/2/dead").mock(
+            return_value=httpx.Response(404, text="gone")
+        )
+        plugin = _make_plugin()
+
+        links = await plugin.resolve_download("https://serienfans.org/external/2/dead")
+
+        assert links == []
 
 
 class TestDetailPageErrors:

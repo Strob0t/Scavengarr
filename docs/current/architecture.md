@@ -2,7 +2,7 @@
 
 > **Purpose:** This document maps the modules of `src/scavengarr/` to their layers, follows a Torznab search and a Stremio stream request through them, and gives the order in which the app starts and stops.
 > **Status:** current
-> **As of:** 9d2fc4c7
+> **As of:** 86d497b5
 
 ## Purpose
 
@@ -147,6 +147,7 @@ Hoster resolvers:
 | `infrastructure/hoster_resolvers/pass_keeper.py` | `PassKeeper` | Filemoon's captcha pass, kept by one capture once it has gone. |
 | `infrastructure/hoster_resolvers/_browser.py` | `capture_stream` | The capture of a player's stream in the stealth browser, shared by the capture resolvers. |
 | `infrastructure/hoster_resolvers/_verify.py` | `verify_video_url`, `check_playable` | The checks that a resolved video URL answers and plays. |
+| `infrastructure/hoster_resolvers/_mp4.py` | `video_size`, `moov_offset` | An MP4 file's video size from its header boxes, for the playback check. |
 | `infrastructure/hoster_resolvers/_video_extract.py` | `extract_video_url`, `unpack_p_a_c_k` | The video URL extraction of the XFS players. |
 | `infrastructure/hoster_resolvers/_domain.py` | `extract_domain` | A URL's second-level domain: the hoster's name, and a CDN's in logs. |
 | `infrastructure/hoster_resolvers/_voe_domains.py` | `VOE_DOMAINS` | VOE's rotating mirror domains. |
@@ -204,10 +205,11 @@ Metadata, Torznab, validation, telemetry and the runtime services:
 | `infrastructure/telemetry/metrics.py` | `Telemetry` | The `TelemetryPort` adapter on prometheus-client. |
 | `infrastructure/telemetry/tracing.py` | `Tracing`, `otlp_tracing` | The stages as OpenTelemetry spans, loaded only with an endpoint. |
 | `infrastructure/telemetry/collectors.py` | `BreakerCollector`, `BrowserPagesCollector`, `ContainerCollector` | Metrics read when Prometheus scrapes. |
-| `infrastructure/telemetry/loop_lag.py` | `monitor_loop_lag` | The event-loop lag monitor. |
+| `infrastructure/telemetry/loop_lag.py` | `monitor_loop_lag` | The event-loop lag monitor, whose tick is the stall monitor's heartbeat. |
+| `infrastructure/telemetry/watchdog.py` | `StallMonitor`, `ExitBudget`, `watch_requests` | The thread that names a stalled event loop and the budget of its exits, and the check on the loop that names stuck requests. |
 | `infrastructure/circuit_breaker.py` | `PluginCircuitBreaker` | The circuit breaker of plugins and hosters: closed, open, half-open. |
 | `infrastructure/concurrency.py` | `ConcurrencyPool`, `RequestBudget` | The global fair-share httpx and Playwright slots. |
-| `infrastructure/graceful_shutdown.py` | `GracefulShutdown` | The readiness flag and the drain of in-flight requests. |
+| `infrastructure/graceful_shutdown.py` | `GracefulShutdown`, `WatchedRequest` | The readiness flag, the drain of in-flight requests and the requests the stuck-request check reads. |
 | `infrastructure/network_probe.py` | `NetworkProbe` | The readiness probe's network checks: the cache backend's ping and a public name's DNS resolution; both failing for 5 min is a lost network. |
 | `infrastructure/resource_detector.py` | `detect_resources`, `ResourceSampler` | The container's CPU and memory (cgroup v2 or v1), its load and its free memory. |
 | `infrastructure/version.py` | `APP_VERSION`, `APP_USER_AGENT`, `build_identity` | The version from the package metadata, and the build's commit. |
@@ -220,13 +222,14 @@ Metadata, Torznab, validation, telemetry and the runtime services:
 | `interfaces/app_state.py` | `AppState` | The typed container of the wired objects. |
 | `interfaces/composition.py` | `lifespan`, `build_http_client` | The composition root. |
 | `interfaces/cli/__main__.py` | `start` | The process entry point. |
-| `interfaces/api/middleware.py` | `RateLimitMiddleware` | The inbound rate limit per client address, a sliding window. |
+| `interfaces/api/middleware.py` | `RateLimitMiddleware`, `RequestWatchMiddleware`, `route_class` | The inbound rate limit per client address, a sliding window, and the request watch that notes each request's task for the stuck-request check. |
 | `interfaces/api/torznab/router.py` | `/api/v1/torznab/indexers`, `/api/v1/torznab/{plugin_name}`, `/api/v1/torznab/{plugin_name}/health` | The Torznab endpoints. |
 | `interfaces/api/download/router.py` | `/api/v1/download/{job_id}`, `/api/v1/download/{job_id}/info` | The `.crawljob` download, its grab-time links resolved first. |
 | `interfaces/api/stremio/router.py` | `/api/v1/stremio/manifest.json`, the catalogs, `stream`, `play/{stream_id}`, `proxy/{stream_id}/{path}`, `health` | The Stremio addon. |
 | `interfaces/api/stats/router.py` | `/api/v1/stats/plugin-scores`, `/api/v1/stats/metrics`, `/api/v1/stats/plugins` | The statistics endpoints. |
 
-`create_app()` creates the app, its `AppState` and `GracefulShutdown`, the rate limit when `api_rate_limit_rpm` is above 0, and the request-logging middleware that binds `request_id` and counts the requests in flight.
+`create_app()` creates the app, its `AppState` and `GracefulShutdown`, the request watch, the rate limit when `api_rate_limit_rpm` is above 0, and the request-logging middleware that binds `request_id` and counts the requests in flight.
+Each middleware added later wraps the earlier ones, so the request watch, added first, is the innermost, and the task it notes is the one that runs the route ([Stuck requests](observability.md#stuck-requests)).
 It creates no resource: `lifespan()` does.
 
 ### The Torznab search
@@ -352,7 +355,7 @@ At the answer budget the entry goes into the cache with the plugins still runnin
 
 ```mermaid
 flowchart TD
-    begin(["lifespan() starts"]) --> tel["Telemetry and the event-loop lag monitor, concurrency auto-tuned"]
+    begin(["lifespan() starts"]) --> tel["Telemetry, the stall monitor and the event-loop lag monitor that stamps its heartbeat, concurrency auto-tuned"]
     tel --> cache["Cache backend opened, cleared in the dev environment"]
     cache --> http["Shared HTTP client, given to the httpx plugins with the cache"]
     http --> plugins["Plugin registry discovered, per-plugin overrides applied"]
@@ -373,13 +376,15 @@ flowchart TD
     health --> anime["Anime id resolver and Cinemeta client"]
     anime --> ucs["Stremio stream and catalog use cases"]
     ucs --> ready["mark_ready(), readyz answers 200"]
-    ready --> bg["Background tasks: browser warm-up, pass keeper, anime id list"]
-    bg --> serve(["The app serves requests"])
+    ready --> bg["Background tasks: browser warm-up, pass keeper, anime id list, the stuck-request check"]
+    bg --> watch["The stall monitor's thread starts"]
+    watch --> serve(["The app serves requests"])
 ```
 
 The cache comes first because most components keep their state in it.
 `HosterStateStore` and `PluginHistory` restore their snapshots before the app reports ready, so the first request finds the resolver outcomes and breakers of the run before.
 The browser warm-up, the pass keeper and the anime id list load run in the background: readiness does not wait for them.
+The stall monitor's thread starts last, since the plugin loading holds the loop, and stops first at the shutdown ([Stalls](observability.md#stalls)).
 
 ### Shutdown
 
@@ -395,9 +400,10 @@ flowchart TD
         waitc -. "5 s after the signal" .-> cancel["The request tasks still running are cancelled"]
         waitt -. "5 s after the signal" .-> cancel
     end
-    waitt --> drain
-    cancel --> drain
+    waitt --> monitor
+    cancel --> monitor
     subgraph app["The app: lifespan() cleanup"]
+        monitor["The stall monitor's thread and the stuck-request check stop: the bounded waits below are no stall"] --> drain
         drain["GracefulShutdown.wait_for_drain() for up to 10 s, readyz answers 503"] --> stop["The background work ends: Stremio searches and resolutions, anime ids, StremioLinks, segment read-ahead, pass keeper"]
         stop --> reg["The resolver registry's half-open probes and challenged captures end"]
         reg --> snap["The last writes of HosterStateStore and PluginHistory, each logged with its counts when something changed"]
@@ -410,6 +416,7 @@ flowchart TD
     signal -. "a second SIGINT" .-> force["force_exit: the waits end and the app's cleanup is skipped"]
 ```
 
+Each background task ends through `stop_task()` (`infrastructure/telemetry/background.py`): cancelled, then waited for without its exception, so a task that died before the shutdown ([Background tasks](observability.md#background-tasks)) skips none of the steps after it.
 Uvicorn's two waits together last up to 5 s: the CLI sets `timeout_graceful_shutdown=5`.
 A connection still answering then, such as a proxied playback, is cancelled with the line `Cancel 1 running task(s), timeout graceful shutdown exceeded`.
 The log setup (`_ShutdownBoundFilter` in `infrastructure/logging/setup.py`) makes that line a warning and drops the cancelled task's `Exception in ASGI application` with its `CancelledError`, so a stop during a playback writes no error line; every other cancel and exception stays an error.
@@ -455,7 +462,7 @@ The settings that shape the flows above are `stremio.plugin_timeout_seconds`, `s
 
 The core records its steps through `TelemetryPort` as stages: `stremio_request`, `stremio_phase`, `plugin_search`, `hoster_resolve`, `hoster_challenge_completion`, `hoster_pass_keep`, `hls_proxy`, `hls_readahead`, `browser_page_wait` and `browser_page`.
 Their metrics, labels and endpoints: [`docs/reference/metrics.md`](../reference/metrics.md).
-The start logs `config_effective` and `app_startup_complete` with the build identity; the stop logs `app_shutdown_complete`.
+The start logs `config_effective`, `app_startup_complete` with the build identity and `stall_monitor_started`; the stop logs `stall_monitor_stopped` first and `app_shutdown_complete` last.
 
 ## Limits
 

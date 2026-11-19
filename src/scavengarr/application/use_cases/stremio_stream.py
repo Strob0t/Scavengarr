@@ -400,6 +400,7 @@ class StremioStreamUseCase:
                 stream_link_repo=link_repo,
                 has_resolver=self._resolve_fn is not None,
                 user_agent=self._user_agent,
+                request=request,
             )
 
         complete = self._complete(key, progress)

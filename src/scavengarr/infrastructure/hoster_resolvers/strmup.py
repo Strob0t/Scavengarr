@@ -56,6 +56,10 @@ def _extract_file_id(url: str) -> str | None:
 class StrmupResolver:
     """Resolves StreamUp/strmup embed pages to HLS video URLs."""
 
+    # Its signed HLS links can expire while the playlists still answer: the
+    # registry asks for the first segment (``stremio.verify_hls_segment``)
+    probes_hls_segment = True
+
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client
 

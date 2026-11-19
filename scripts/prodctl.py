@@ -1,14 +1,21 @@
-"""Read-only diagnostics of the production containers through Portainer.
+"""Read-only diagnostics of the production container through Komodo.
 
-The one way to look into production (AGENTS.md §9). Everything it prints is
-masked (``portainer.mask``: URLs shrink to their host, no IP addresses, no
-secrets), and every Portainer request passes a budget of 100 per minute shared
-by all processes on the machine. Credentials: ``portainer.credentials()``.
+The one way to look into production (AGENTS.md §9). It sends two of Komodo
+Core's read requests about the ``scavengarr`` container (``komodo.py``: its
+inspect state and limits, its log's last 5000 lines) and reads the app's own
+endpoints through production's public base URL (``PRODCTL_BASE_URL``).
+Everything it prints is masked (``komodo.mask``: URLs shrink to their host,
+no IP addresses, no secrets; an error names neither Komodo's host nor
+production's), and every Komodo request passes a budget of 100 per minute
+shared by all processes on the machine. Credentials: ``komodo.credentials()``.
 
-Usage (``poetry run python scripts/prodctl.py ...``):
-    ps                                   containers and their state
-    stats [-c NAME]                      CPU, memory, processes, network
-    logs [-c NAME] [--since 15m] [--grep RE] [--fields a,b] [--limit 60]
+Usage (``poetry run python scripts/prodctl.py [--insecure] ...``):
+    ps                                   the container: status, health, start,
+                                         restarts, OOM kill
+    stats                                the app process's CPU, memory and open
+                                         files from two /metrics samples 5 s
+                                         apart, against the container's limits
+    logs [--since 15m] [--grep RE] [--fields a,b] [--limit 60]
          [--health] [--raw] [--width 400]
                                          log lines, JSON records as key=value,
                                          cut to --width characters (0: whole,
@@ -16,24 +23,25 @@ Usage (``poetry run python scripts/prodctl.py ...``):
     metrics [--grep RE]                  the app's Prometheus metrics
     state [--keys a,b]                   /api/v1/stats/metrics: breakers, pools,
                                          event-loop lag
-    probe [-c NAME] [--timeout S] [--env K=V] NAME|FILE [ARGS...]
-                                         a Python probe run in the container
-    digest [-c NAME] [--since 24h] [--json]
-                                         one Markdown report of the window:
+    digest [--since 24h] [--json]        one Markdown report of the window:
                                          requests, plugins, hosters, breakers,
                                          log noise, errors (``digest.py``)
-    check --base URL [--insecure] [-c NAME] [--timeout S] [--deadline S]
+    check [--base URL] [--timeout S] [--deadline S]
                                          the post-deploy check: the container,
                                          the start's records, four stream
                                          requests through the public addon URL
-                                         (``--base``, up to ``/api/v1/stremio``),
-                                         the readiness probe's network gauge;
-                                         one table, exit 1 on a failed check
+                                         (``--base`` up to ``/api/v1/stremio``,
+                                         PRODCTL_BASE_URL's by default), the
+                                         readiness probe's network gauge; one
+                                         table, exit 1 on a failed check
                                          (``deploy_check.py``)
 
-Probes are Python files run with ``python -c`` inside the container: the
-read-only ones in ``scripts/probes/`` by name (``probe resources``), any other
-file by path. A probe must not change production state.
+``--insecure`` skips the TLS checks of Komodo and of the public URL (the
+production host's local CA). Komodo answers the log's last 5000 lines, about
+4 h of it: ``logs`` and ``digest`` say how far back it reaches when that is
+short of ``--since``. A probe of ``scripts/probes/`` that runs in the container
+is the maintainer's, on the Docker host:
+``docker exec -i scavengarr python - [ARGS] < scripts/probes/NAME.py``.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ import json
 import re
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -60,30 +69,33 @@ from deploy_check import (
 )
 from deploy_check import render as render_checks
 from digest import digest as build_digest
-from digest import parse_records
+from digest import parse_metrics, parse_records
 from digest import render as render_digest
-from portainer import Portainer, RequestBudget, credentials, mask
+from komodo import (
+    CONTAINER,
+    LOG_LINES,
+    ContainerLog,
+    ContainerState,
+    Credentials,
+    Komodo,
+    KomodoError,
+    RequestBudget,
+    credentials,
+    mask,
+)
 
-PROBES = Path(__file__).resolve().parent / "probes"
-_BUDGET = Path.home() / ".cache" / "scavengarr" / "portainer-budget.json"
+_BUDGET = Path.home() / ".cache" / "scavengarr" / "komodo-budget.json"
 _DURATION = re.compile(r"(\d+(?:\.\d+)?)([smhd]?)")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 # Liveness and readiness checks: two log lines every 30 s
 _HEALTH = re.compile(r"/api/v1/(?:healthz|readyz)\b")
-# The app's own endpoints, fetched inside the container in one exec: a JSON
-# object of path -> body, or {"error": ...} for a path that failed
-_FETCH = (
-    "import json, os, sys, urllib.request\n"
-    "base = 'http://127.0.0.1:' + os.environ.get('PORT', '7979')\n"
-    "out = {}\n"
-    "for path in sys.argv[1:]:\n"
-    "    try:\n"
-    "        answer = urllib.request.urlopen(base + path, timeout=30)\n"
-    "        out[path] = answer.read().decode()\n"
-    "    except Exception as exc:\n"
-    "        out[path] = {'error': str(exc)}\n"
-    "print(json.dumps(out))\n"
-)
+# The app process's counters (prometheus_client's process collector: the
+# Python process, not its Chromium children)
+_CPU = "process_cpu_seconds_total"
+_MEMORY = "process_resident_memory_bytes"
+_FILES = "process_open_fds"
+# Two /metrics samples this far apart give the CPU in use
+_STATS_INTERVAL_S = 5.0
 
 
 def seconds(duration: str) -> float:
@@ -125,47 +137,80 @@ def select_lines(
     return lines[-limit:] if limit > 0 else lines, len(lines)
 
 
-def cpu_cores(sample: dict[str, Any]) -> tuple[float | None, int]:
-    """The CPU cores a ``docker stats`` sample shows in use (the sample's
-    interval against its predecessor), and the cores online; ``None`` in use
-    without a predecessor to measure against."""
-    cpu = sample.get("cpu_stats", {})
-    pre = sample.get("precpu_stats", {})
-    used = _nested(cpu, "cpu_usage", "total_usage") - _nested(
-        pre, "cpu_usage", "total_usage"
-    )
-    system = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
-    measured = "system_cpu_usage" in pre and system > 0
-    cpus = cpu.get("online_cpus") or len(
-        cpu.get("cpu_usage", {}).get("percpu_usage") or [1]
-    )
-    return (used / system * cpus if measured else None), cpus
+def _stamp(line: str) -> float | None:
+    """Unix seconds of a log line's time; None without one."""
+    try:
+        return parse_time(line.partition(" ")[0])
+    except ValueError:
+        return None
 
 
-def stats_line(name: str, sample: dict[str, Any]) -> str:
-    """CPU cores in use, memory without page cache, processes, network totals."""
-    cores, cpus = cpu_cores(sample)
-    in_use = "?" if cores is None else f"{cores:.3f}"
-    memory = sample.get("memory_stats", {})
-    page_cache = memory.get("stats", {})
-    resident = memory.get("usage", 0) - page_cache.get(
-        "inactive_file", page_cache.get("total_inactive_file", 0)
-    )
-    networks = list(sample.get("networks", {}).values())
-    rx = sum(n.get("rx_bytes", 0) for n in networks)
-    tx = sum(n.get("tx_bytes", 0) for n in networks)
+def since(log: ContainerLog, start: float) -> list[str]:
+    """The log's lines from *start* (Unix seconds) on; they come in time
+    order."""
+    for index, line in enumerate(log.lines):
+        stamp = _stamp(line)
+        if stamp is not None and stamp >= start:
+            return list(log.lines[index:])
+    return []
+
+
+def reach(log: ContainerLog, start: float) -> float | None:
+    """The time the log begins at, when that is after *start*: the log
+    reaches no further back."""
+    begins = _stamp(log.lines[0]) if log.lines else None
+    return begins if begins is not None and begins > start else None
+
+
+def _utc(stamp: float) -> str:
+    return datetime.fromtimestamp(stamp, UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def ps_line(state: ContainerState) -> str:
+    """Status and health, the start, the restarts and an OOM kill."""
+    health = f" ({state.health})" if state.health else ""
+    try:
+        started = _utc(parse_time(state.started_at))
+    except ValueError:
+        started = "?"
     return (
-        f"{name}: CPU {in_use} of {cpus} cores | memory {_size(resident)}"
-        f" of {_size(memory.get('limit', 0))} | processes"
-        f" {sample.get('pids_stats', {}).get('current', '?')}"
-        f" | network rx {_size(rx)} tx {_size(tx)}"
+        f"{CONTAINER} | {state.status}{health} | started {started}"
+        f" | restarts {state.restarts}"
+        f" | OOM-killed {'yes' if state.oom_killed else 'no'}"
     )
 
 
-def _nested(data: dict[str, Any], *keys: str) -> float:
-    for key in keys:
-        data = data.get(key, {})
-    return float(data or 0)
+def process_counters(metrics: str) -> dict[str, float]:
+    """The app process's counters of one ``/metrics`` read."""
+    return {
+        name: value
+        for name, labels, value in parse_metrics(metrics)
+        if name in (_CPU, _MEMORY, _FILES) and not labels
+    }
+
+
+def stats_line(
+    state: ContainerState,
+    first: dict[str, float],
+    second: dict[str, float],
+    interval: float,
+) -> str:
+    """The app process's CPU cores in use between two samples *interval*
+    seconds apart, its resident memory and open files, against the
+    container's limits."""
+    cores = "?"
+    if _CPU in first and _CPU in second and interval > 0:
+        cores = f"{(second[_CPU] - first[_CPU]) / interval:.3f}"
+    cpus = state.cpus
+    cpu = f"CPU {cores} of {cpus:g} cores" if cpus else f"CPU {cores} cores (no limit)"
+    resident = _size(second[_MEMORY]) if _MEMORY in second else "?"
+    memory = (
+        f"memory {resident} of {_size(state.memory)}"
+        if state.memory
+        else f"memory {resident} (no limit)"
+    )
+    files = f"{second[_FILES]:.0f}" if _FILES in second else "?"
+    return f"{CONTAINER} app process: {cpu} | {memory} | open files {files}"
 
 
 def _size(count: float) -> str:
@@ -176,127 +221,102 @@ def _size(count: float) -> str:
     raise AssertionError("unreachable")
 
 
-def probe_source(name: str) -> str:
-    """A probe from ``scripts/probes/`` by name, else the file at *name*."""
-    path = PROBES / f"{name}.py"
-    if not path.is_file():
-        path = Path(name)
-    if not path.is_file():
-        known = ", ".join(sorted(p.stem for p in PROBES.glob("*.py")))
-        raise SystemExit(f"no probe {name!r} (known: {known})")
-    return path.read_text()
+class Production:
+    """The container through Komodo, the app through its public base URL."""
 
-
-def _env(pairs: list[str]) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for pair in pairs:
-        key, sep, value = pair.partition("=")
-        if not sep or not key:
-            raise SystemExit(f"--env takes KEY=VALUE, not {pair!r}")
-        env[key] = value
-    return env
-
-
-def portainer_client(container: str, timeout: float = 120) -> Portainer:
-    url, key = credentials()
-    return Portainer(
-        container, url, key, budget=RequestBudget(_BUDGET), timeout=timeout
-    )
-
-
-def _fetch(container: str, *paths: str) -> dict[str, Any]:
-    """The bodies of the app's own endpoints *paths*, fetched in one exec;
-    a path that failed maps to ``{"error": ...}``."""
-    output, code = portainer_client(container).run(["python", "-c", _FETCH, *paths])
-    if code:
-        raise SystemExit(
-            mask(f"{' '.join(paths)} failed (exit {code}): {output.strip()[-300:]}")
+    def __init__(self, found: Credentials, *, insecure: bool) -> None:
+        self.komodo = Komodo(found, budget=RequestBudget(_BUDGET), verify=not insecure)
+        self.base_url = found.base_url.rstrip("/")
+        self._http = httpx.Client(
+            base_url=self.base_url, verify=not insecure, timeout=60
         )
-    return json.loads(output)
+
+    def text(self, path: str) -> str:
+        """The body of the app's endpoint *path*."""
+        return self._http.get(path).raise_for_status().text
+
+    def text_or_none(self, path: str) -> str | None:
+        """The body, or None when the endpoint does not answer it (an older
+        image lacks it)."""
+        try:
+            return self.text(path)
+        except httpx.HTTPError:
+            return None
 
 
-def _fetch_one(container: str, path: str) -> str:
-    body = _fetch(container, path)[path]
-    if not isinstance(body, str):
-        raise SystemExit(mask(f"{path} failed: {body.get('error', body)}"))
-    return body
-
-
-def _ps(args: argparse.Namespace) -> int:
-    for row in portainer_client("").containers():
-        name = row["Names"][0].lstrip("/")
-        print(mask(f"{name} | {row['State']} | {row['Status']}"))
+def _ps(args: argparse.Namespace, prod: Production) -> int:
+    print(mask(ps_line(prod.komodo.inspect())))
     return 0
 
 
-def _stats(args: argparse.Namespace) -> int:
-    print(stats_line(args.container, portainer_client(args.container).stats()))
+def _stats(args: argparse.Namespace, prod: Production) -> int:
+    """Two ``/metrics`` samples ``_STATS_INTERVAL_S`` apart, timed as they
+    arrive."""
+    state = prod.komodo.inspect()
+    first = process_counters(prod.text("/metrics"))
+    first_at = time.monotonic()
+    time.sleep(_STATS_INTERVAL_S)
+    second = process_counters(prod.text("/metrics"))
+    interval = time.monotonic() - first_at
+    print(stats_line(state, first, second, interval))
+    print("[the app's Python process: Chromium's processes are not in it]")
     return 0
 
 
-def _logs(args: argparse.Namespace) -> int:
-    since = int(time.time() - args.since)
-    text = portainer_client(args.container).logs(since, timestamps=True)
+def _logs(args: argparse.Namespace, prod: Production) -> int:
+    log = prod.komodo.log()
+    start = time.time() - args.since
     lines, matched = select_lines(
-        text, grep=args.grep, health=args.health, limit=args.limit
+        "\n".join(since(log, start)),
+        grep=args.grep,
+        health=args.health,
+        limit=args.limit,
     )
     fields = args.fields.split(",") if args.fields else None
     for line in lines:
         record = render(line, fields, raw=args.raw)
         print(record[: args.width] if args.width else record)
     print(f"[{len(lines)} of {matched} matching lines]")
+    begins = reach(log, start)
+    if begins is not None:
+        cap = f": Komodo answers its last {LOG_LINES} lines" if log.cut else ""
+        print(f"[the log reaches back to {_utc(begins)} only{cap}]")
     return 0
 
 
-def _metrics(args: argparse.Namespace) -> int:
-    text = _fetch_one(args.container, "/metrics")
-    lines, _ = select_lines(text, grep=args.grep, health=True, limit=0)
+def _metrics(args: argparse.Namespace, prod: Production) -> int:
+    lines, _ = select_lines(prod.text("/metrics"), grep=args.grep, health=True, limit=0)
     for line in lines:
         if not line.startswith("#"):
             print(mask(line))
     return 0
 
 
-def _state(args: argparse.Namespace) -> int:
-    data = json.loads(_fetch_one(args.container, "/api/v1/stats/metrics"))
+def _state(args: argparse.Namespace, prod: Production) -> int:
+    data = json.loads(prod.text("/api/v1/stats/metrics"))
     if args.keys:
         data = {key: data.get(key) for key in args.keys.split(",")}
     print(mask(json.dumps(data, indent=1, sort_keys=True)))
     return 0
 
 
-def _probe(args: argparse.Namespace) -> int:
-    source = probe_source(args.probe)
-    env = _env(args.env)
-    started = time.monotonic()
-    output, code = portainer_client(args.container, args.timeout).run(
-        ["python", "-c", source, *args.args], env=env
-    )
-    print(mask(output), end="" if output.endswith("\n") else "\n")
-    print(f"[exit {code} after {time.monotonic() - started:.1f}s]")
-    return code or 0
-
-
-def _digest(args: argparse.Namespace) -> int:
-    """One report of the window: the log (one request), the metrics and
-    the plugin record (one exec)."""
+def _digest(args: argparse.Namespace, prod: Production) -> int:
+    """One report of the window: the log (one Komodo request), the metrics
+    and the plugin record."""
     now = time.time()
-    log_text = portainer_client(args.container).logs(
-        int(now - args.since), timestamps=True
-    )
-    fetched = _fetch(args.container, "/metrics", "/api/v1/stats/plugins")
-    metrics_text = fetched["/metrics"]
-    if not isinstance(metrics_text, str):
-        raise SystemExit(mask(f"/metrics failed: {metrics_text.get('error')}"))
-    record = fetched["/api/v1/stats/plugins"]
+    log = prod.komodo.log()
+    start = now - args.since
+    begins = reach(log, start)
+    record = prod.text_or_none("/api/v1/stats/plugins")
     data = build_digest(
-        container=args.container,
+        container=CONTAINER,
         since_s=args.since,
-        log_text=log_text,
-        metrics_text=metrics_text,
+        log_text="".join(f"{line}\n" for line in since(log, start)),
+        metrics_text=prod.text("/metrics"),
         # An older image has no record: the section says so
-        plugin_record=json.loads(record) if isinstance(record, str) else None,
+        plugin_record=json.loads(record) if record is not None else None,
         now=now,
+        log_s=None if begins is None else now - begins,
     )
     print(mask(json.dumps(data, indent=1) if args.json else render_digest(data)))
     return 0
@@ -349,25 +369,26 @@ def stream_answers(
     return answers
 
 
-def _check(args: argparse.Namespace) -> int:
-    """The post-deploy check: ten Portainer requests (the containers, the
-    container's start and the log since the start through one client,
-    ``/metrics`` in one exec of three requests through another, each client
-    with its endpoint lookup and container listing first) and four stream
-    requests; read-only beyond those."""
-    client = portainer_client(args.container)
-    checks = [container_check(client.containers(), args.container)]
-    started_at = parse_time(client.inspect()["State"]["StartedAt"])
+def _check(args: argparse.Namespace, prod: Production) -> int:
+    """The post-deploy check: two Komodo requests (the container's state,
+    then its log after the stream requests), four stream requests and
+    ``/metrics`` through the public URL; read-only beyond those."""
+    state = prod.komodo.inspect()
+    checks = [container_check(state)]
+    started_at = parse_time(state.started_at)
     ids = [*(sid for sid, _ in ANIME_IDS), MOVIE_ID]
+    base = args.base or f"{prod.base_url}/api/v1/stremio"
     answers = stream_answers(
-        args.base.rstrip("/"), ids, insecure=args.insecure, timeout=args.timeout
+        base.rstrip("/"), ids, insecure=args.insecure, timeout=args.timeout
     )
     time.sleep(_SETTLE_S)
-    records = parse_records(client.logs(int(started_at) - 1, timestamps=True))
-    checks += startup_checks(records, started_at)
+    log = prod.komodo.log()
+    # A restart keeps the log: only the lines of this start count
+    records = parse_records("\n".join(since(log, started_at - 1)))
+    cut_at = _stamp(log.lines[0]) if log.cut else None
+    checks += startup_checks(records, started_at, cut_at=cut_at)
     checks += stream_checks(answers, records, deadline_s=args.deadline)
-    metrics = _fetch(args.container, "/metrics")["/metrics"]
-    checks.append(network_check(metrics if isinstance(metrics, str) else None))
+    checks.append(network_check(prod.text_or_none("/metrics")))
     print(mask(render_checks(checks)))
     return 1 if failed(checks) else 0
 
@@ -377,15 +398,21 @@ def parser() -> argparse.ArgumentParser:
         description=(__doc__ or "").splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    commands = root.add_subparsers(dest="command", required=True)
-    commands.add_parser("ps", help="containers and their state").set_defaults(
-        handler=_ps
+    root.add_argument(
+        "--insecure",
+        action="store_true",
+        help="skip the TLS checks of Komodo and the public URL (a local CA)",
     )
-    stats = commands.add_parser("stats", help="CPU, memory, processes, network")
+    commands = root.add_subparsers(dest="command", required=True)
+    commands.add_parser(
+        "ps", help="the container: status, health, start, restarts"
+    ).set_defaults(handler=_ps)
+    commands.add_parser(
+        "stats", help="the app process's CPU, memory and open files"
+    ).set_defaults(handler=_stats)
     logs = commands.add_parser("logs", help="log lines")
     metrics = commands.add_parser("metrics", help="the app's Prometheus metrics")
     state = commands.add_parser("state", help="breakers, pools, event-loop lag")
-    probe = commands.add_parser("probe", help="run a Python probe in the container")
     digest = commands.add_parser(
         "digest", help="one report: requests, plugins, hosters, breakers, errors"
     )
@@ -393,23 +420,20 @@ def parser() -> argparse.ArgumentParser:
         "check", help="the post-deploy check: one table, exit 1 on a failure"
     )
     for sub, handler in (
-        (stats, _stats),
         (logs, _logs),
         (metrics, _metrics),
         (state, _state),
-        (probe, _probe),
         (digest, _digest),
         (check, _check),
     ):
-        sub.add_argument("-c", "--container", default="scavengarr")
         sub.set_defaults(handler=handler)
     logs.add_argument("--since", type=seconds, default=seconds("15m"))
     digest.add_argument("--since", type=seconds, default=seconds("24h"))
     digest.add_argument("--json", action="store_true", help="the data as JSON")
     check.add_argument(
-        "--base", required=True, help="the public addon URL up to /api/v1/stremio"
+        "--base",
+        help="the public addon URL up to /api/v1/stremio (PRODCTL_BASE_URL's)",
     )
-    check.add_argument("--insecure", action="store_true", help="skip TLS checks")
     check.add_argument(
         "--timeout", type=float, default=120, help="per stream request (seconds)"
     )
@@ -429,20 +453,19 @@ def parser() -> argparse.ArgumentParser:
     for sub in (logs, metrics):
         sub.add_argument("--grep", help="regex (case-insensitive)")
     state.add_argument("--keys", help="comma-separated top-level keys")
-    probe.add_argument("--timeout", type=float, default=300)
-    probe.add_argument("--env", action="append", default=[], help="KEY=VALUE")
-    probe.add_argument("probe", help="a name in scripts/probes/ or a file")
-    probe.add_argument("args", nargs=argparse.REMAINDER)
     return root
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    found = credentials()
     try:
-        return args.handler(args)
-    except httpx.HTTPError as exc:
-        # httpx names the whole URL, Portainer's address and port included
-        print(mask(f"{args.command} failed: {exc}"), file=sys.stderr)
+        return args.handler(args, Production(found, insecure=args.insecure))
+    except (httpx.HTTPError, KomodoError) as exc:
+        # httpx names the whole URL: neither Komodo's host nor production's
+        # shows
+        message = mask(f"{args.command} failed: {exc}", found.url, found.base_url)
+        print(message, file=sys.stderr)
         return 1
 
 

@@ -4,11 +4,12 @@ Usage (from a machine on the server's network):
     poetry run python scripts/playback_under_load.py --base https://app.example.lan \\
         --stream-id ID [--insecure] [--label idle] [--segments 20] \\
         [--search movie/tt0816692 ...] [--search-at 10] [--tail 30] \\
-        [--portainer [--container scavengarr]] [--out FILE]
+        [--cpu] [--out FILE]
 
 The player: the stream's master playlist through the proxy
 (``/api/v1/stremio/proxy/<ID>/scavengarr.m3u8``; ``ID`` is a stored stream
-link's id, ``prodctl.py probe links`` lists the recent ones), the variant
+link's id, the container probe ``scripts/probes/links.py`` lists the recent
+ones), the variant
 with the highest bandwidth, then ``--segments`` media segments from the
 start of the title, one after another at the playback pace: the next fetch
 starts when the previous segment's duration (``EXTINF``) has passed since
@@ -30,9 +31,9 @@ Server view: ``/metrics`` before and after the run gives the run's deltas:
 the proxy's segment stage (``hls_proxy``, kind ``segment``: until the
 answer starts), the read-ahead's fetches and outcomes, the plugin
 searches' durations and the event-loop lag; the quantiles are histogram
-bucket bounds (upper bounds). ``--portainer`` samples the container's CPU
-(``docker stats`` through Portainer about every 5 s; ``PORTAINER_URL`` and
-``PORTAINER_API_KEY`` as in ``portainer.py``). Prints two Markdown rows (the
+bucket bounds (upper bounds). ``--cpu`` samples the app process's CPU
+(``process_cpu_seconds_total`` of a ``/metrics`` read about every 5 s: the
+Python process, without Chromium's processes). Prints two Markdown rows (the
 player's view, the server's view; ``docs/how-to/performance-measurement.md``);
 ``--out`` appends them. Prints no URLs.
 """
@@ -49,8 +50,6 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import httpx
-from portainer import Portainer
-from prodctl import cpu_cores, portainer_client
 from stremio_playcheck import _PLAYER_UA
 
 MASTER = "scavengarr.m3u8"
@@ -65,6 +64,9 @@ SERVER_HEADER = (
     "|---|---|---|---|---|---|"
 )
 _STATS_EVERY = 5.0
+# The app process's CPU seconds since its start (prometheus_client's process
+# collector: the Python process, not its Chromium children)
+_CPU = "process_cpu_seconds_total"
 _SEARCH_TIMEOUT = 180.0
 _STREAM_INF = re.compile(r"#EXT-X-STREAM-INF:(?P<attrs>.*)")
 _BANDWIDTH = re.compile(r"BANDWIDTH=(\d+)")
@@ -343,17 +345,25 @@ async def search(
         busy.clear()
 
 
-async def sample_cpu(container: Portainer, run: Run, stop: asyncio.Event) -> None:
-    """One ``docker stats`` sample about every ``_STATS_EVERY`` seconds."""
+async def sample_cpu(
+    client: httpx.AsyncClient, base: str, run: Run, stop: asyncio.Event
+) -> None:
+    """The app process's CPU cores in use between two ``/metrics`` reads,
+    one about every ``_STATS_EVERY`` seconds. A failed read leaves the
+    interval to the next one; a restart (the counter falls) starts anew."""
+    previous: tuple[float, float] | None = None
     while not stop.is_set():
         try:
-            sample = await asyncio.to_thread(container.stats)
+            resp = await client.get(f"{base}/metrics")
         except httpx.HTTPError as exc:
-            print(f"  stats: {type(exc).__name__}", file=sys.stderr)
+            print(f"  metrics: {type(exc).__name__}", file=sys.stderr)
         else:
-            cores = cpu_cores(sample)[0]
-            if cores is not None:
-                run.cpu.append(cores)
+            total = parse_metrics(resp.text).get(_CPU) if resp.is_success else None
+            now = time.monotonic()
+            if total is not None:
+                if previous is not None and total >= previous[1] and now > previous[0]:
+                    run.cpu.append((total - previous[1]) / (now - previous[0]))
+                previous = (now, total)
         try:
             await asyncio.wait_for(stop.wait(), _STATS_EVERY)
         except TimeoutError:
@@ -427,7 +437,6 @@ async def _metrics(client: httpx.AsyncClient, base: str) -> dict[str, float]:
 async def run_once(args: argparse.Namespace) -> Run:
     base = args.base.rstrip("/")
     run = Run(args.label or ("search" if args.search else "idle"))
-    container = portainer_client(args.container, timeout=30) if args.portainer else None
     async with httpx.AsyncClient(
         verify=not args.insecure,
         timeout=httpx.Timeout(60.0, connect=10.0),
@@ -438,7 +447,9 @@ async def run_once(args: argparse.Namespace) -> Run:
         busy = asyncio.Event()
         stop = asyncio.Event()
         sampler = (
-            asyncio.create_task(sample_cpu(container, run, stop)) if container else None
+            asyncio.create_task(sample_cpu(client, base, run, stop))
+            if args.cpu
+            else None
         )
         try:
             await asyncio.gather(
@@ -468,7 +479,7 @@ def _parser() -> argparse.ArgumentParser:
         "--insecure", action="store_true", help="skip TLS verification (a local CA)"
     )
     parser.add_argument(
-        "--stream-id", required=True, help="a stored stream link's id (probe links)"
+        "--stream-id", required=True, help="a stored stream link's id (links probe)"
     )
     parser.add_argument("--label", help="the rows' label; default idle or search")
     parser.add_argument(
@@ -490,9 +501,8 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds to play on after the last answer",
     )
     parser.add_argument(
-        "--portainer", action="store_true", help="sample the container's CPU"
+        "--cpu", action="store_true", help="sample the app process's CPU (/metrics)"
     )
-    parser.add_argument("--container", default="scavengarr")
     parser.add_argument(
         "--out", type=Path, help="append the rows to this Markdown file"
     )

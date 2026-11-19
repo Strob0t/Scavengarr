@@ -49,10 +49,14 @@ class ImdbFallbackClient:
     # ------------------------------------------------------------------
 
     async def _fetch_suggest(self, imdb_id: str) -> dict[str, Any] | None:
-        """Fetch and cache the IMDB Suggest API response for *imdb_id*."""
+        """Fetch and cache the suggest entry whose id is *imdb_id*.
+
+        An answer without that id names other titles (the first film in
+        the answer for its sequel): no entry, nothing cached. A cached entry of
+        another id (written before this rule) counts as none."""
         cache_key = f"imdb:suggest:{imdb_id}"
         cached = await self._cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and cached.get("id") == imdb_id:
             return cached
 
         url = _SUGGEST_URL.format(imdb_id=imdb_id)
@@ -74,10 +78,12 @@ class ImdbFallbackClient:
                 await self._cache.set(cache_key, entry, ttl=_TTL_TITLE)
                 return entry
 
-        # Fallback: use the first entry
-        entry = entries[0]
-        await self._cache.set(cache_key, entry, ttl=_TTL_TITLE)
-        return entry
+        log.warning(
+            "imdb_suggest_id_missing",
+            imdb_id=imdb_id,
+            entries=len(entries),
+        )
+        return None
 
     async def _fetch_wikidata_title(
         self, imdb_id: str, language: str = "de"

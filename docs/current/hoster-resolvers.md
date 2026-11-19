@@ -17,7 +17,7 @@ The stealth browser's captures and challenges are in [Browser and challenges](br
 ### Resolvers
 
 Every resolver implements `HosterResolverPort` (`domain/ports/hoster_resolver.py`): a `name` and `resolve(url)`, which returns a `ResolvedStream` or `None` for a link that is offline, deleted or cannot be extracted.
-`ResolvedStream` (`domain/entities/stremio.py`) holds the video URL, the headers its CDN needs, whether it is HLS, the quality, the size, whether its CDN binds it to the resolving address, and the time of its resolution (`resolved_at`).
+`ResolvedStream` (`domain/entities/stremio.py`) holds the video URL, the headers its CDN needs, whether it is HLS, the quality, the size, whether its CDN binds it to the resolving address or resets a connection that stops reading, and the time of its resolution (`resolved_at`).
 
 A resolver answers in one of three ways:
 
@@ -69,10 +69,13 @@ flowchart TD
     judged -- no --> none["No stream from this link"]
     judged -- yes --> hls{"An HLS stream?"}
     hls -- yes --> hls_proxy["The HLS proxy serves it"]
-    hls -- no --> binding{"What does its CDN bind the URL to?"}
-    binding -- "the resolving address" --> file_proxy["/proxy/{id}/file passes the bytes through"]
-    binding -- "the player's headers" --> per_player["/play resolves it again per player"]
-    binding -- nothing --> play["/play redirects to it"]
+    hls -- no --> address{"Does its CDN play the URL only for the resolving address?"}
+    address -- yes --> file_proxy["/proxy/{id}/file passes the bytes through"]
+    address -- no --> idle{"Does its CDN reset an idle connection?"}
+    idle -- yes --> file_proxy
+    idle -- no --> headers{"Does its CDN bind the player's headers?"}
+    headers -- yes --> per_player["/play resolves it again per player"]
+    headers -- no --> play["/play redirects to it"]
 ```
 
 ### Playback headers
@@ -104,6 +107,11 @@ The registry offers both (`bound_headers(url)`, `resolve_for_client(url, hoster,
 A CDN that plays the URL only for the address that resolved it answers another address with an error: `error_wrong_ip` from DoodStream's, 403 from MixDrop's and Vinovo's, 410 from fsst's.
 Such a resolver sets `address_bound = True`, the registry stamps it on the stream where it classifies the answer, and the Stremio addon sends the file through `/api/v1/stremio/proxy/{stream_id}/file`, a byte-range pass-through, instead of `/play`.
 
+A CDN that resets a connection that stops reading cuts a file whenever the player pauses with a full buffer, since Stremio's streaming server does not reconnect inside a response.
+veevcdn reset 10 of 10 connections left idle for 30 to 300 s, and a new `Range` request at the offset answered 206.
+Such a resolver sets `idle_reset = True`, the registry stamps it like `address_bound`, and the file goes through the same file proxy, which resumes it after every interruption with the headers it was resolved with ([0017](../target/decisions/0017-idle-reset-files-resumed.md)).
+VEEV is client-bound and idle-reset: its streams play through the file proxy, which sends the browser values it resolved with, and `/play` resolves per player only for a link stored before the flag, whose player's resolution carries the flag and goes to the file proxy.
+
 ### CDN checks
 
 Two checks look at a resolved URL before a player gets it, both in `infrastructure/hoster_resolvers/_verify.py`.
@@ -126,11 +134,19 @@ Two checks look at a resolved URL before a player gets it, both in `infrastructu
 - A resolver without a check of its own sets `needs_playback_check = True` (SuperVideo), and the registry checks its streams with `stremio.verify_streams` off too.
 - The content-type probe's answers are not checked again, since the probe has looked at the response already.
 
-A playable stream keeps what the checked bytes tell, without another request (`PlaybackCheck`):
+A resolver whose signed HLS links expire while their playlists still answer sets `probes_hls_segment = True` (StreamUp, filmpalast's hoster), and with `stremio.verify_hls_segment`, the default, the registry asks for one segment of each of its HLS streams (`segment_is_gone()`):
 
-- The largest `RESOLUTION` of an HLS master playlist's variants gives the quality class (`quality_from_resolution()`, by width or height, whichever gives the higher class), when the resolver named no quality or a lower one.
+- It walks the master playlist to its first variant and the media playlist to its first segment, then sends a `Range: bytes=0-4095` `GET` with the playback headers and the player's `User-Agent`. A segment URL without a query takes the stream URL's, as the HLS proxy sends it.
+- The walk, with its one segment, ends within 4 s. The probes of the candidates run in parallel, each inside its own resolution.
+- A 403, 404 or 410 on the segment makes the stream unplayable: it logs `hoster_resolve_unplayable` and `hls_segment_probe_gone` (with the CDN's domain and the status), counts against the circuit breaker, and is not cached, since the next lookup may get a fresh link.
+- Every other result keeps the stream (fail open): a timeout, a network error (`hls_segment_probe_unread`), another status, a playlist that is gone or lists no segment, or a bound that ends the walk.
+
+A playable stream keeps what the checked bytes tell (`PlaybackCheck`):
+
+- The largest `RESOLUTION` of an HLS master playlist's variants gives the quality class (`quality_from_resolution()`, by width or height, whichever gives the higher class; a width within 5 % of the class's counts, so a cropped 1248x520 is 720p), when the resolver named no quality or a lower one.
+- An MP4 file's largest enabled video track gives the quality class the same way (`infrastructure/hoster_resolvers/_mp4.py`): the size comes from its track header (`tkhd`, version 0 or 1, enabled flag set) and counts only when the track's handler (`hdlr`) is `vide`, so a cover, a text or a disabled track never sets it. A file whose `moov` box comes first names it in the 4 KiB. A file whose `moov` follows the media data (`mdat`) gets one more `Range` read of 4 KiB where the `moov` starts, with the same headers and within the check's 6 s, and only from a file that starts with `ftyp` and whose total the first answer named. That read failing (`playback_check_moov_unread` with the CDN's domain and the error) or answered from elsewhere than the `moov` (a status other than 206, a `Content-Range` from another byte) measures nothing, and the stream stays playable.
 - The total of a `Content-Range: bytes a-b/total` answer becomes `ResolvedStream.size_bytes`.
-- A variant past the 4 KiB, a media playlist and an answer without `Content-Range` measure nothing.
+- A variant past the 4 KiB, a video track past the 4 KiB of its `moov` (after an audio track with its tables) and a media playlist measure nothing; an answer without a `Content-Range` total measures no size and no `moov` behind the media data.
 
 The Stremio answer shows and ranks the streams by them ([Ranking](stremio-addon.md#ranking)).
 
@@ -312,6 +328,7 @@ Its strategies, in order:
 
 - The resolve bound is `http.timeout_resolve_seconds` ([HTTP](../reference/configuration.md#http)).
 - The playback check of every stream is `stremio.verify_streams` ([Stremio](../reference/configuration.md#stremio)).
+- The segment probe of StreamUp's HLS streams is `stremio.verify_hls_segment` (same section).
 - The snapshot lives in the cache backend ([Cache](../reference/configuration.md#cache)).
 - The stealth browser's settings are in [Browser and challenges](browser-and-challenges.md#configuration).
 

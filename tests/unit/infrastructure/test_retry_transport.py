@@ -9,7 +9,10 @@ import pytest
 import respx
 
 from scavengarr.infrastructure.common.rate_limiter import DomainRateLimiter
-from scavengarr.infrastructure.common.retry_transport import RetryTransport
+from scavengarr.infrastructure.common.retry_transport import (
+    LINK_CHECK,
+    RetryTransport,
+)
 
 
 def _make_response(
@@ -336,3 +339,79 @@ class TestChallengeAnswer:
         assert resp.status_code == 200
         assert route.call_count == 2
         m.sleep.assert_awaited_once_with(2.0)
+
+
+def _link_check(url: str = "https://example.com/file") -> httpx.Request:
+    """A link validation's request: HEAD with the ``LINK_CHECK`` extension."""
+    return httpx.Request("HEAD", url, extensions={LINK_CHECK: True})
+
+
+class TestLinkCheck:
+    """A link check asks whether a URL answers: the transport sends it once,
+    and a 429 or 503 comes back at once instead of being waited out (a
+    serienfans search's validation waited out filecrypt's ``Retry-After`` of
+    up to 10 s and answered after 632.7 s). Every other request, a plugin's
+    own search among them, still waits it out and retries."""
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("status", [429, 503])
+    async def test_a_link_check_is_not_retried(self, status: int) -> None:
+        router = respx.MockRouter(assert_all_called=False)
+        route = router.head("https://example.com/file").respond(
+            status, headers={"Retry-After": "10"}
+        )
+        transport = _respx_transport(router)
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_link_check())
+
+        assert resp.status_code == status
+        assert route.call_count == 1
+        m.sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_other_requests_on_the_same_transport_still_retry(self) -> None:
+        router = respx.MockRouter(assert_all_called=False)
+        router.head("https://example.com/file").respond(
+            429, headers={"Retry-After": "10"}
+        )
+        route = router.get("https://example.com/page").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "10"}),
+                httpx.Response(200, text="ok"),
+            ]
+        )
+        transport = _respx_transport(router)
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+            m.sleep = AsyncMock()
+            await transport.handle_async_request(_link_check())
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        m.sleep.assert_awaited_once_with(10.0)
+
+    @pytest.mark.asyncio()
+    async def test_a_link_check_passes_the_rate_limit(self) -> None:
+        """A link check neither waits for the site's token nor feeds its
+        answer back: other requests' 429s held the shared filecrypt bucket at
+        its 0.5 rps floor, and a validation's 130 links waited for it one by
+        one. Other requests still take their token and report back."""
+        router = respx.MockRouter(assert_all_called=False)
+        router.head("https://example.com/file").respond(429)
+        router.get("https://example.com/page").respond(200)
+        transport = _respx_transport(router)
+        limiter = transport._rate_limiter
+        with (
+            patch.object(limiter, "acquire", AsyncMock()) as acquire,
+            patch.object(limiter, "record_throttle") as throttle,
+            patch.object(limiter, "record_success") as success,
+        ):
+            await transport.handle_async_request(_link_check())
+            acquire.assert_not_awaited()
+            throttle.assert_not_called()
+
+            await transport.handle_async_request(_make_request())
+
+        acquire.assert_awaited_once()
+        success.assert_called_once()

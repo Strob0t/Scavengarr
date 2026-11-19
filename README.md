@@ -75,7 +75,7 @@ flowchart LR
 2. **Plugin search.** All matching plugins search in parallel. Each plugin runs its own multi-stage scrape (search page → detail pages → links); the answer goes out at its budget with what is known, a plugin still searching then finishes in the background for the next request, and sites that keep failing are skipped for a while by a circuit breaker.
 3. **Filtering and validation.** Results are matched against the title (sequels and spin-offs are filtered out), narrowed to the requested episode, and their links are checked in parallel.
 4. **Stremio: resolution.** Hoster embed links are turned into direct video URLs by 63 hoster resolvers. Every resolved URL gets a playback check (does it actually return video?). One working stream per hoster and language is returned, ranked by language, quality and hoster.
-5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha or download quota are resolved only when you grab the release.
+5. **Torznab: packaging.** For the Arr apps, results become Torznab XML with validated links; links behind a captcha, a download quota or a slow link-out are resolved only when you grab the release.
 
 ---
 
@@ -86,9 +86,9 @@ flowchart LR
 - Streams for movies and series episodes, looked up by IMDb (`tt…`), TMDB (`tmdb:…`) or Kitsu (`kitsu:…`, Stremio's anime catalogs) id
 - Anime episodes numbered the way the sites count them: an IMDb episode of a long-running anime carries its Kitsu number, and the anime plugins place it on the site's own season pages
 - Hoster links resolved to direct video URLs (MP4 and HLS), with the playback headers Stremio needs
-- HLS streams play through Scavengarr's HLS proxy (the CDN's headers on every request, three segments fetched ahead for CDNs that throttle a connection), and files that a hoster binds to the resolving address through its file proxy
+- HLS streams play through Scavengarr's HLS proxy (the CDN's headers on every request, three segments fetched ahead for CDNs that throttle a connection), and through its file proxy the files that a hoster binds to the resolving address or whose CDN resets a paused connection; the file proxy goes on from the next byte after every interruption of the CDN (a reset while the player pauses, an early end, a stall)
 - Playback check: resolved URLs that return an error page or no video are dropped before you see them
-- Ranking by language (German audio first by default), quality and hoster reliability; quality and size are read from the stream itself (an HLS playlist's resolution, a file's length) where the site names none
+- Ranking by language (German audio first by default), quality and hoster reliability; the quality is read from the stream itself (an HLS playlist's or an MP4 file's resolution) and replaces the site's label, the size (a file's length) is read only where the site names none
 - One working stream per hoster and language (dub and sub both stay): if a hoster's best link is dead, its next link is tried
 - Autoplay of the next episode (Stremio's binge watching keeps the language of the current stream)
 - Answer budget: a request answers 30 s after its start with what is known, earlier at 5 resolved streams or when everything is done, at the latest after 60 s (defaults), so Stremio always gets an answer in time; plugins still searching then finish in the background, and the next request for the title gets their streams
@@ -100,7 +100,7 @@ flowchart LR
 - Category filtering (movies, TV) and pagination
 - Validated download links: dead links are removed before the results reach your apps
 - JDownloader `.crawljob` bundles for releases with several links
-- Grab-time resolution: links behind a captcha or a download quota are resolved only when a release is grabbed
+- Grab-time resolution: links behind a captcha, a download quota or a site's slow link-outs are resolved only when a release is grabbed
 
 ### Sources and hosters
 
@@ -132,6 +132,7 @@ flowchart LR
 - Single container with Docker Compose from a published `linux/amd64` and `linux/arm64` image; optional Byparr, Redis and Tempo profiles
 - Health, readiness and metrics endpoints (`/api/v1/healthz`; `/api/v1/readyz`, which the image's healthcheck asks and which answers 503 once the network is lost for 5 min; Prometheus `/metrics` with a Grafana dashboard and alert rules in `docker/`, `/api/v1/stats/metrics`)
 - Structured logs (JSON or console) with per-plugin context
+- A stall monitor outside the event loop: a stalled loop logs its stack and every thread's traceback, and an exit switch, off by default, lets the restart policy restart a stalled process; a request stuck past 5 min (Stremio) or 10 min (Torznab) is logged with its stack
 - A record per plugin and day, kept 180 days: searches, results, timeouts, challenges and site checks (`/api/v1/stats/plugins`), the evidence for keeping or dropping a plugin whose site died
 - Graceful shutdown that drains in-flight requests, bounded at 5 s so a playback still open cannot hold the stop past Docker's grace
 - Configuration via YAML, environment variables or CLI flags
@@ -245,6 +246,7 @@ The settings you are most likely to change:
 | `stremio.answer_budget_seconds` | `SCAVENGARR_STREMIO_ANSWER_BUDGET_SECONDS` | unset (the plugin timeout) | When a Stremio request stops waiting for the search, counted from the request start; the plugins still searching finish in the background |
 | `stremio.stream_deadline_seconds` | `SCAVENGARR_STREMIO_STREAM_DEADLINE_SECONDS` | `60` | Latest answer of a Stremio request; it goes out earlier at `stremio.resolve_target_count` (5) streams or when everything is done |
 | `stremio.verify_streams` | `SCAVENGARR_STREMIO_VERIFY_STREAMS` | `true` | Drop resolved streams that do not return video |
+| `stremio.verify_hls_segment` | `SCAVENGARR_STREMIO_VERIFY_HLS_SEGMENT` | `true` | Drop StreamUp HLS streams whose first segment answers 403, 404 or 410 |
 | `stremio.language_scores` | `SCAVENGARR_STREMIO_LANGUAGE_SCORES` (JSON) | `de` > `de-sub` > `en-sub` > `en` | Language ranking of streams |
 | `stremio.max_results_per_plugin` | `SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN` | `100` (`data/config.yaml`: `50`) | Results per plugin and Stremio request |
 | `tmdb_api_key` | `SCAVENGARR_TMDB_API_KEY` | unset | TMDB key for catalogs and title lookup (IMDb/Wikidata fallback without it) |

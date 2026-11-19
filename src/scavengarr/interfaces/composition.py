@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from functools import partial
 from typing import cast
 from urllib.parse import urlparse
@@ -111,9 +111,16 @@ from scavengarr.infrastructure.stremio.stream_converter import convert_search_re
 from scavengarr.infrastructure.stremio.stream_sorter import StreamSorter
 from scavengarr.infrastructure.stremio.title_matcher import filter_by_title_match
 from scavengarr.infrastructure.telemetry import create_telemetry, monitor_loop_lag
+from scavengarr.infrastructure.telemetry.background import stop_task, watch_task
 from scavengarr.infrastructure.telemetry.collectors import (
     BreakerCollector,
     BrowserPagesCollector,
+)
+from scavengarr.infrastructure.telemetry.watchdog import (
+    BUDGET_FILE,
+    ExitBudget,
+    StallMonitor,
+    watch_requests,
 )
 from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
 from scavengarr.infrastructure.tmdb.imdb_fallback import ImdbFallbackClient
@@ -486,7 +493,11 @@ def _wire_scoring(state: AppState, config: AppConfig) -> asyncio.Task[None]:
         config=config.scoring,
     )
     log.info("scoring_scheduler_started")
-    return asyncio.create_task(state.scoring_scheduler.run_forever())
+    return watch_task(
+        asyncio.create_task(state.scoring_scheduler.run_forever()),
+        "scoring",
+        state.telemetry,
+    )
 
 
 def _plugin_health(state: AppState, config: AppConfig) -> PluginHealthMonitor | None:
@@ -527,7 +538,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state.telemetry = create_telemetry(config.telemetry.tracing_endpoint)
     if state.telemetry.tracing is not None:
         log.info("tracing_enabled", endpoint=config.telemetry.tracing_endpoint)
-    state._loop_lag_task = asyncio.create_task(monitor_loop_lag(state.telemetry))
+    # The stall monitor's thread reads the loop lag monitor's tick; it starts
+    # once the app is ready (OpenSpec add-stall-watchdog, design D1 and D9)
+    state.stall_monitor = StallMonitor(
+        stall_seconds=config.watchdog.stall_seconds,
+        exit_on_stall=config.watchdog.exit_on_stall,
+        budget=ExitBudget(config.cache.directory / BUDGET_FILE),
+    )
+    state._loop_lag_task = watch_task(
+        asyncio.create_task(
+            monitor_loop_lag(state.telemetry, heartbeat=state.stall_monitor.beat)
+        ),
+        "loop_lag",
+        state.telemetry,
+    )
 
     # 0b) Auto-tune concurrency based on detected container/host resources
     if config.stremio.auto_tune_all:
@@ -610,8 +634,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ceiling = config.stremio.max_concurrent_playwright
     pages = PageGate(limit=min(ceiling, 2), telemetry=state.telemetry)
     state.telemetry.registry.register(BrowserPagesCollector(pages))
-    state._page_budget_task = asyncio.create_task(
-        PageBudget(pages, ceiling=ceiling).run_forever()
+    state._page_budget_task = watch_task(
+        asyncio.create_task(PageBudget(pages, ceiling=ceiling).run_forever()),
+        "page_budget",
+        state.telemetry,
     )
     state.stealth_pool = StealthPool(
         browser_pool=state.shared_browser_pool,
@@ -643,6 +669,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         http_client=state.http_client,
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
+        verify_hls_segment=config.stremio.verify_hls_segment,
         circuit_breaker=hoster_breaker,
         telemetry=state.telemetry,
         pages=pages,
@@ -703,7 +730,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #      snapshot in the cache, written every 30 s when it changed and at
     #      shutdown, restored before the first request
     state.hoster_state_store = HosterStateStore(
-        state.cache, state.hoster_resolver_registry, breakers
+        state.cache,
+        state.hoster_resolver_registry,
+        breakers,
+        telemetry=state.telemetry,
     )
     await state.hoster_state_store.restore()
     state.hoster_state_store.start()
@@ -711,14 +741,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 14b) The plugins' long-term record (searches, results, timeouts, checks
     #      and unreachable marks per day, 180 days): in the cache, written
     #      every minute when it changed and at shutdown, restored at the start
-    state.plugin_history = PluginHistory(state.cache)
+    state.plugin_history = PluginHistory(state.cache, telemetry=state.telemetry)
     await state.plugin_history.restore()
     state.plugin_history.start()
 
     # 14c) Plugin health: Stremio searches skip sites that do not answer
     state.plugin_health = _plugin_health(state, config)
     state._plugin_health_task = (
-        asyncio.create_task(state.plugin_health.run_forever())
+        watch_task(
+            asyncio.create_task(state.plugin_health.run_forever()),
+            "plugin_health",
+            state.telemetry,
+        )
         if state.plugin_health is not None
         else None
     )
@@ -778,24 +812,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("app_startup_complete", **build_identity())
     # The browser and the stealth context with the kept state, so the first
     # capture (a breaker trial after a restart) does not pay for the launch
-    state._browser_warmup_task = asyncio.create_task(state.stealth_pool.warmup())
+    state._browser_warmup_task = watch_task(
+        asyncio.create_task(state.stealth_pool.warmup()),
+        "browser_warmup",
+        state.telemetry,
+    )
     # Filemoon's captcha pass: one capture once it has gone, so a request
     # after a quiet half hour finds one (row 106)
-    state._pass_keeper_task = asyncio.create_task(
-        PassKeeper(
-            state.hoster_resolver_registry,
-            clearance_store,
-            pages,
-            telemetry=state.telemetry,
-        ).run_forever()
+    state._pass_keeper_task = watch_task(
+        asyncio.create_task(
+            PassKeeper(
+                state.hoster_resolver_registry,
+                clearance_store,
+                pages,
+                telemetry=state.telemetry,
+            ).run_forever()
+        ),
+        "pass_keeper",
+        state.telemetry,
     )
     # The anime id list, so an IMDb anime request right after the start has
     # its episode's Kitsu number (the shutdown ends a load still running)
     anime_id_lists.load_in_background()
+    # The requests in flight past their route class's limit, every 30 s
+    state._request_watch_task = watch_task(
+        asyncio.create_task(watch_requests(state.graceful_shutdown, state.telemetry)),
+        "request_watch",
+        state.telemetry,
+    )
+    # After the startup, whose plugin loading holds the loop, and next to the
+    # try: no exit path leaves the thread running
+    state.stall_monitor.start()
 
     try:
         yield
     finally:
+        # First: the shutdown's bounded waits hold the loop as no stall, and
+        # its requests cut at the drain are no stuck requests
+        state.stall_monitor.stop()
+        await stop_task(state._request_watch_task)
         # Drain in-flight requests before tearing down resources
         await state.graceful_shutdown.wait_for_drain(timeout=10.0)
 
@@ -808,9 +863,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.stremio_links.aclose()
         await state.hls_read_ahead.aclose()
         # The pass keeper's capture, before the registry ends its completions
-        state._pass_keeper_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._pass_keeper_task
+        await stop_task(state._pass_keeper_task)
         await state.hoster_resolver_registry.aclose()
         # The last resolutions and breaker changes, before the cache closes
         await state.hoster_state_store.aclose()
@@ -819,27 +872,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await state.plugin_history.aclose()
 
         if state._scoring_task is not None:
-            state._scoring_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await state._scoring_task
+            await stop_task(state._scoring_task)
             log.info("scoring_scheduler_stopped")
 
         if state._plugin_health_task is not None:
-            state._plugin_health_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await state._plugin_health_task
+            await stop_task(state._plugin_health_task)
 
-        state._loop_lag_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._loop_lag_task
+        await stop_task(state._loop_lag_task)
 
-        state._page_budget_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._page_budget_task
+        await stop_task(state._page_budget_task)
 
-        state._browser_warmup_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await state._browser_warmup_task
+        await stop_task(state._browser_warmup_task)
 
         # Stealth context first: it lives on the shared browser.
         if state.stealth_pool is not None:

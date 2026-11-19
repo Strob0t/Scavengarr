@@ -402,8 +402,8 @@ class TestLinks:
                 "url_video",
                 "SD",
             ),
-            # The Filmliste's HD file without a marker: 720 lines or more
-            ("https://cdn-storage.br.de/a/x_HD.mp4", "url_video_hd", "720p"),
+            # The Filmliste's HD file without a marker: HD, no height
+            ("https://cdn-storage.br.de/a/x_HD.mp4", "url_video_hd", "HD"),
             ("https://cdn-storage.br.de/a/x_X.mp4", "url_video", None),
             (
                 "https://srf-vod-amd.akamaized.net/a/index-f5-v1-a1.m3u8",

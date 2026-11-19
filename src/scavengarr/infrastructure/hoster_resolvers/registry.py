@@ -37,6 +37,7 @@ from scavengarr.infrastructure.hoster_resolvers._domain import extract_domain
 from scavengarr.infrastructure.hoster_resolvers._verify import (
     PlaybackCheck,
     check_playable,
+    segment_is_gone,
 )
 from scavengarr.infrastructure.hoster_resolvers.challenge_cooldown import (
     ChallengeCooldown,
@@ -193,6 +194,7 @@ class HosterResolverRegistry:
         circuit_breaker: PluginCircuitBreaker | None = None,
         telemetry: TelemetryPort = NO_TELEMETRY,
         pages: PageGate | None = None,
+        verify_hls_segment: bool = False,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
@@ -204,6 +206,9 @@ class HosterResolverRegistry:
         self._pages = pages
         # Resolver results must also pass check_playable (needs http_client)
         self._verify_playback = verify_playback and http_client is not None
+        # HLS streams of resolvers with ``probes_hls_segment`` must also
+        # answer their first segment (segment_is_gone)
+        self._verify_hls_segment = verify_hls_segment and http_client is not None
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         self._redirect_cache: dict[str, _CacheEntry[str]] = {}
         # Resolutions and redirects cached (export_state's content)
@@ -602,12 +607,17 @@ class HosterResolverRegistry:
         for a warm one, and the attempt's wall time since *started*
         (``time.monotonic()``) as ``duration_ms``.
 
+        A resolver whose signed HLS links expire (``probes_hls_segment``)
+        has its stream's first segment asked for with *verify_hls_segment*;
+        a gone segment (403, 404, 410) is unplayable like a failed check, but
+        not cached: the next lookup may get a fresh link.
         A failed playback check (timeout, reset) says nothing about the
         stream, like a failed resolver request: neither cached nor counted.
         A resolver without a check of its own (``needs_playback_check``) is
         checked with *verify_playback* off too. A resolver whose CDN binds
-        the URL to the resolving address (``address_bound``) marks its
-        stream, so the player fetches it through Scavengarr.
+        the URL to the resolving address (``address_bound``) or resets a
+        connection that stops reading (``idle_reset``) marks its stream, so
+        the player fetches it through Scavengarr.
         """
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
@@ -628,6 +638,17 @@ class HosterResolverRegistry:
                 self._record(resolver, failed=True)
                 return "unplayable", None, True
             result = _measured(result, check)
+        if (
+            self._verify_hls_segment
+            and self._http_client is not None
+            and result.is_hls
+            and getattr(resolver, "probes_hls_segment", False) is True
+            and await segment_is_gone(self._http_client, result)
+        ):
+            log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
+            self._record(resolver, failed=True)
+            # A signed link that expired may be fresh at the next lookup
+            return "unplayable", None, False
         log.info(
             "hoster_resolve_success",
             hoster=hoster_name,
@@ -638,6 +659,8 @@ class HosterResolverRegistry:
         self._record(resolver, failed=False)
         if getattr(resolver, "address_bound", False) is True:
             result = replace(result, address_bound=True)
+        if getattr(resolver, "idle_reset", False) is True:
+            result = replace(result, idle_reset=True)
         return "stream", _stamped(result), True
 
     def _record(self, resolver: HosterResolverPort, *, failed: bool) -> None:

@@ -11,6 +11,7 @@ from scavengarr.domain.entities.stremio import (
     StreamQuality,
 )
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.stremio.release_parser import ParsedQuality
 from scavengarr.infrastructure.stremio.stream_converter import (
     _extract_hoster,
     _normalize_hoster_name,
@@ -46,7 +47,7 @@ def _mock_parsers():
     with (
         patch(
             "scavengarr.infrastructure.stremio.stream_converter.parse_quality",
-            return_value=_MOCK_QUALITY,
+            return_value=ParsedQuality(_MOCK_QUALITY),
         ) as mock_q,
         patch(
             "scavengarr.infrastructure.stremio.stream_converter.parse_language",
@@ -186,7 +187,21 @@ class TestConvertSearchResults:
         )
         streams = convert_search_results([result])
         assert streams[0].quality == _MOCK_QUALITY
+        assert not streams[0].quality_guessed
         assert streams[0].language == _MOCK_LANGUAGE
+
+    @pytest.mark.parametrize(
+        "links", [[{"url": "https://voe.sx/e/abc", "quality": "HD"}], None]
+    )
+    def test_guessed_quality_marked(
+        self, _mock_parsers: tuple, links: list[dict[str, str]] | None
+    ) -> None:
+        mock_q, _mock_l = _mock_parsers
+        mock_q.return_value = ParsedQuality(StreamQuality.HD_720P, guessed=True)
+        result = _make_result(download_links=links)
+        streams = convert_search_results([result])
+        assert streams[0].quality == StreamQuality.HD_720P
+        assert streams[0].quality_guessed
 
     def test_parse_quality_called_with_correct_args(
         self,

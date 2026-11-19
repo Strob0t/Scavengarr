@@ -1,7 +1,11 @@
 """VidHide segments behind the HLS proxy: which headers the CDN wants.
 
-    probe vidhide_segments [--hoster vidhide] [--stream-id ID | --imdb ID]
-                           [--no-fresh]
+    poetry run python scripts/probes/vidhide_segments.py [ARGS]
+    docker exec -i scavengarr python - [ARGS] < scripts/probes/vidhide_segments.py
+
+with ARGS ``[--hoster vidhide] [--stream-id ID | --imdb ID] [--no-fresh]``:
+in the dev container with ``--imdb`` and the dev server's ``PORT``, in the
+production container by the maintainer.
 
 The newest stored HLS link of the hoster (the Redis backend: the probe scans
 the stream link keys; ``--stream-id`` names one, ``--imdb`` asks the app

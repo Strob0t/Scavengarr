@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from typing import get_args
 
 import pytest
 from structlog.testing import capture_logs
 
-from scavengarr.domain.ports.telemetry import TelemetryPort
+from scavengarr.domain.ports.telemetry import ROUTE_CLASSES, RouteClass, TelemetryPort
 from scavengarr.infrastructure.telemetry import (
     LAG_WINDOW,
     Telemetry,
@@ -183,6 +184,22 @@ class TestCountAndRecord:
         assert _sample(t, "scavengarr_network_ok", check="dns") == 1.0
         assert _sample(t, "scavengarr_network_ok", check="cache") == 0.0
 
+    def test_stuck_requests_count_by_route_class_from_zero(self) -> None:
+        """A zero series per route class: ``increase()`` sees the first."""
+        t = Telemetry()
+        t.record_request_stuck("torznab")
+
+        assert {
+            route: _sample(t, "scavengarr_requests_stuck_total", route=route)
+            for route in get_args(RouteClass)
+        } == {
+            "stremio_stream": 0.0,
+            "stremio_catalog": 0.0,
+            "torznab": 1.0,
+            "other": 0.0,
+        }
+        assert sorted(ROUTE_CLASSES) == sorted(get_args(RouteClass))
+
 
 class TestRender:
     def test_text_format_with_standard_families(self) -> None:
@@ -321,3 +338,28 @@ class TestEventLoopLag:
                 await task
 
         assert any(e["event"] == "event_loop_lag" for e in logs)
+
+    async def test_every_tick_stamps_the_heartbeat(self) -> None:
+        """The stall monitor's sign of the loop's life (design D1)."""
+        t = Telemetry()
+        beats: list[None] = []
+        task = asyncio.create_task(
+            monitor_loop_lag(t, interval=0.01, heartbeat=lambda: beats.append(None))
+        )
+        await eventually(lambda: len(beats) >= 3)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert len(beats) == _loop_samples(t)
+
+    def test_the_histogram_reaches_the_stall_range(self) -> None:
+        """A stall the loop survived stays in the scraped metrics: 40 s
+        lands in the bucket of 60 s, not in the one of 30 s."""
+        t = Telemetry()
+        t.record_loop_lag(40_000.0)
+
+        bucket = "scavengarr_event_loop_lag_seconds_bucket"
+        assert _sample(t, bucket, le="60.0") == 1
+        assert _sample(t, bucket, le="30.0") == 0
+        assert _sample(t, bucket, le="120.0") == 1

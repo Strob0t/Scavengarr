@@ -14,17 +14,18 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Mapping
-from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
 from scavengarr.domain.ports.cache import CachePort
+from scavengarr.domain.ports.telemetry import NO_TELEMETRY, TelemetryPort
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.hoster_resolvers.registry import (
     HosterResolverRegistry,
 )
+from scavengarr.infrastructure.telemetry.background import stop_task, watch_task
 
 log = structlog.get_logger(__name__)
 
@@ -60,11 +61,13 @@ class HosterStateStore:
         breakers: Mapping[str, PluginCircuitBreaker],
         *,
         interval_s: float = 30.0,
+        telemetry: TelemetryPort = NO_TELEMETRY,
     ) -> None:
         self._cache = cache
         self._registry = registry
         self._breakers = breakers
         self._interval_s = interval_s
+        self._telemetry = telemetry
         # The changes the stored snapshot holds
         self._saved = self._changes()
         self._task: asyncio.Task[None] | None = None
@@ -143,7 +146,11 @@ class HosterStateStore:
 
     def start(self) -> None:
         """Write the snapshot every *interval_s* while the state changes."""
-        self._task = asyncio.create_task(self._run(), name="hoster_state_store")
+        self._task = watch_task(
+            asyncio.create_task(self._run(), name="hoster_state_store"),
+            "hoster_state_store",
+            self._telemetry,
+        )
 
     async def _run(self) -> None:
         while True:
@@ -154,9 +161,7 @@ class HosterStateStore:
         """Stop the periodic writes and write the last changes (shutdown,
         before the cache backend closes)."""
         if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+            await stop_task(self._task)
             self._task = None
         await self._save()
 
