@@ -40,8 +40,25 @@ def trak(
     return box(b"trak", tkhd(width, height, version=version, flags=flags) + mdia)
 
 
-def moov(*tracks: bytes) -> bytes:
-    return box(b"moov", box(b"mvhd", bytes(100)) + b"".join(tracks))
+def mvhd(duration_s: float = 0.0, timescale: int = 1000, *, version: int = 0) -> bytes:
+    """A movie header: version and flags, times, timescale and duration,
+    then the rate, volume, matrix and the next track id."""
+    times = bytes(8) if version == 0 else bytes(16)
+    duration = b""
+    if version == 0:
+        duration = struct.pack(">II", timescale, int(duration_s * timescale))
+    else:
+        duration = struct.pack(">I", timescale) + struct.pack(
+            ">Q", int(duration_s * timescale)
+        )
+    return box(b"mvhd", bytes([version]) + bytes(3) + times + duration + bytes(80))
+
+
+def moov(*tracks: bytes, duration_s: float = 0.0, timescale: int = 1000) -> bytes:
+    return box(
+        b"moov",
+        mvhd(duration_s, timescale) + b"".join(tracks),
+    )
 
 
 FTYP = box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2avc1mp41")

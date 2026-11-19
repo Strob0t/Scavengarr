@@ -116,7 +116,7 @@ Unprefixed `CACHE_*` variables are not read.
 | `SCAVENGARR_HTTP_RATE_LIMIT_MIN_RPS` (or `SCAVENGARR_RATE_LIMIT_MIN_RPS`) | float | `0.5` | Minimum adaptive rate per domain (rps). |
 | `SCAVENGARR_HTTP_RATE_LIMIT_RPS` (or `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND`) | float | `5.0` | Default per-domain rate limit (requests/second). 0 = unlimited. |
 | `SCAVENGARR_HTTP_RETRY_BACKOFF_BASE` | float | `1.0` | Base delay in seconds for exponential backoff. |
-| `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries. |
+| `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS` | int | `3` | Max retry attempts on 429/502/503/504 responses. 0 = no retries. |
 | `SCAVENGARR_HTTP_RETRY_MAX_BACKOFF` | float | `30.0` | Maximum backoff delay in seconds. |
 | `SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS` | float | `15.0` | HTTP timeout for hoster resolution requests. |
 | `SCAVENGARR_HTTP_TIMEOUT_SECONDS` | float | `30.0` | Default HTTP timeout in seconds (used by scraping engine). |
@@ -165,9 +165,11 @@ Unprefixed `CACHE_*` variables are not read.
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLAYWRIGHT` | int | `5` | Upper bound for parallel Playwright plugin searches on the shared browser. The actual concurrency is dynamically capped at min(pw_plugin_count, this value) per request. |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS` | int | `5` | Max parallel plugin searches for stream resolution. |
 | `SCAVENGARR_STREMIO_MAX_CONCURRENT_PLUGINS_AUTO` | bool | `true` | Auto-tune max_concurrent_plugins based on host CPU and memory. When enabled, overrides max_concurrent_plugins at startup. |
+| `SCAVENGARR_STREMIO_MAX_LINKS_PER_HOSTER` | int | `2` | Max links per hoster and language in the probe window. A site that lists dozens of links for the same hosters would otherwise fill max_probe_count with them and push out another site's link (a 1080p stream without a quality label ranks below a flood of 720p guesses). 0 keeps every link. |
 | `SCAVENGARR_STREMIO_MAX_PLUGINS_SCORED` | int | `5` | Top-N plugins when scoring is active. |
 | `SCAVENGARR_STREMIO_MAX_PROBE_COUNT` | int | `50` | Max streams to resolve at stream time (top-ranked first). |
 | `SCAVENGARR_STREMIO_MAX_RESULTS_PER_PLUGIN` | int | `100` | Max results per plugin in Stremio search. Limits pagination to reduce response time. Torznab uses the plugin default (1000). |
+| `SCAVENGARR_STREMIO_MIN_STREAM_SIZE_MB` | int | `20` | A resolved file smaller than this is dropped as a stub (an ad or a placeholder, not the film): the playback check measured its size. A playlist has no size, the content-type probe is not checked, and 0 turns the floor off. |
 | `SCAVENGARR_STREMIO_PLUGIN_HEALTH_INTERVAL_SECONDS` | float | `1800.0` | How often every Stremio plugin's site is checked (HEAD on its domains); searches skip plugins whose site did not answer (twice, 30 s apart), and those are checked again 5 minutes later, then at doubling pauses up to this interval. 0 turns the check off. |
 | `SCAVENGARR_STREMIO_PLUGIN_TIMEOUT_SECONDS` | float | `30.0` | Each plugin search, from the moment the plugin holds a concurrency slot; also the request's answer budget unless answer_budget_seconds is set. A plugin past it is cut; its earlier results stay. |
 | `SCAVENGARR_STREMIO_PREFERRED_AUDIO_LANGUAGE` | str (optional) | (unset) | Language code (e.g. "de") of the audio track an HLS master playlist with several audio renditions starts with: the proxy marks that rendition DEFAULT=YES and the others DEFAULT=NO. Unset, the playlist's own default is kept. |

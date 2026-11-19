@@ -13,7 +13,7 @@ from structlog.testing import capture_logs
 
 from scavengarr.application.stremio.plugin_search import PluginSearchRunner
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import EpisodeRef, ExternalIds
 from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
 from scavengarr.domain.ports.browser_fetcher import PageClaim, page_claim
 from scavengarr.domain.ports.plugin_history import (
@@ -23,6 +23,7 @@ from scavengarr.domain.ports.plugin_history import (
 )
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
 from scavengarr.infrastructure.concurrency import ConcurrencyPool
+from scavengarr.infrastructure.plugins.constants import search_external_ids
 from scavengarr.infrastructure.telemetry import Telemetry
 
 _max_results_var: ContextVar[int | None] = ContextVar(
@@ -98,6 +99,29 @@ class TestSearchWithFallback:
         results = await _search(_runner(registry), ["a", "b"], ["movie"])
 
         assert {r.download_link for r in results} == {"https://a/1", "https://b/1"}
+
+    async def test_external_ids_reach_the_plugin_and_reset(self) -> None:
+        plugin = _plugin([_sr("https://a/1")])
+        seen: list[ExternalIds | None] = []
+
+        async def _search(*_args: object, **_kwargs: object) -> list[SearchResult]:
+            seen.append(search_external_ids.get(None))
+            return [_sr("https://a/1")]
+
+        plugin.search = AsyncMock(side_effect=_search)
+        runner = _runner(_registry({"a": plugin}), external_ids_var=search_external_ids)
+        external = ExternalIds(
+            imdb_id="tt1396484", tmdb_id=346364, content_type="movie"
+        )
+
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                ["a"], ["q"], 2000, budget=budget, external_ids=external
+            )
+
+        assert seen == [external]
+        assert search_external_ids.get(None) is None
 
     async def test_fallback_query_adds_only_unseen_links(self) -> None:
         plugin = _plugin([])
@@ -777,6 +801,110 @@ class TestMirrorStandby:
         assert [r.download_link for r in results] == ["https://dood/1"]
         assert plugins["streamcloud"].search.await_count == 1
 
+    async def test_a_slow_member_hands_over_at_the_standby_timeout(self) -> None:
+        """A member that would spend the plugin timeout hands over early:
+        the standby's results still fit the request's answer."""
+        plugins = self._plugins()
+        plugins["hdfilme"].search = _answer_after(1.0, [_sr("https://hdfilme/1")])
+        plugins["streamcloud"].search = AsyncMock(
+            return_value=[_sr("https://streamcloud/1")]
+        )
+        runner = _runner(
+            _registry(plugins),
+            mirror_groups=self._GROUPS,
+            mirror_standby_timeout=0.05,
+        )
+
+        results = await _search(runner, list(plugins), ["q"])
+
+        assert [r.download_link for r in results] == ["https://streamcloud/1"]
+        assert results[0].metadata["standby_for"] == "hdfilme"
+        assert plugins["streamcloud"].search.await_count == 1
+
+    async def test_the_standby_gets_only_the_time_left_of_the_answer(self) -> None:
+        """The standby stands in for this answer: it is cut at the request's
+        answer budget instead of getting another full plugin timeout."""
+        cancelled = asyncio.Event()
+        plugins = self._plugins()
+        plugins["hdfilme"].search = _answer_after(1.0, [])
+        plugins["streamcloud"].search = _endless_search(cancelled)
+        breaker = PluginCircuitBreaker(failure_threshold=1)
+        runner = _runner(
+            _registry(plugins),
+            mirror_groups=self._GROUPS,
+            mirror_standby_timeout=0.02,
+            circuit_breaker=breaker,
+        )
+        started = time.monotonic()
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+
+        async with pool.request() as budget:
+            await runner.search_with_fallback(
+                list(plugins),
+                ["q"],
+                2000,
+                budget=budget,
+                budget_ends=started + 0.08,
+            )
+
+        assert cancelled.is_set()
+        assert time.monotonic() - started < 1.0
+        # Cut by the budget, the standby did not have its whole timeout:
+        # the cut is no failure of its site
+        assert breaker.allow("streamcloud:2000")
+
+    async def test_the_standby_slot_wait_counts_against_the_budget(self) -> None:
+        """The standby's clock runs from the answer budget, not from the
+        moment it gets a slot: a queue wait past the budget skips it."""
+        plugins = self._plugins()
+        plugins["hdfilme"].search = _answer_after(1.0, [])
+        plugins["streamcloud"].search = AsyncMock(
+            return_value=[_sr("https://streamcloud/1")]
+        )
+        runner = _runner(
+            _registry(plugins),
+            mirror_groups=self._GROUPS,
+            mirror_standby_timeout=0.01,
+        )
+        started = time.monotonic()
+
+        with capture_logs() as logs:
+            await runner.search_with_fallback(
+                list(plugins),
+                ["q"],
+                2000,
+                budget=_DelayedBudget(0.04),
+                budget_ends=started + 0.06,
+            )
+
+        assert plugins["streamcloud"].search.await_count == 0
+        assert any(
+            event["event"] == "stremio_mirror_standby_budget_spent" for event in logs
+        )
+
+    async def test_a_standby_past_the_answer_budget_is_not_run(self) -> None:
+        """Once the answer budget has passed the standby could only fill the
+        cache; its slot belongs to the next request."""
+        plugins = self._plugins()
+        plugins["hdfilme"].search = AsyncMock(return_value=[])
+        runner = _runner(_registry(plugins), mirror_groups=self._GROUPS)
+        pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
+
+        with capture_logs() as logs:
+            async with pool.request() as budget:
+                await runner.search_with_fallback(
+                    list(plugins),
+                    ["q"],
+                    2000,
+                    budget=budget,
+                    budget_ends=time.monotonic() - 1,
+                )
+
+        assert plugins["streamcloud"].search.await_count == 0
+        assert any(
+            event["event"] == "stremio_mirror_standby_budget_spent" for event in logs
+        )
+
     async def test_the_standby_has_a_closed_breaker(self) -> None:
         plugins = self._plugins("hdfilme")
         breaker = PluginCircuitBreaker(failure_threshold=1, cooldown_seconds=60)
@@ -975,6 +1103,32 @@ def _endless_search(cancelled: asyncio.Event) -> AsyncMock:
         return []
 
     return AsyncMock(side_effect=_search)
+
+
+class _DelayedSlot:
+    """A concurrency slot that takes *delay* seconds to acquire."""
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+
+    async def __aenter__(self) -> None:
+        await asyncio.sleep(self._delay)
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+class _DelayedBudget:
+    """A request budget whose slot acquisition always waits *delay* seconds."""
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+
+    def acquire_httpx(self) -> _DelayedSlot:
+        return _DelayedSlot(self._delay)
+
+    def acquire_pw(self) -> _DelayedSlot:
+        return _DelayedSlot(self._delay)
 
 
 class TestOnResults:

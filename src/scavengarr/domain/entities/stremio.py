@@ -89,6 +89,9 @@ class RankedStream:
     link_label: str = ""
     label_season: int | None = None
     label_episode: int | None = None
+    # The measured video bitrate (bits per second), from the playback check.
+    # It breaks a quality and language tie.
+    bitrate_bps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,12 @@ class TitleMatchInfo:
     by a shorter form of them is partial (``is_partial_title``), whichever
     language group's reference scores it; without them the reference's
     own titles judge it.
+
+    *search_titles* are additional titles worth searching with, besides
+    the localized ``title``: the original-language title in Latin script
+    (an anime's romaji title, e.g. ``"JoJo no Kimyou na Bouken"``), which
+    German sites often index instead of the English name. Every title is
+    also in ``alt_titles``, so the matcher accepts either form.
     """
 
     title: str
@@ -145,8 +154,25 @@ class TitleMatchInfo:
     alt_titles: list[str] = field(default_factory=list)
     content_type: StremioContentType | None = None
     imdb_id: str | None = None
+    tmdb_id: int | None = None
     animation: bool | None = None
     series_titles: tuple[str, ...] = ()
+    search_titles: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ExternalIds:
+    """The request's external ids, for plugins that can use them directly.
+
+    A site whose own search misses a short or localized title (hdfilme and
+    streamcloud do for ``Es``/``It``) can open the title's page by its TMDB
+    id instead. *content_type* names the page kind when the caller knows it;
+    a plugin falls back to its own category/season when it is ``None``.
+    """
+
+    imdb_id: str | None = None
+    tmdb_id: int | None = None
+    content_type: StremioContentType | None = None
 
 
 @dataclass(frozen=True)
@@ -316,6 +342,12 @@ class ResolvedStream:
     # The CDN resets a connection that stops reading (the resolver's
     # ``idle_reset``): the file goes through Scavengarr, which resumes it
     idle_reset: bool = False
+    # The stream's bitrate in bits per second, measured by the playback
+    # check (an HLS master's variant, or an MP4's size over its duration)
+    bitrate_bps: int | None = None
+    # The hoster the resolution ended at (the resolver's canonical name):
+    # a shortener that redirects to voe is voe, whatever the site labelled it
+    hoster: str = ""
 
 
 @dataclass(frozen=True)

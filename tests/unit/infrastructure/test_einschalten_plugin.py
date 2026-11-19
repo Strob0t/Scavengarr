@@ -13,7 +13,9 @@ import httpx
 import pytest
 import respx
 
-from scavengarr.domain.plugins.base import PluginUnreachableError
+from scavengarr.domain.entities.stremio import ExternalIds
+from scavengarr.domain.plugins.base import PluginUnreachableError, SearchResult
+from scavengarr.infrastructure.plugins.constants import search_external_ids
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "einschalten.py"
 
@@ -525,6 +527,51 @@ class TestPluginSearch:
         assert results[0].category == 2000
         assert results[1].title == "The Batman (2022)"
         assert results[1].download_link == "https://doodstream.com/e/abc123"
+
+    @pytest.mark.asyncio
+    async def test_direct_tmdb_lookup_skips_the_text_search(self, plugin, mock_client):
+        async def mock_get(url, **kwargs):
+            url_str = str(url)
+            if "/api/movies/268/watch" in url_str:
+                return _make_json_response(WATCH_BATMAN)
+            if "/api/movies/268" in url_str:
+                return _make_json_response(DETAIL_BATMAN)
+            return _make_json_response({})
+
+        mock_client.get = AsyncMock(side_effect=mock_get)
+        plugin._api_search = AsyncMock()
+
+        token = search_external_ids.set(ExternalIds(tmdb_id=268, content_type="movie"))
+        try:
+            results = await plugin.search("Batman")
+        finally:
+            search_external_ids.reset(token)
+
+        assert [result.title for result in results] == ["Batman (1989)"]
+        assert results[0].download_link == "https://vide0.net/e/qq9v0x1hed9r"
+        plugin._api_search.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_direct_tmdb_lookup_falls_back_to_text_search(
+        self, plugin, mock_client
+    ):
+        mock_client.get = AsyncMock(return_value=_make_json_response({}))
+        plugin._api_search = AsyncMock(return_value=[{"id": 1, "title": "Batman"}])
+        expected = SearchResult(
+            title="Batman (1989)",
+            download_link="https://vide0.net/e/qq9v0x1hed9r",
+            category=2000,
+        )
+        plugin._process_entry = AsyncMock(return_value=expected)
+
+        token = search_external_ids.set(ExternalIds(tmdb_id=268, content_type="movie"))
+        try:
+            results = await plugin.search("Batman")
+        finally:
+            search_external_ids.reset(token)
+
+        assert results == [expected]
+        plugin._api_search.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_search_empty_query(self, plugin):

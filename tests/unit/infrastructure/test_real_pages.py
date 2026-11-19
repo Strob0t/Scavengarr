@@ -103,11 +103,6 @@ _DEVIDEOSRC_SITES = [
         "https://streamcloud.download",
         "https://streamcloud.download/23684-oppenheimer-stream-deutsch.html",
     ),
-    (
-        "streamkiste",
-        "https://streamkiste.bid",
-        "https://streamkiste.bid/movie/23684-oppenheimer-stream-kostenlos.html",
-    ),
 ]
 
 
@@ -136,20 +131,40 @@ class TestDevideosrcSites:
 
 
 class TestStreamkiste:
-    """The current theme's markup (span.movie-release, span/strong.average)."""
+    """The 2026-11 Next.js pages (captured 2026-11-17)."""
 
-    _BASE = "https://streamkiste.bid"
+    _BASE = "https://streamkiste.onl"
 
-    def test_search_hit_year_and_genres(self) -> None:
-        hit = _hit(
-            _search_hits("streamkiste", self._BASE, "search-oppenheimer"), "Oppenheimer"
-        )
-        assert hit["year"] == "2023"
-        assert hit["genres"] == ["Drama", "Historie", "Krieg", "Biographie"]
+    def test_search_hit(self) -> None:
+        hits = _search_hits("streamkiste", self._BASE, "search-inception")
+        assert len(hits) == 1
+        hit = _hit(hits, "Inception")
+        assert hit["url"] == self._BASE + "/movie/27205-inception-stream-kostenlos"
+        assert hit["year"] == "2010"
+        assert hit["quality"] == "HD"
 
-    def test_detail_imdb_rating(self) -> None:
-        detail = _detail("streamkiste", self._BASE, "detail-oppenheimer")
-        assert detail.imdb_rating == "8.2"
+    def test_movie_detail(self) -> None:
+        detail = _detail("streamkiste", self._BASE, "detail-inception")
+        assert detail.year == "2010"
+        assert not detail.is_series
+        assert detail.genres == ["Action", "Krimi", "Science Fiction"]
+        assert detail.imdb_rating == "8.8"
+        assert detail.description.startswith("Beim Versuch")
+
+    def test_series_detail(self) -> None:
+        detail = _detail("streamkiste", self._BASE, "detail-dark")
+        assert detail.is_series
+        assert detail.year == "2017"
+        assert detail.genres == ["Drama", "Krimi", "Mystery", "Sci-Fi & Fantasy"]
+        assert detail.imdb_rating == "8.7"
+
+    def test_movie_player(self) -> None:
+        player = devideosrc.find_player(_page("streamkiste", "detail-inception"))
+        assert player == devideosrc.DevideosrcPlayer(kind="movie", imdb_id="tt1375666")
+
+    def test_series_player(self) -> None:
+        player = devideosrc.find_player(_page("streamkiste", "detail-dark"))
+        assert player == devideosrc.DevideosrcPlayer(kind="tv", imdb_id="tt5753856")
 
 
 class TestKinoger:

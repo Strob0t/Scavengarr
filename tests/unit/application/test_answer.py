@@ -13,12 +13,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import structlog
 
-from scavengarr.application.stremio.answer import rank_streams
+from scavengarr.application.stremio.answer import _deduplicate, rank_streams
 from scavengarr.application.use_cases.stremio_stream import StremioStreamUseCase
 from scavengarr.domain.entities.stremio import (
     CachedStreamLink,
     RankedStream,
     ResolvedStream,
+    StreamLanguage,
     StreamQuality,
     TitleMatchInfo,
 )
@@ -344,6 +345,72 @@ class TestMeasuredQuality:
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
         assert [s.name for s in streams] == ["Scavengarr\n1080p"]
+
+    async def test_two_labels_that_resolve_to_one_hoster_are_one_stream(self) -> None:
+        """A shortener whose redirect lands on voe is voe, so it does not
+        answer beside the real voe stream (2026-11-18)."""
+
+        async def _resolve(url: str, hoster: str = "") -> ResolvedStream:
+            return replace(resolved(url), hoster="voe")
+
+        links = [
+            {"url": "https://rb.gy/one", "hoster": "rb", "release": self._PLAIN},
+            {"url": "https://voe.sx/e/voe1", "hoster": "voe", "release": self._PLAIN},
+        ]
+        uc = resolving_use_case(links, _resolve)
+
+        result = await uc.execute(make_request(), base_url="http://localhost:8080")
+
+        assert len(result) == 1
+        assert "VOE" in result[0].description
+
+
+class TestDeduplicate:
+    """One playable stream per hoster, language and episode (2026-11-18)."""
+
+    _LANG = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+
+    def _stream(self, url: str, **kwargs: object) -> RankedStream:
+        return RankedStream(url=url, hoster="voe", language=self._LANG, **kwargs)
+
+    def test_an_echo_does_not_suppress_the_real_stream(self) -> None:
+        ranked = [
+            self._stream("https://voe.sx/e/a"),
+            self._stream("https://voe.sx/e/b"),
+        ]
+        echo = ResolvedStream("https://voe.sx/e/a")
+        real = ResolvedStream("https://cdn.example/b.mp4", headers={"Referer": "x"})
+
+        kept, resolutions = _deduplicate(ranked, {0: echo, 1: real})
+
+        assert [s.url for s in kept] == [s.url for s in ranked]
+        assert resolutions == {0: echo, 1: real}
+
+    def test_a_wrong_season_does_not_remove_the_episode(self) -> None:
+        ranked = [
+            self._stream("https://voe.sx/e/s1", label_season=2, label_episode=1),
+            self._stream("https://voe.sx/e/s2", label_season=1, label_episode=1),
+        ]
+        first = ResolvedStream("https://cdn.example/s1.mp4", headers={"Referer": "x"})
+        second = ResolvedStream("https://cdn.example/s2.mp4", headers={"Referer": "x"})
+
+        kept, resolutions = _deduplicate(ranked, {0: first, 1: second})
+
+        assert len(kept) == 2
+        assert resolutions == {0: first, 1: second}
+
+    def test_one_episode_of_one_hoster_is_one_stream(self) -> None:
+        ranked = [
+            self._stream("https://voe.sx/e/a"),
+            self._stream("https://voe.sx/e/b"),
+        ]
+        first = ResolvedStream("https://cdn.example/a.mp4", headers={"Referer": "x"})
+        second = ResolvedStream("https://cdn.example/b.mp4", headers={"Referer": "x"})
+
+        kept, resolutions = _deduplicate(ranked, {0: first, 1: second})
+
+        assert [s.url for s in kept] == ["https://voe.sx/e/a"]
+        assert resolutions == {0: first}
 
 
 class TestWorkerThreads:

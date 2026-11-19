@@ -3,12 +3,15 @@
 Fans a set of queries out over a set of plugins within the global
 concurrency budget, with per-plugin timeout, circuit breaker, metrics,
 episode filtering and result validation. The request's answer budget cuts
-no plugin: one that returns after it counts as ``late``.
+no plugin: one that returns after it counts as ``late``. A mirror group's
+standby is the exception: it is the extra run for this answer, so it gets
+the time left of the answer budget.
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import (
     Awaitable,
@@ -16,6 +19,7 @@ from collections.abc import (
     Coroutine,
     Generator,
     Iterable,
+    Iterator,
     Mapping,
     Sequence,
 )
@@ -26,7 +30,7 @@ from typing import Any, Protocol
 import structlog
 
 from scavengarr.domain.entities.scoring import PluginScoreSnapshot
-from scavengarr.domain.entities.stremio import EpisodeRef
+from scavengarr.domain.entities.stremio import EpisodeRef, ExternalIds
 from scavengarr.domain.plugins.base import (
     PluginProtocol,
     PluginUnreachableError,
@@ -54,6 +58,10 @@ log = structlog.get_logger(__name__)
 # scored plugin selection; a member without one ranks like a new snapshot
 _MIN_CONFIDENCE = 0.1
 _NEUTRAL_SCORE = 0.5
+# A mirror member with a standby gets this much of the plugin timeout before
+# the standby takes over: hdfilme's generic-title searches can spend the whole
+# timeout scraping, and the standby must still answer within the request.
+_MIRROR_STANDBY_TIMEOUT_S = 12.0
 
 
 class CircuitBreaker(Protocol):
@@ -107,6 +115,24 @@ def _stood_in(results: list[SearchResult], member: str) -> None:
     review 2026-10-12, finding 4)."""
     for result in results:
         result.metadata["standby_for"] = member
+
+
+def _budget_timeout(
+    deadline: float | None, timeout: float | None
+) -> tuple[float | None, bool]:
+    """*deadline*'s time left as a timeout, and whether it has passed.
+
+    Without a *deadline* the caller's *timeout* stays. With one, the time
+    left replaces it — computed after the slot is acquired, since the wait
+    for the slot consumes the answer budget too. The passed flag tells the
+    caller to skip the run.
+    """
+    if deadline is None:
+        return timeout, False
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        return remaining, False
+    return timeout, True
 
 
 def _breaker_key(name: str, category: int | None) -> str:
@@ -180,6 +206,8 @@ class PluginSearchRunner:
         max_results_var: ContextVar[int | None],
         plugin_timeout: float,
         max_results_per_plugin: int,
+        external_ids_var: ContextVar[ExternalIds | None] | None = None,
+        mirror_standby_timeout: float = _MIRROR_STANDBY_TIMEOUT_S,
         telemetry: TelemetryPort = NO_TELEMETRY,
         circuit_breaker: CircuitBreaker | None = None,
         browser_warmup_fn: BrowserWarmupFn | None = None,
@@ -193,7 +221,9 @@ class PluginSearchRunner:
         self._episode_filter_fn = episode_filter_fn
         self._max_results_var = max_results_var
         self._plugin_timeout = plugin_timeout
+        self._mirror_standby_timeout = mirror_standby_timeout
         self._max_results_per_plugin = max_results_per_plugin
+        self._external_ids_var = external_ids_var
         self._telemetry = telemetry
         self._circuit_breaker = circuit_breaker
         self._browser_warmup_fn = browser_warmup_fn
@@ -218,6 +248,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         episode_ref: EpisodeRef | None = None,
+        external_ids: ExternalIds | None = None,
         budget: ConcurrencyBudgetPort,
         budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
@@ -242,7 +273,10 @@ class PluginSearchRunner:
         No plugin is cut for the request's answer: each gets its full
         timeout from the moment it holds a slot, one waiting for a slot when
         the answer budget passes runs when it gets one, and its results
-        reach *on_results* like any other's. *budget_ends*
+        reach *on_results* like any other's. The standby of a mirror group is
+        the exception: it is the extra run for this answer, so it gets the
+        time left of the answer budget and is skipped once that has passed.
+        *budget_ends*
         (``time.monotonic()`` value) only labels the plugins that return
         after it (telemetry outcome ``late``). *on_results* gets each
         plugin's new results of each query as soon as they are there;
@@ -297,6 +331,7 @@ class PluginSearchRunner:
                     season=season,
                     episode=episode,
                     episode_ref=episode_ref,
+                    external_ids=external_ids,
                     budget=budget,
                     budget_ends=budget_ends,
                     on_results=_hand_on,
@@ -387,6 +422,17 @@ class PluginSearchRunner:
             log.info("stremio_mirrors_skipped", chosen=chosen, skipped=skipped)
         return [name for name in plugin_names if keep(name)], standbys
 
+    @contextmanager
+    def _external_ids(self, external_ids: ExternalIds | None) -> Iterator[None]:
+        """Expose *external_ids* to the plugin called inside the block."""
+        var = self._external_ids_var
+        token = var.set(external_ids) if var is not None else None
+        try:
+            yield
+        finally:
+            if var is not None and token is not None:
+                var.reset(token)
+
     async def search_plugins(
         self,
         plugin_names: list[str],
@@ -396,6 +442,7 @@ class PluginSearchRunner:
         season: int | None = None,
         episode: int | None = None,
         episode_ref: EpisodeRef | None = None,
+        external_ids: ExternalIds | None = None,
         budget: ConcurrencyBudgetPort,
         budget_ends: float | None = None,
         on_results: OnResultsFn | None = None,
@@ -411,43 +458,58 @@ class PluginSearchRunner:
         outcome does not count) and how many results the episode filter
         dropped in its runs (the standby's included). A plugin that gives
         nothing (no hits, error, timeout) hands the query to its standby in
-        *standbys* (a mirror of its database).
+        *standbys* (a mirror of its database). The standby is the extra run
+        for this answer: it gets the time left of *budget_ends* (skipped once
+        that has passed) and is not cut for the request's answer otherwise.
         """
 
-        async def _run(name: str) -> _PluginRun:
-            if self._plugins.get_mode(name) == "playwright":
-                slot = budget.acquire_pw()
-            else:
-                slot = budget.acquire_httpx()
-            async with slot:
-                return await self._run_plugin_with_timeout(
-                    name,
-                    query,
-                    category,
-                    season=season,
-                    episode=episode,
-                    episode_ref=episode_ref,
-                    budget_ends=budget_ends,
-                )
+        async def _run(
+            name: str,
+            *,
+            timeout: float | None = None,
+            count_timeout: bool = True,
+            deadline: float | None = None,
+        ) -> _PluginRun:
+            with self._external_ids(external_ids):
+                if self._plugins.get_mode(name) == "playwright":
+                    slot = budget.acquire_pw()
+                else:
+                    slot = budget.acquire_httpx()
+                async with slot:
+                    timeout, budget_spent = _budget_timeout(deadline, timeout)
+                    if budget_spent:
+                        log.info(
+                            "stremio_mirror_standby_budget_spent",
+                            plugin=name,
+                        )
+                        return [], True, 0
+                    return await self._run_plugin_with_timeout(
+                        name,
+                        query,
+                        category,
+                        season=season,
+                        episode=episode,
+                        episode_ref=episode_ref,
+                        budget_ends=budget_ends,
+                        timeout=timeout,
+                        count_timeout=count_timeout,
+                    )
 
         async def _search_one(name: str) -> list[SearchResult]:
-            results, finished, dropped = await _run(name)
             standby = (standbys or {}).get(name)
+            results, finished, dropped = await _run(
+                name,
+                timeout=self._mirror_standby_timeout if standby is not None else None,
+            )
             if standby is not None and not results:
-                results, _, standby_dropped = await _run(standby)
-                dropped += standby_dropped
-                _stood_in(results, name)
-                log.info(
-                    "stremio_mirror_standby",
-                    plugin=name,
-                    standby=standby,
-                    result_count=len(results),
+                results, standby_dropped = await self._run_standby(
+                    name,
+                    standby,
+                    category=category,
+                    budget_ends=budget_ends,
+                    run=_run,
                 )
-                # Two empty answers agree (the title is not there); a
-                # delivering standby outranks the member from now on
-                if results:
-                    self._mirror_misses.add(_breaker_key(name, category))
-                    self._mirror_misses.discard(_breaker_key(standby, category))
+                dropped += standby_dropped
             elif results:
                 # Delivering, with or without a standby behind it
                 self._mirror_misses.discard(_breaker_key(name, category))
@@ -465,6 +527,47 @@ class PluginSearchRunner:
             all_results.extend(results)
         return all_results
 
+    async def _run_standby(
+        self,
+        member: str,
+        standby: str,
+        *,
+        category: int | None,
+        budget_ends: float | None,
+        run: Callable[..., Awaitable[_PluginRun]],
+    ) -> tuple[list[SearchResult], int]:
+        """Run *standby* for *member* within the request's answer budget.
+
+        The standby is the extra run for this answer: it gets the time left
+        of *budget_ends* once its slot is acquired, and is skipped when the
+        budget has passed before or during the wait for that slot; its slot
+        then belongs to the next request. *run* is the fan-out's own runner,
+        so the standby keeps its slot kind, season, episode and external ids.
+        A cut standby did not have its whole timeout, so it counts no circuit
+        breaker failure. Returns its results and the episode filter's drops.
+        """
+        remaining = None if budget_ends is None else budget_ends - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            log.info("stremio_mirror_standby_budget_spent", plugin=standby)
+            return [], 0
+        deadline = (
+            budget_ends if remaining is not None and math.isfinite(remaining) else None
+        )
+        results, _, dropped = await run(standby, deadline=deadline, count_timeout=False)
+        _stood_in(results, member)
+        log.info(
+            "stremio_mirror_standby",
+            plugin=member,
+            standby=standby,
+            result_count=len(results),
+        )
+        # Two empty answers agree (the title is not there); a delivering
+        # standby outranks the member from now on
+        if results:
+            self._mirror_misses.add(_breaker_key(member, category))
+            self._mirror_misses.discard(_breaker_key(standby, category))
+        return results, dropped
+
     async def _run_plugin_with_timeout(
         self,
         name: str,
@@ -475,14 +578,19 @@ class PluginSearchRunner:
         episode: int | None = None,
         episode_ref: EpisodeRef | None = None,
         budget_ends: float | None = None,
+        timeout: float | None = None,
+        count_timeout: bool = True,
     ) -> _PluginRun:
-        """Run a single plugin search with its full timeout, catching errors.
+        """Run a single plugin search with its timeout, catching errors.
 
-        Returns the results, whether the search finished (a timeout or an
-        error leaves the plugin's results missing) and the results the
-        episode filter dropped.
+        *timeout* is the mirror member's shorter standby budget; ``None``
+        keeps the plugin's normal timeout. *count_timeout* is off for a
+        standby cut by the answer budget: it did not have its whole timeout,
+        so a timeout is no failure of its site. Returns the results, whether
+        the search finished (a timeout or an error leaves the plugin's results
+        missing) and the results the episode filter dropped.
         """
-        timeout = self._plugin_timeout
+        effective_timeout = timeout if timeout is not None else self._plugin_timeout
 
         # Circuit breaker: skip plugins that have been failing consistently
         breaker_key = _breaker_key(name, category)
@@ -494,7 +602,9 @@ class PluginSearchRunner:
             return [], True, 0
 
         # The stealth browser serves the plugin's pages by its end
-        claim = page_claim.set(PageClaim("plugin", time.monotonic() + timeout))
+        claim = page_claim.set(
+            PageClaim("plugin", time.monotonic() + effective_timeout)
+        )
         try:
             return await asyncio.wait_for(
                 self._search_single_plugin(
@@ -506,16 +616,18 @@ class PluginSearchRunner:
                     episode_ref=episode_ref,
                     budget_ends=budget_ends,
                 ),
-                timeout=timeout,
+                timeout=effective_timeout,
             )
         except TimeoutError:
             log.warning(
-                "stremio_plugin_timeout", plugin=name, timeout=round(timeout, 2)
+                "stremio_plugin_timeout",
+                plugin=name,
+                timeout=round(effective_timeout, 2),
             )
             self._history.count(name, "timeouts")
             # The plugin had its whole timeout: a dead host must trip the
-            # breaker
-            if self._circuit_breaker is not None:
+            # breaker. A standby cut by the answer budget did not.
+            if count_timeout and self._circuit_breaker is not None:
                 self._circuit_breaker.record_failure(breaker_key)
             return [], False, 0
         finally:

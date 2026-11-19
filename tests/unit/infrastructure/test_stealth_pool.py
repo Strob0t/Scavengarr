@@ -311,6 +311,50 @@ class TestStealthPoolFetchText:
 
         assert events == ["held", "opened", "closed", "released"]
 
+    async def test_sensitive_headers_go_with_the_in_page_fetch_only(self) -> None:
+        """The page gets only the harmless headers; a session token goes with
+        the in-page fetch, which refuses redirects (code review)."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(content_type="application/json")
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/api",
+            timeout=10,
+            headers={"X-XSRF-TOKEN": "abc", "Accept": "application/json"},
+        )
+
+        assert text == '{"result": []}'
+        page.set_extra_http_headers.assert_awaited_once_with(
+            {"Accept": "application/json"}
+        )
+        page.route.assert_not_awaited()
+        script, payload = page.evaluate.await_args.args
+        assert 'redirect: "error"' in script
+        assert payload == {
+            "url": "https://filmfans.org/api",
+            "headers": {"X-XSRF-TOKEN": "abc", "Accept": "application/json"},
+        }
+
+    async def test_a_refused_page_load_is_asked_with_the_headers(self) -> None:
+        """A 401 page load is no challenge: the in-page fetch carries the API
+        header, still refusing a redirect."""
+        shared_pool, _, context = _mock_pool_stack()
+        page = _fetch_page(status=401)
+        context.new_page = AsyncMock(return_value=page)
+
+        text = await StealthPool(browser_pool=shared_pool).fetch_text(
+            "https://filmfans.org/api",
+            timeout=10,
+            headers={"X-XSRF-TOKEN": "abc"},
+        )
+
+        assert text == '{"result": []}'
+        page.set_extra_http_headers.assert_not_awaited()
+        script, payload = page.evaluate.await_args.args
+        assert 'redirect: "error"' in script
+        assert payload["headers"] == {"X-XSRF-TOKEN": "abc"}
+
     async def test_returns_raw_body_for_non_html(self) -> None:
         """JSON is re-fetched in-page: raw text, not Chrome's JSON viewer."""
         shared_pool, _, context = _mock_pool_stack()

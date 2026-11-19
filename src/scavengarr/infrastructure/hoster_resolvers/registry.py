@@ -87,12 +87,14 @@ def _is_playlist_url(url: str) -> bool:
 
 def _measured(stream: ResolvedStream, check: PlaybackCheck) -> ResolvedStream:
     """*stream* with what its playback check read: the resolution's quality
-    when the resolver named none or a lower one, and the file's size."""
+    when the resolver named none or a lower one, the file's size and the
+    stream's bitrate."""
     measured = quality_from_resolution(check.width, check.height)
     return replace(
         stream,
         quality=max(stream.quality, measured),
         size_bytes=check.size_bytes or stream.size_bytes,
+        bitrate_bps=check.bitrate_bps or stream.bitrate_bps,
     )
 
 
@@ -195,6 +197,7 @@ class HosterResolverRegistry:
         telemetry: TelemetryPort = NO_TELEMETRY,
         pages: PageGate | None = None,
         verify_hls_segment: bool = False,
+        min_stream_size: int = 0,
     ) -> None:
         self._resolvers: dict[str, HosterResolverPort] = {}
         self._domain_map: dict[str, HosterResolverPort] = {}
@@ -209,6 +212,8 @@ class HosterResolverRegistry:
         # HLS streams of resolvers with ``probes_hls_segment`` must also
         # answer their first segment (segment_is_gone)
         self._verify_hls_segment = verify_hls_segment and http_client is not None
+        # A resolved MP4 file smaller than this is a stub, not the film
+        self._min_stream_size = min_stream_size
         self._result_cache: dict[str, _CacheEntry[ResolvedStream | None]] = {}
         self._redirect_cache: dict[str, _CacheEntry[str]] = {}
         # Resolutions and redirects cached (export_state's content)
@@ -601,8 +606,9 @@ class HosterResolverRegistry:
         challenge: ResolutionChallenge | None = None,
     ) -> tuple[str, ResolvedStream | None, bool]:
         """Classify a resolver's answer: ``dead`` link, ``unplayable``,
-        ``check_error`` or a ``stream``; the stream only for the last, and
-        whether the outcome may be cached. The success log names the
+        ``too_small`` (a file below the size floor), ``check_error`` or a
+        ``stream``; the stream only for the last, and whether the outcome may
+        be cached. The success log names the
         *challenge* the capture passed on its way (a cold capture), ``None``
         for a warm one, and the attempt's wall time since *started*
         (``time.monotonic()``) as ``duration_ms``.
@@ -622,6 +628,9 @@ class HosterResolverRegistry:
         if result is None:
             log.warning("hoster_resolve_failed", hoster=hoster_name, url=url)
             return "dead", None, True
+        # The resolver's name is the canonical hoster: a link that redirects
+        # from a shortener to voe is voe, however its site labelled it
+        result = replace(result, hoster=resolver.name)
         unchecked = getattr(resolver, "needs_playback_check", False) is True
         if (self._verify_playback or unchecked) and self._http_client is not None:
             try:
@@ -637,6 +646,22 @@ class HosterResolverRegistry:
                 log.warning("hoster_resolve_unplayable", hoster=hoster_name, url=url)
                 self._record(resolver, failed=True)
                 return "unplayable", None, True
+            if (
+                self._min_stream_size
+                and not result.is_hls
+                and not _is_playlist_url(result.video_url)
+                and check.size_bytes is not None
+                and check.size_bytes < self._min_stream_size
+            ):
+                # The link plays, but it is an ad or a placeholder. Not a
+                # resolver failure: the hoster answered, the file is junk
+                log.warning(
+                    "hoster_resolve_too_small",
+                    hoster=hoster_name,
+                    size_bytes=check.size_bytes,
+                    url=url,
+                )
+                return "too_small", None, True
             result = _measured(result, check)
         if (
             self._verify_hls_segment
@@ -1179,7 +1204,8 @@ class HosterResolverRegistry:
                     content_type=content_type,
                 )
                 return ResolvedStream(
-                    video_url=str(resp.url), quality=StreamQuality.UNKNOWN
+                    video_url=str(resp.url),
+                    quality=StreamQuality.UNKNOWN,
                 )
 
             if any(hls in content_type for hls in _HLS_CONTENT_TYPES):

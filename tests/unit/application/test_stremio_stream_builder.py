@@ -12,6 +12,7 @@ from scavengarr.application.stremio.stream_builder import (
     apply_resolution,
     build_cache_link,
     build_stream_from_resolved,
+    cap_links_per_hoster,
     deduplicate_by_hoster,
     format_size,
     format_stream,
@@ -147,6 +148,25 @@ class TestFormatStream:
             url="https://voe.sx/e/abc", hoster="voe", size="700 MB", title="Iron Man"
         )
         assert format_stream(ranked).description == "Iron Man\n700 MB\nVOE"
+
+    def test_bitrate_before_size(self) -> None:
+        ranked = RankedStream(
+            url="https://voe.sx/e/abc",
+            hoster="voe",
+            size="700 MB",
+            title="Iron Man",
+            bitrate_bps=2_244_933,
+        )
+        assert format_stream(ranked).description == "Iron Man\n2.2 Mbps · 700 MB\nVOE"
+
+    def test_a_bitrate_without_language(self) -> None:
+        ranked = RankedStream(
+            url="https://dropload.io/e/abc",
+            hoster="dropload",
+            title="Iron Man",
+            bitrate_bps=8_000_000,
+        )
+        assert format_stream(ranked).description == "Iron Man\n8.0 Mbps\nDROPLOAD"
 
     def test_without_hoster(self) -> None:
         ranked = RankedStream(
@@ -371,6 +391,77 @@ class TestDeduplicateByHoster:
         result = deduplicate_by_hoster(streams)
         assert len(result) == 1
         assert result[0].url == "https://voe.sx/e/0"
+
+
+# ---------------------------------------------------------------------------
+# cap_links_per_hoster
+# ---------------------------------------------------------------------------
+
+
+class TestCapLinksPerHoster:
+    def test_keeps_the_best_links_of_each_hoster(self) -> None:
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", rank_score=100),
+            RankedStream(url="https://voe.sx/e/b", hoster="voe", rank_score=90),
+            RankedStream(url="https://voe.sx/e/c", hoster="voe", rank_score=80),
+            RankedStream(
+                url="https://streamtape.com/v/d", hoster="streamtape", rank_score=70
+            ),
+        ]
+        result = cap_links_per_hoster(streams, 2)
+        assert [s.url for s in result] == [
+            "https://voe.sx/e/a",
+            "https://voe.sx/e/b",
+            "https://streamtape.com/v/d",
+        ]
+
+    def test_keeps_another_hosters_link_in_the_window(self) -> None:
+        """A flood of one hoster must not push the other hoster's link out:
+        hdfilme's unlabelled 1080p de-ranked behind movie4k's 720p guesses
+        and never resolved (2026-11-17)."""
+        flood = [
+            RankedStream(url=f"https://voe.sx/e/{i}", hoster="voe", rank_score=100 - i)
+            for i in range(40)
+        ]
+        other = RankedStream(
+            url="https://dr0pstream.com/e/1080",
+            hoster="dropload",
+            rank_score=0,
+        )
+        result = cap_links_per_hoster([*flood, other], 2)
+        assert result.index(other) == 2
+
+    def test_languages_of_one_hoster_have_their_own_cap(self) -> None:
+        dub = StreamLanguage(code="de", label="German Dub", is_dubbed=True)
+        sub = StreamLanguage(code="de-sub", label="German Sub", is_dubbed=False)
+        streams = [
+            RankedStream(url="https://voe.sx/e/a", hoster="voe", language=dub),
+            RankedStream(url="https://voe.sx/e/b", hoster="voe", language=dub),
+            RankedStream(url="https://voe.sx/e/c", hoster="voe", language=sub),
+            RankedStream(url="https://voe.sx/e/d", hoster="voe", language=sub),
+            RankedStream(url="https://voe.sx/e/e", hoster="voe", language=sub),
+        ]
+        result = cap_links_per_hoster(streams, 1)
+        assert [s.url for s in result] == [
+            "https://voe.sx/e/a",
+            "https://voe.sx/e/c",
+        ]
+
+    def test_zero_keeps_every_link(self) -> None:
+        streams = [
+            RankedStream(url=f"https://voe.sx/e/{i}", hoster="voe") for i in range(5)
+        ]
+        assert cap_links_per_hoster(streams, 0) == streams
+
+    def test_empty_hoster_always_kept(self) -> None:
+        streams = [
+            RankedStream(url="https://a.com/1", hoster=""),
+            RankedStream(url="https://b.com/2", hoster=""),
+        ]
+        assert cap_links_per_hoster(streams, 1) == streams
+
+    def test_empty_list(self) -> None:
+        assert cap_links_per_hoster([], 2) == []
 
 
 # ---------------------------------------------------------------------------
@@ -782,3 +873,16 @@ class TestMeasurements:
         resolved = ResolvedStream(self._VIDEO, size_bytes=1_400_000_000)
 
         assert apply_resolution(ranked, resolved).size == "1.5 GB"
+
+    def test_a_measured_bitrate_replaces_nothing_it_has(self) -> None:
+        ranked = replace(self._RANKED, bitrate_bps=8_000_000)
+        resolved = ResolvedStream(self._VIDEO, bitrate_bps=2_244_933)
+
+        assert apply_resolution(ranked, resolved).bitrate_bps == 2_244_933
+
+    def test_a_bitrate_stays_without_a_measurement(self) -> None:
+        ranked = replace(self._RANKED, bitrate_bps=8_000_000)
+
+        assert apply_resolution(ranked, ResolvedStream(self._VIDEO)).bitrate_bps == (
+            8_000_000
+        )

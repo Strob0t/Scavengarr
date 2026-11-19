@@ -502,7 +502,10 @@ class TestSeriesIdentity:
 
         assert meta is None
         assert infos["de"] == TitleMatchInfo(
-            title="Some Show", content_type="series", series_titles=("Some Show",)
+            title="Some Show",
+            content_type="series",
+            series_titles=("Some Show",),
+            tmdb_id=37854,
         )
         series_meta.lookup.assert_not_awaited()
 

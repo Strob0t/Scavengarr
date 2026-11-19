@@ -4,6 +4,94 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
+## v0.6.1 - 2026-11-19
+
+Plugins: hdfilme and streamcloud follow their 2026-11 layouts and open a title by its TMDB id, streamkiste follows its Next.js front end, and aniworld searches a keyword with an apostrophe. Stremio: a vetted original-language title is searched, HLS segments answer the player's byte range (the desktop app's mpv stalled without it), gateway errors 502 and 504 are retried, the measured bitrate ranks and labels a stream, a site's link flood no longer hides another hoster, and stub files below `stremio.min_stream_size_mb` are dropped. Security: filelock and virtualenv, development tools only, are updated for 27 Dependabot alerts.
+
+### Security: filelock and virtualenv Updated for Their Advisories
+
+- The lock file updates `filelock` 4.0.8 to 4.2.12 and `virtualenv` 21.14.2 to 21.15.9, the fixed versions of 27 Dependabot alerts (6 high: virtualenv activation scripts and console launchers, filelock's ReadWriteLock). Both are indirect development dependencies through `pre-commit`; the production image installs only the main group (`poetry install --only main`) and never carried them. `virtualenv` now pulls `distlib` 0.4.3 and `packaging` 26.3.
+
+### Fixed: streamkiste Follows the 2026-11 Next.js Front End
+
+- streamkiste moved to `streamkiste.onl`: the old DLE mirrors redirect there or are dead, and the site serves a Next.js search at `GET /suche?q=` that caps the hit list on one page. The plugin searches that page and parses its `div.grid a.cv` cards (`div.cv-t` title or the `title` attribute, `div.cv-m` year or "Serie", `span.qual b` badges, `span.tag-serie` marks a series); the 2026-10 DLE parsers and their tests are removed.
+- Detail pages: `og:type` names the kind (`video.tv_show`), `og:description` is the site's SEO blurb, and the body carries the year (`span.sk-det-jahr`), genres (`div.sk-det-genres a`), rating (`span.sk-stern`) and the plot (`div.sk-det-trama`), which the parser prefers. The devideosrc player (`/movie/tt…`, `/serial/tt…`) names the kind as well, so link resolution is unchanged.
+- Domains: `streamkiste.onl` only. `streamkiste.bid` is a 301 to it, and `.taxi`, `.tv`, `.sx`, `.al` and `.city` are dead or parked since 2026-11, so all of them are gone.
+- Tests: `test_streamkiste_plugin.py` (a CV card, the zero-hit page, duplicate cards, the title fallback, a series card, Open Graph and page-body metadata, one search page) and `test_real_pages.py` against pages captured from the new site.
+
+### Fixed: HLS Segments Answer the Player's Byte Range
+
+- The desktop Stremio app's player plays HLS in mpv and requests every segment with `Range: bytes=0-`. The proxy answered `200` with a chunked body and no `Content-Length`, so the player never learned a segment's size: mpv re-requested segment after segment (measured: 5-7 requests per segment, each answered within a second) and playback stalled with broken frames, while a player that sends no range played the same source fine.
+- Segments now take the route direct files already took: the player's `Range` and `If-Range` reach the CDN (`Accept-Encoding: identity` keeps the offsets valid) and its status and headers (`Content-Length`, `Content-Range`, `Accept-Ranges`) go back out, so a `bytes=0-` request is answered `206` with the segment's span. A `bytes=0-` request is still served from the read-ahead cache, now as a `206` with `Content-Range`; any other range goes to the CDN, whose byte offsets decide. A `416` passes through, as it does for a file, and an encoded body — handed out decoded — declares neither the encoded length nor its span.
+- Docs: `stremio-addon.md` (the segment rules, the fetches ahead).
+- Tests: `test_hls_proxy.py` (a ranged segment reaches the CDN with `Range`/`If-Range` and comes back 206 with its span; a framed body keeps its `Content-Length`; a chunked one declares none; an encoded one neither length nor span; a 416 passes through), `test_hls_read_ahead.py` (`bytes=0-` answered from the fetch ahead as a range; a partial range left to the CDN), `test_stremio_endpoint.py` (the endpoint answers `206` with `Content-Range`/`Content-Length` and passes the player's `Range` on).
+
+### Fixed: Gateway Errors 502 and 504 Are Retried
+
+- The shared `RetryTransport` retried only 429 and 503, so a transient `502 Bad Gateway` or `504 Gateway Timeout` from an upstream (TMDB, a plugin site) went straight through. A title lookup that hit one returned no streams although a retry would have found the title. The transport now retries 502 and 504 with the same `Retry-After`/exponential backoff budget; only 429 and 503 still count as throttling for the adaptive rate limiter, so a gateway error does not halve a domain's rate.
+- Tests: `test_retry_transport.py` (502 and 504 retry, a cached 502 is not retried, a gateway error does not call `record_throttle`).
+
+### Fixed: A Vetted Original-Language Title Is Searched and Matched
+
+- A series whose localized name differs from the name a site indexes (an anime's romaji title) was searched only under the localized name, and a site result under the romaji name was dropped by the title match.
+- For a TV title whose TMDB `/find` result names its origin country, the client reads `/alternative_titles` and keeps one Latin-script alternative from the types that name the same content (`romaji`, `alternative spelling`, `common misspelling`, `literal translation`, `original name`, `title`, empty); a special, sequel, working title, acronym or short code is skipped, and a non-Latin alternative or an ambiguous set of candidates adds nothing. The base title (the one the others start with, compared by words) goes to the reference titles and `search_titles`; each language group searches it as an extra query without the colon-base fallback.
+- The alternatives are cached for 7 days; a failed lookup is cached empty for 5 minutes. TMDB error logs no longer carry the request URL and its API key.
+- Tests: `test_tmdb_client.py` (type filter, short codes, colon sequels, ambiguous prefixes, a non-Latin localized title, cache and negative cache, the log), `test_stremio_queries.py` (the extra query, no colon fallback, merged search titles), `test_title_matcher.py` (a romaji site title passes).
+- Docs: `docs/current/stremio-addon.md`.
+
+### Fixed: aniworld Searches a Title Whose Keyword Has an Apostrophe
+
+- aniworld's `/ajax/search` answers HTTP 200 with an empty body for any keyword containing an ASCII apostrophe, so a series with one was searched as no hits. The plugin retries the longest run of words without an apostrophe when the first answer has no hits; `relevant_hits()` still filters the site's hits with the original query.
+- Tests: `test_aniworld_plugin.py` (the fallback and its two POST bodies).
+- Docs: `docs/current/plugins.md`.
+
+### Fixed: A Plugin's Headers Cannot Leave the Site Through a Redirect
+
+- The browser fallback passed a plugin's request headers to the browser as page-wide extra headers, and a Playwright route's header override follows a redirect: a same-origin request that redirected off-site carried them to the destination (a session header such as moflix's `X-XSRF-TOKEN` included). Only the harmless headers (`Accept`, `Referer`, `User-Agent`, …) go with the page's requests now; the rest go with the in-page JSON fetch, which refuses a redirect (`redirect: "error"`), so no redirect target can inherit them. The solver path gets only the harmless headers for the same reason — it applies them to every request of its browser — and the session it hands back lets the plugin's next httpx request carry the token, scoped to the site.
+- Tests: `test_stealth_pool.py` (the page gets only the harmless headers, the in-page fetch carries the token and refuses redirects; a refused page load is asked with the headers), `test_solver_fetcher.py` (a token and an `Authorization` stay out of the solver payload).
+
+### Fixed: A Mirror Standby Runs Only Within the Answer Budget
+
+- A member with a standby is cut at the 12 s handover, but the standby then got a full plugin timeout, so the group could spend up to 42 s of a 30 s answer budget; a standby that needed more than the remaining 18 s finished only after the answer. The standby now gets the time left of the budget (`budget_ends`) once its slot is acquired, is skipped when the budget has passed before or while it waits for that slot, and a cut standby counts no circuit breaker failure (it did not have its whole timeout).
+- Tests: `test_plugin_search_runner.py` (a standby is cut at the remaining budget, a slot wait past the budget skips it, a standby past the budget is not run, the cut trips no breaker).
+
+### Fixed: The Browser Fallback Keeps a Plugin's Request Headers
+
+- `HttpxPluginBase._fetch_text()` dropped the plugin's request headers on the way to the browser, so an API that wants a header rather than a cookie answered the page with 401: moflix's Laravel session needs `X-XSRF-TOKEN` beside the clearance cookie, and every call after a challenge paid a rejected session and a second, in-page fetch. `fetch_text()` now carries the headers through `BrowserFetcherPort`: the stealth page sets them with `page.set_extra_http_headers`, `SolverFetcher` puts them into its `request.get` payload, and `ChainedBrowserFetcher` forwards them, so the first browser load already answers the API.
+- Tests: `test_httpx_browser_fallback.py` (the fallback receives the request's extra headers); the filmfans and kinoger browser fakes accept the new keyword.
+
+### Fixed: moflix's Title Search Scrapes Only the Closest Five Hits
+
+- A moflix title search scraped a detail for every relevant hit: each detail is a Cloudflare-protected API call, and a generic title matched up to twenty. It takes the closest five now (`_TITLE_SCRAPE_HITS`); a season search keeps its single-title cap.
+- Tests: `test_moflix_plugin.py` (twenty hits cost five detail requests).
+
+### Added: A Title's TMDB Id Opens Its Page Before the Site Search
+
+- hdfilme and streamcloud use the request's TMDB id to open the title page directly (`/filme1/<id>`, `/filme/<id>`, `/serie/<id>`) before the site's text search. The pages accept the id without a slug, so a short or localized title whose page the site search does not return (for example `Es`/`It`) is found again.
+- einschalten's JSON API ids are TMDB ids: its `/api/movies/<id>` and `/api/movies/<id>/watch` endpoints are called directly before the text search. A missing detail or watch answer falls back to the search.
+- The id reaches the plugins through the `search_external_ids` context var; `TitleMatchInfo` carries the TMDB id from `/find` (and from `tmdb:` requests). The old text search remains the fallback when Stremio provides no TMDB id or the direct page answers without a player, so setups without the id keep working unchanged.
+- Tests: the TMDB client's id, the runner's context hand-off, and the direct-hit plus text-search-fallback paths of both plugins.
+
+### Fixed: hdfilme and streamcloud Follow Their 2026-11 Layout
+
+- hdfilme and streamcloud moved to `hd-filme.today` / `streamcloud.date`, `GET /suche?q=`, `div.grid > a.cv` result cards and new detail metadata (`p.dmeta`/`p.dsyn`, `div.sc-riga`). Both parsers keep the old DLE markup as a fallback; the new search is one page of up to ~60 hits and ignores `?page=`.
+- `devideosrc.find_player()` recognises `custom/serial/<imdb>/<season>/<episode>` and hdfilme's Next.js RSC series payload (the `base` field under `/serie/`), so series resolve through the normal `/serial/<imdb>` player.
+- The XFS resolver sends the browser `User-Agent` beside the `Referer` on the CDN check and the resolved stream: dr0pstream's dropcdn answered the bot UA with 403, which dropped dropload-only series.
+- Tests: `test_hdfilme_plugin.py`, `test_streamcloud_plugin.py`, `test_devideosrc.py`, `test_xfs_resolver.py`; the plugin list is regenerated.
+
+### Added: Measured Bitrate in the Ranking and the Stream Line
+
+- The playback check already fetched an HLS master playlist and an MP4 file's `moov` box, so it now reads the bitrate from the same bytes: the chosen variant's `AVERAGE-BANDWIDTH` (else `BANDWIDTH`), or the file's total size over the duration its `mvhd` names. No extra request. The chosen variant is the most pixels, then the higher bitrate; a CRLF playlist and an attribute the 4 KiB read cuts are handled.
+- The rank adds one point per Mbps, capped below the smallest configured language gap and one quality step, including the largest hoster bonus (44 with the production scores), so it settles streams of the same quality and language without outranking either. The description shows `2.2 Mbps` before the size.
+- Tests: `test_check_playable.py`, `test_mp4_header.py`, `test_stream_sorter.py`, `test_stremio_stream_builder.py`. Docs: `stremio-addon.md`, `hoster-resolvers.md`, generated `configuration.md`.
+
+### Fixed: A Site's Link Flood No Longer Hides Another Hoster
+
+- `movie4k` returned 50 links nearly all labelled `HD` (720p), which filled `stremio.max_probe_count` (40) and pushed hdfilme's unlabelled but measured 1080p dropload link to 47th, so it was never probed and a cached reload showed only 720p. `stremio.max_links_per_hoster` (default 2) now keeps each hoster and language's best links before the window fills; links the registry already knows work (cached alive, or resolved before a better-labelled newcomer) are exempt from the cap and the top truncation.
+- The resolver's name is now the stream's hoster: `rb.gy` and `bit.ly` links that redirect to one voe upload no longer answer as three hosters. The measured answer keeps one resolved direct video per hoster, language and episode, and an echo or a wrong-season result cannot remove the hoster's real stream.
+- A resolved file below `stremio.min_stream_size_mb` (default 20, `0` off) is a stub (bigwarp served a 1 MB `player/321b.mp4` for a feature film) and is dropped and cached dead without counting against the resolver's circuit breaker. A body that starts with `#EXTM3U` is a playlist, not a stub; the content-type probe and a run with `stremio.verify_streams` off are not checked.
+- Tests: probe-window cap/exemptions, redirect hosters, deduplication, stub floor, CRLF and cut playlists. Docs: `stremio-addon.md`, `hoster-resolvers.md`, regenerated `configuration.md`.
+
 ## v0.6.0 - 2026-11-19
 
 Stremio streams: kinoking no longer gives another film's links (its `group_filmo_*` servers match by title only), a link without a source language shows "Sprache unbekannt" instead of the plugin default, and the new setting `stremio.preferred_audio_language` makes the HLS proxy start a stream with several audio tracks in that language. Title matching: the IMDb fallback takes only the requested id, a title without a year is no fuzzy match, and a film's follow-up with another year is another film. Playback: proxied files go on after every interruption of their CDN, VEEV plays through the file proxy, an MP4 file's header measures its quality, and a StreamUp HLS stream must answer its first segment. Diagnostics: season, episode and plugin per stream, the proxy's first CDN answer and player aborts, stuck requests and a stalled event loop are logged. Dependencies: minor and patch updates (fastapi 0.162.2, patchright 1.64.4, ruff 0.17.4 and others).

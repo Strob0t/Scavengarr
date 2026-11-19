@@ -213,7 +213,9 @@ class XFSResolver:
             return await self._no_video_in_page(html, embed_url, file_id, hoster)
 
         is_hls = ".m3u8" in video_url
-        cdn_headers = {"Referer": page_url}
+        # Some CDNs (dr0pstream's dropcdn) reject the app's bot User-Agent
+        # with 403 while answering the browser UA the embed page used.
+        cdn_headers = {"Referer": page_url, "User-Agent": DEFAULT_USER_AGENT}
 
         # Verify CDN URL is actually reachable (filters IP-locked tokens).
         if not await self._verify_video_url(video_url, cdn_headers, hoster):

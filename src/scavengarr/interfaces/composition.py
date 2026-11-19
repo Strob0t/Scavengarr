@@ -93,6 +93,7 @@ from scavengarr.infrastructure.persistence.stream_link_cache import (
 from scavengarr.infrastructure.plugins import PluginRegistry
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
+    search_external_ids,
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
@@ -302,7 +303,7 @@ def configure_event_loop() -> None:
 
 
 def build_http_client(config: AppConfig) -> httpx.AsyncClient:
-    """Shared HTTP client: per-domain rate limit, 429/503 retry, SSRF guard.
+    """Shared HTTP client: per-domain rate limit, 429/502/503/504 retry, SSRF guard.
 
     Scraped pages decide most URLs this client requests, so every request
     and redirect hop to a non-public address is refused, except for the
@@ -578,7 +579,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await cache.clear()
         log.debug("cache_cleared", environment="dev")
 
-    # 2) HTTP client with per-domain rate limiting + 429/503 retry
+    # 2) HTTP client with per-domain rate limiting + 429/502/503/504 retry
     state.http_client = build_http_client(config)
     log.info(
         "http_client_initialized",
@@ -670,6 +671,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resolve_timeout=config.http_timeout_resolve_seconds,
         verify_playback=config.stremio.verify_streams,
         verify_hls_segment=config.stremio.verify_hls_segment,
+        min_stream_size=config.stremio.min_stream_size_mb * 1024 * 1024,
         circuit_breaker=hoster_breaker,
         telemetry=state.telemetry,
         pages=pages,
@@ -785,6 +787,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         episode_filter_fn=filter_by_episode,
         user_agent=DEFAULT_USER_AGENT,
         max_results_var=search_max_results,
+        external_ids_var=search_external_ids,
         stream_link_repo=state.stream_link_repo,
         resolve_fn=state.hoster_resolver_registry.resolve,
         # A cached search answers at once with the cached resolutions

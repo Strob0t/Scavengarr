@@ -630,6 +630,23 @@ class TestPluginSearch:
         assert not other.called
 
     @respx.mock
+    async def test_title_search_caps_detail_fetches(self, plugin):
+        """A generic title can match many API hits; only the closest five
+        cost a Cloudflare-protected detail request."""
+        hits = [
+            {"id": 1000 + i, "name": f"Dark {i}", "model_type": "title"}
+            for i in range(20)
+        ]
+        _api_routes(search={"results": hits})
+        detail = respx.get(url__startswith=f"{_BASE}/api/v1/titles/").respond(
+            200, json=DETAIL_MOVIE_RESPONSE
+        )
+
+        await plugin.search("Dark")
+
+        assert detail.call_count == 5
+
+    @respx.mock
     async def test_entry_without_id_skipped(self, plugin):
         _api_routes(search={"results": [{"name": "No ID Movie", "is_series": False}]})
 

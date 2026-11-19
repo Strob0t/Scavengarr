@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
+from scavengarr.domain.entities.stremio import ExternalIds
+
 # Stremio sets this to limit pagination (e.g. 100 instead of 1000).
 # Plugins use ``effective_max_results`` which respects this ContextVar.
 search_max_results: ContextVar[int | None] = ContextVar(
     "search_max_results", default=None
+)
+
+# The request's external ids: a plugin that can open a title's page by its
+# TMDB id (hdfilme, streamcloud) uses it before the site's text search.
+search_external_ids: ContextVar[ExternalIds | None] = ContextVar(
+    "search_external_ids", default=None
 )
 
 DEFAULT_USER_AGENT = (

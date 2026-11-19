@@ -97,14 +97,16 @@ A series whose list entry carries a season or another IMDb id gets no number.
 
 `TitleResolver` (`application/stremio/title_resolution.py`) looks up the title and year per plugin language through TMDB's `/find` by the IMDb id, a `tmdb:` id by its TMDB id, in the language's locale.
 The reference titles are the localised title and TMDB's original title where it differs.
-A plugin is searched with the titles of its own languages only: the original title is no search query.
-TMDB's answers are cached: a lookup for 24 h, the trending lists for 6 h, a search for 1 h and the IMDb ids of catalog items for 30 days.
+For a TV title whose `/find` result names its origin country, the client also reads TMDB's `/alternative_titles` and adds one vetted Latin-script alternative to the reference titles and to `search_titles`: one of TMDB's same-content types (`romaji`, `alternative spelling`, `common misspelling`, `literal translation`, `original name`, `title`, or an untyped entry), never a special, sequel, working title, acronym or short code.
+A plugin is searched with the titles of its own languages only: the original title is no search query; a title's `search_titles` is the exception.
+TMDB's answers are cached: a lookup for 24 h, the trending lists for 6 h, a search for 1 h, the IMDb ids of catalog items for 30 days and a title's alternative titles for 7 days (a failed answer for 5 minutes).
+A `tmdb:` id from a catalog item still names only its localized title: the alternative search title comes from an IMDb `/find` result.
 Without a TMDB key `ImdbFallbackClient` (`infrastructure/tmdb/imdb_fallback.py`) takes the titles from the IMDB Suggest API and the localised ones from Wikidata (the IMDb property `P345`).
 Title and year come from the suggest entry with the requested id; an answer without that id gives no title (`imdb_suggest_id_missing`) and is not cached.
 
 Plugins declare their `languages` (default `["de"]`), and the use case groups the plugins by identical language lists.
 It looks up the titles of every language a stream plugin searches in, in parallel, and searches each group with its languages' queries (`application/stremio/queries.py`).
-A group's queries are the full title and, for a title with a colon, the base title before it.
+A group's queries are the full title and, for a title with a colon, the base title before it, plus each language's `search_titles` cleaned as one query (no colon-base fallback for those).
 Every title info carries the request's series titles in all those languages (`series_titles`), so a partial match is judged alike in every group and the locating plugins get the same titles whichever plugins a request selects.
 
 The use case reads the request's Cinemeta meta once (`SeriesMetaPort`, `CinemetaClient` in `infrastructure/stremio/cinemeta.py`, cached for 7 days).
@@ -177,6 +179,7 @@ The background searches follow these rules (`title_search.py`):
 ### The answer budget
 
 The answer budget decides when a request stops waiting for its search, and the plugin timeout decides when a plugin is cut.
+A mirror group's standby is the exception: it is the extra run for this answer, so it gets the time left of the answer budget once its slot is acquired, and is not started when that has passed, the wait for the slot included.
 The diagram shows a search with one plugin that holds its slot at once and one that waits for a slot.
 The rules behind it (the slots, the plugin timeout, the breaker and the late results) are in [the Stremio search timing](architecture.md#the-stremio-search-timing).
 
@@ -211,6 +214,7 @@ sequenceDiagram
 `PluginCircuitBreaker` (`infrastructure/circuit_breaker.py`) skips a plugin after 5 failures in a row, for 60 s at first.
 It counts each plugin per requested category (`<plugin>:2000` for its movies, `<plugin>:5000` for its series), since a site can be too slow for one content type only.
 An error, an unreachable site and a timeout are failures, and a search with results is a success.
+A mirror standby cut at the answer budget counts as a timeout in the plugin history but not as a breaker failure: it did not have its whole timeout.
 An answer without results neither counts nor resets the breaker, since a site that answers an empty search at once would otherwise keep closing it.
 After the cooldown one probe request is allowed (half-open), and the concurrent requests skip the plugin until it reports.
 A probe that never reports is replaced by the next request after one more cooldown.
@@ -248,7 +252,7 @@ The search runner counts the dropped results per plugin in the plugins' long-ter
 | Threshold | A result needs `title_match_threshold` to stay. |
 | Year tolerance | Movies get `title_year_tolerance_movie`, series `title_year_tolerance_series`. |
 | Candidates | Each result is scored by up to four deduplicated candidates: the raw title, guessit's title of `title` and of `release_name`, and the raw `release_name`. |
-| Reference titles | The localised title counts with TMDB's original title where it differs. |
+| Reference titles | The localised title counts with TMDB's original title where it differs and the vetted original-language alternative from `/alternative_titles`. |
 | IMDb id | A result whose metadata names `imdb` or `imdb_id` is kept or dropped by the id alone (reason `imdb`), before any text is compared. |
 | Kind | With the reference's kind known, a result whose label or genres contradict it is dropped (reason `category`). |
 | Partial match | A series result that holds none of the request's series titles whole but a strict word subset of one is partial, and it counts only where its plugin keeps no other match. |
@@ -269,17 +273,20 @@ The search runner counts the dropped results per plugin in the plugins' long-ter
 
 Resolution starts while the plugins still search (`HosterResolution` in `application/stremio/resolution.py`).
 Each batch of results is ranked with the ones before, and among the top `stremio.max_probe_count` streams each hoster's best link resolves through `HosterResolverRegistry.resolve`, at most `stremio.probe_concurrency` at once.
+Before the window, `stremio.max_links_per_hoster` (2 in production) keeps each hoster and language's best links, so a site that lists dozens of links for the same hosters cannot fill it; a link whose stream already resolved is exempt and stays.
 The streams of one hoster and language resolve in rank order: the next one only after the better one failed, and none while one runs or after one resolved.
 A better-ranked link that arrives later resolves too, and each URL resolves once.
-A link that better ones push out of the top `stremio.max_probe_count` is cancelled, and its slot frees.
+A link that better ones push out of the top `stremio.max_probe_count` is cancelled unless its stream already resolved, and its slot frees.
 With `stremio.verify_streams` every resolved URL must also pass the playback check ([Hoster resolvers](hoster-resolvers.md#cdn-checks)).
 With `stremio.verify_hls_segment` an HLS stream of StreamUp must also answer its first segment (a 403, 404 or 410 drops it; a timeout or network error keeps it).
 Each hoster and language thus contributes its best working stream (`hoster_key()`: dub and sub on one hoster are different content), and a hoster whose best link is dead still contributes its next one.
+A link whose redirect leaves a shortener for another hoster takes that hoster's resolver name (the registry's), and the measured answer keeps one playable stream per hoster, language and episode: the shortener and the hoster it lands on do not answer twice. A link with no resolver that a content-type probe resolves keeps its site's label, so two shorteners that land on the same direct file are not merged.
 A stream whose link does not resolve, only echoes the embed page, lies beyond `stremio.max_probe_count` or is cancelled at the answer is left out.
 `ResolveFlow` decides when the answer is due, by the answer rule of [the architecture](architecture.md#the-stremio-stream-request).
 Plugin pages behind Cloudflare and hoster captures share the stealth browser's pages ([Browser and challenges](browser-and-challenges.md#the-page-gate)).
 
 Results from the search cache answer at once when the resolver's cache holds a stream for one of their hosters (`stremio_resolve_from_cache`).
+The cached outcomes are read before the per-hoster cap, so a cached-live link that ranks below its hoster's first two still answers.
 Each hoster then contributes its best link with a cached stream, and the answer does not wait for the links without a cached outcome.
 Those resolve in the background, one title at a time (`_BACKGROUND_RUNS`), without the target count, until `stremio.stream_deadline_seconds` after the run's start, and fill the resolver's cache for the next request.
 Without a resolver or a base URL the answer waits for the search up to the answer budget, and `deduplicate_by_hoster()` keeps the best-ranked stream per hoster and language.
@@ -289,8 +296,11 @@ Without a resolver or a base URL the answer waits for the search up to the answe
 Streams are ranked with a weighted score (`infrastructure/stremio/stream_sorter.py`):
 
 ```text
-rank_score = language_score + quality.value * quality_multiplier + hoster_bonus
+rank_score = language_score + quality.value * quality_multiplier
+             + bitrate_points + hoster_bonus
 ```
+
+`bitrate_points` is the measured bitrate in Mbps, capped below the smallest gap between two language scores (49 with the deployed scores) and below one quality step, so it settles streams of the same quality and language without outranking either.
 
 The language scores, the score of an unknown language, the quality multiplier and the hoster bonuses are settings ([Configuration](#configuration)).
 The quality values are fixed in `StreamQuality` (`domain/entities/stremio.py`):
@@ -321,10 +331,12 @@ A stream's quality comes from its release name (guessit) or the site's quality b
 A badge names its quality as a whole in any spelling ("Full HD"), else by its best part that names one ("HD-1080p" is 1080p, "4K/UHD" 4K, "1080p/5.1" 1080p; `parse_quality()` in `infrastructure/stremio/release_parser.py`).
 A word that names no resolution (`HD`, `WEBRIP`, `WEB-DL`, `BDRIP`, `BluRay`) is a guess: it ranks the stream as before (`HD` as 720p, `BDRIP` as 1080p) but shows no label (`RankedStream.quality_guessed`), and inside a composite badge ("HD/Deutsch") it counts for nothing.
 A plugin passes a quality only where its site states one; a link without one has an unknown quality.
-The playback check also reads both from the stream in the 4 KiB it fetches anyway: the largest `RESOLUTION` of an HLS master playlist or an MP4 file's video track, and a file's total size; an MP4 file whose `moov` box follows its media data gets one more 4 KiB read for it ([CDN checks](hoster-resolvers.md#cdn-checks)).
+The playback check also reads from the stream in the 4 KiB it fetches anyway: the best variant of an HLS master playlist (most pixels, then the higher `AVERAGE-BANDWIDTH`/`BANDWIDTH`), an MP4 file's video track, a file's total size, and the bitrate; an MP4 file whose `moov` box follows its media data gets one more 4 KiB read for it ([CDN checks](hoster-resolvers.md#cdn-checks)).
+An HLS stream's bitrate is its chosen variant's declared bandwidth; an MP4 file's is its total size over the duration its `mvhd` names.
 A measured quality replaces the site's (`apply_resolution()` in `application/stremio/stream_builder.py`), since a hoster can serve another copy than the one the site labels, and it settles a guess, so the stream shows its label.
-A measured size shows only where the site gave none.
-When a measurement changes a quality, the answer is sorted again with the same weights.
+A measured size shows only where the site gave none; a measured bitrate replaces what the stream had.
+a resolved file smaller than `stremio.min_stream_size_mb` (20 by default, `0` off) is a stub — an ad or a placeholder, not the film — and is dropped and cached dead like an unplayable stream. A body that starts with `#EXTM3U` is a playlist and has no size to check; the content-type probe and a run with `stremio.verify_streams` off are not checked.
+When a measurement changes a quality, bitrate or hoster, the answer is sorted again with the same weights, and one playable stream per hoster, language and episode stays.
 A media playlist and variants or a video track past the 4 KiB read measure nothing, a server that answers without a `Content-Range` total measures no size (and no `moov` behind the media data), and the site's values stay.
 Cached answers take the measurement from the resolver's cache.
 With `stremio.verify_streams` off nothing is measured, except by the resolvers that check anyway (`needs_playback_check`).
@@ -408,7 +420,12 @@ The segments follow these rules:
 - When the resume fails or ends short too, the transfer aborts (`SegmentCut`, one `hls_proxy_segment_cut` warning with the CDN's domain, the error type and the bytes sent and promised), since a clean end would hand the player a truncated segment as whole.
 - TLS runs in the event loop (the shared client's `AsyncioNetworkBackend`), which costs less CPU per relayed megabyte than httpx's default backend.
 - CDN fetches share a global semaphore of 50, and CDN errors answer 502.
-- `HEAD` answers like `GET` without a body, and for a segment it takes the CDN's status and content type only.
+- A player's `Range` and `If-Range` go to the CDN and its status and headers (`Content-Length`, `Content-Range`, `Accept-Ranges`) come back out, the same route a direct file takes: a player that asks a range learns the segment's length instead of a chunked body of unknown size.
+- The desktop Stremio app's player asks every HLS segment with `Range: bytes=0-` (mpv behind the app's shell); without the length it re-requested segment after segment (5-7 times each, every answer within a second) and the picture stalled and broke, while a player that sends no range played the same source.
+- The CDN request carries `Accept-Encoding: identity`, as a file's does: a byte range must keep its offsets, so nothing is decoded on the way.
+- A `bytes=0-` request asks for the whole segment and is answered from the fetch ahead when there is one, as a `206` with the segment's `Content-Range`; a request for a part of a segment is left to the CDN, whose byte offsets decide.
+- A `416` from the CDN passes through to the player, as it does for a file.
+- `HEAD` answers like `GET` without a body; for a segment it takes the CDN's status and headers (`Content-Length` among them) and counts no bytes.
 - The playlist is refused (403, `hls_proxy_converter_refused`) to a streaming server's ffmpeg (User-Agent `Lavf/`) unless `stremio.allow_hls_transcoding` is on, while variants and segments are not refused.
 
 Stremio Web has its streaming server probe every stream, and an HLS source goes through the server's converter, which re-encodes the video.
@@ -421,6 +438,7 @@ A player loads the segments one after another over one connection, and a CDN tha
 - A segment request starts the fetches of the next three into memory, under the CDN semaphore, and is answered from memory when its own segment was fetched ahead, a fetch in flight awaited.
 - The segments the player passed or jumped away from are dropped.
 - A segment ahead holds at most 16 MiB, and a larger one is left to the player's own request.
+- A request for a part of a segment is not answered from memory, only for its whole body (`bytes=0-` included).
 - At most 8 playbacks hold fetches ahead, and one more takes the place of the least recently used one.
 - The segment orders of at most 32 playbacks are kept, each for 3 h after the playback's last request.
 - A playback's fetches ahead are dropped 60 s after its last request, while its order stays, so a player that resumes after a pause gets the next three fetched ahead from its first request on.
