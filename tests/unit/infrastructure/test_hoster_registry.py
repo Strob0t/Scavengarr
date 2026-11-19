@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -444,6 +445,8 @@ class TestHosterResolverRegistry:
 
         assert result is not None
         assert result.video_url == "https://cdn.voe.sx/video.mp4"
+        # The resolver's name is the canonical hoster: the short link was voe
+        assert result.hoster == "voe"
         voe_resolver.resolve.assert_awaited_once_with("https://voe.sx/e/abc123")
 
     @pytest.mark.asyncio
@@ -661,7 +664,10 @@ class TestHosterResolverRegistry:
         await registry.resolve("https://voe.sx/e/alive")
         await registry.resolve("https://voe.sx/e/dead")
 
-        assert registry.cached("https://voe.sx/e/alive\n") == (True, stream)
+        assert registry.cached("https://voe.sx/e/alive\n") == (
+            True,
+            replace(stream, hoster="voe"),
+        )
         assert registry.cached("https://voe.sx/e/dead") == (True, None)
         assert registry.cached("https://voe.sx/e/new") == (False, None)
         assert resolver.resolve.await_count == 2
@@ -680,8 +686,12 @@ class TestHosterResolverRegistry:
         registry = HosterResolverRegistry(resolvers=[resolver])
         await registry.resolve("https://voe.sx/e/abc")
 
-        assert await registry.resolve("https://voe.sx/e/abc", refresh=True) == new
-        assert await registry.resolve("https://voe.sx/e/abc") == new
+        assert await registry.resolve("https://voe.sx/e/abc", refresh=True) == (
+            replace(new, hoster="voe")
+        )
+        assert await registry.resolve("https://voe.sx/e/abc") == replace(
+            new, hoster="voe"
+        )
         assert resolver.resolve.await_count == 2
 
     async def test_an_expired_resolution_is_not_cached(self) -> None:
@@ -2518,6 +2528,152 @@ def _left(registry: HosterResolverRegistry, url: str) -> float:
     return registry._result_cache[url].expires_at - time.monotonic()
 
 
+class TestStubFiles:
+    """A resolved MP4 that plays but is an ad/placeholder is not a stream:
+    bigwarp answered a 1 MB ``player/321b.mp4`` for a feature film
+    (2026-11-18)."""
+
+    _URL = "https://bigwarp.io/o3jt7xpsrhju"
+    _VIDEO = "https://bigwarp.pro/player/321b.mp4"
+
+    def _registry(self, client: httpx.AsyncClient, **kwargs: Any):
+        return HosterResolverRegistry(
+            resolvers=[_stub_resolver("bigwarp", ResolvedStream(self._VIDEO))],
+            http_client=client,
+            verify_playback=True,
+            min_stream_size=20 * 1024 * 1024,
+            **kwargs,
+        )
+
+    @respx.mock
+    async def test_a_file_below_the_floor_is_dropped_and_cached_dead(self) -> None:
+        respx.get(self._VIDEO).respond(
+            206,
+            content=b"\x00\x00\x00\x18ftypmp42",
+            headers={"Content-Range": "bytes 0-4095/1033738"},
+        )
+        async with httpx.AsyncClient() as client:
+            registry = self._registry(client)
+
+            assert await registry.resolve(self._URL) is None
+
+        assert registry.cached(self._URL) == (True, None)
+
+    @respx.mock
+    async def test_a_file_at_the_floor_is_kept(self) -> None:
+        total = 20 * 1024 * 1024
+        respx.get(self._VIDEO).respond(
+            206,
+            content=b"\x00\x00\x00\x18ftypmp42",
+            headers={"Content-Range": f"bytes 0-4095/{total}"},
+        )
+        async with httpx.AsyncClient() as client:
+            registry = self._registry(client)
+
+            result = await registry.resolve(self._URL)
+
+        assert result is not None
+        assert result.size_bytes == total
+
+    @respx.mock
+    async def test_an_hls_stream_has_no_size_to_check(self) -> None:
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nv.m3u8\n"
+        )
+        respx.get("https://bigwarp.pro/hls/master.m3u8").respond(200, content=master)
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[
+                    _stub_resolver(
+                        "bigwarp",
+                        ResolvedStream(
+                            "https://bigwarp.pro/hls/master.m3u8", is_hls=True
+                        ),
+                    )
+                ],
+                http_client=client,
+                verify_playback=True,
+                min_stream_size=20 * 1024 * 1024,
+            )
+
+            result = await registry.resolve(self._URL)
+
+        assert result is not None
+        assert result.is_hls
+
+    @respx.mock
+    async def test_a_playlist_body_without_the_suffix_is_not_a_stub(self) -> None:
+        url = "https://bigwarp.pro/stream/abc"
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nv.m3u8\n"
+        )
+        respx.get(url).respond(
+            206,
+            content=master,
+            headers={"Content-Range": f"bytes 0-{len(master) - 1}/{len(master)}"},
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[_stub_resolver("bigwarp", ResolvedStream(url))],
+                http_client=client,
+                verify_playback=True,
+                min_stream_size=20 * 1024 * 1024,
+            )
+
+            result = await registry.resolve(self._URL)
+
+        assert result is not None
+        assert result.size_bytes is None
+
+    @respx.mock
+    async def test_a_stub_does_not_count_against_the_breaker(self) -> None:
+        """The hoster answered; the file is junk, not a resolver failure."""
+        respx.get(self._VIDEO).respond(
+            206,
+            content=b"\x00\x00\x00\x18ftypmp42",
+            headers={"Content-Range": "bytes 0-4095/1033738"},
+        )
+        breaker = PluginCircuitBreaker(failure_threshold=1)
+        async with httpx.AsyncClient() as client:
+            registry = self._registry(client, circuit_breaker=breaker)
+
+            assert await registry.resolve(self._URL) is None
+
+        assert breaker.allow("bigwarp") is True
+
+    @respx.mock
+    async def test_the_floor_off_keeps_a_small_file(self) -> None:
+        respx.get(self._VIDEO).respond(
+            206,
+            content=b"\x00\x00\x00\x18ftypmp42",
+            headers={"Content-Range": "bytes 0-4095/1033738"},
+        )
+        async with httpx.AsyncClient() as client:
+            registry = HosterResolverRegistry(
+                resolvers=[_stub_resolver("bigwarp", ResolvedStream(self._VIDEO))],
+                http_client=client,
+                verify_playback=True,
+                min_stream_size=0,
+            )
+
+            result = await registry.resolve(self._URL)
+
+        assert result is not None
+
+    @respx.mock
+    async def test_an_unknown_size_keeps_the_file(self) -> None:
+        respx.get(self._VIDEO).respond(200, content=b"\x00\x00\x00\x18ftypmp42")
+        async with httpx.AsyncClient() as client:
+            registry = self._registry(client)
+
+            result = await registry.resolve(self._URL)
+
+        assert result is not None
+        assert result.size_bytes is None
+
+
 class TestStateExport:
     """Resolutions and redirects outlive a restart (HosterStateStore):
     exported with their lifetime left, restored with it shortened by the
@@ -2529,6 +2685,7 @@ class TestStateExport:
         is_hls=True,
         quality=StreamQuality.HD_1080P,
         size_bytes=1_500_000_000,
+        bitrate_bps=5_000_000,
     )
 
     async def test_alive_and_dead_entries_round_trip(self) -> None:

@@ -130,6 +130,7 @@ Two checks look at a resolved URL before a player gets it, both in `infrastructu
 - It sends a streamed `GET` with the playback headers, the player's browser `User-Agent` unless the resolver set one, and `Range: bytes=0-4095` (6 s, redirects followed), and reads at most the first 4 KiB.
 - A status from 400, an HTML answer (`Content-Type: text/html` or a body that starts with `<`), or an HLS stream whose body does not start with `#EXTM3U` makes the stream unplayable.
 - An unplayable stream logs `hoster_resolve_unplayable` and is cached as a dead link.
+- A resolved file below `stremio.min_stream_size_mb` (20 by default, `0` off) logs `hoster_resolve_too_small` and is cached as a dead link like an unplayable stream; it is not counted against the resolver's circuit breaker, since the hoster answered and the file is junk. A body that starts with `#EXTM3U` is treated as a playlist (no size), whatever the resolver guessed from the URL; the content-type probe is not checked, and neither is anything with `stremio.verify_streams` off.
 - A failed check request (a timeout, a reset) is no verdict: it logs `hoster_resolve_check_error`, and the link is neither cached nor counted.
 - A resolver without a check of its own sets `needs_playback_check = True` (SuperVideo), and the registry checks its streams with `stremio.verify_streams` off too.
 - The content-type probe's answers are not checked again, since the probe has looked at the response already.
@@ -143,10 +144,11 @@ A resolver whose signed HLS links expire while their playlists still answer sets
 
 A playable stream keeps what the checked bytes tell (`PlaybackCheck`):
 
-- The largest `RESOLUTION` of an HLS master playlist's variants gives the quality class (`quality_from_resolution()`, by width or height, whichever gives the higher class; a width within 5 % of the class's counts, so a cropped 1248x520 is 720p), when the resolver named no quality or a lower one.
+- The best variant of an HLS master playlist — most pixels, then the higher bitrate — gives the quality class (`quality_from_resolution()`, by width or height, whichever gives the higher class; a width within 5 % of the class's counts, so a cropped 1248x520 is 720p), when the resolver named no quality or a lower one. Its `AVERAGE-BANDWIDTH` (else `BANDWIDTH`) becomes `ResolvedStream.bitrate_bps`. Attributes are read in any order, a quoted `CODECS` list with commas stays one value, a CRLF playlist is read fine, an I-frame variant never counts, and a line the 4 KiB read cuts is ignored.
 - An MP4 file's largest enabled video track gives the quality class the same way (`infrastructure/hoster_resolvers/_mp4.py`): the size comes from its track header (`tkhd`, version 0 or 1, enabled flag set) and counts only when the track's handler (`hdlr`) is `vide`, so a cover, a text or a disabled track never sets it. A file whose `moov` box comes first names it in the 4 KiB. A file whose `moov` follows the media data (`mdat`) gets one more `Range` read of 4 KiB where the `moov` starts, with the same headers and within the check's 6 s, and only from a file that starts with `ftyp` and whose total the first answer named. That read failing (`playback_check_moov_unread` with the CDN's domain and the error) or answered from elsewhere than the `moov` (a status other than 206, a `Content-Range` from another byte) measures nothing, and the stream stays playable.
-- The total of a `Content-Range: bytes a-b/total` answer becomes `ResolvedStream.size_bytes`.
-- A variant past the 4 KiB, a video track past the 4 KiB of its `moov` (after an audio track with its tables) and a media playlist measure nothing; an answer without a `Content-Range` total measures no size and no `moov` behind the media data.
+- The total of a `Content-Range: bytes a-b/total` answer becomes `ResolvedStream.size_bytes`; the duration in the `moov`'s `mvhd` (version 0 or 1, timescale not 0, duration not all ones) gives the file's bitrate, `total * 8 / seconds`.
+- A resolved file below `stremio.min_stream_size_mb` is a stub and is dropped before the answer (see the checks above).
+- A variant past the 4 KiB, an attribute the 4 KiB cuts, a video track past the 4 KiB of its `moov` (after an audio track with its tables) and a media playlist measure nothing; an answer without a `Content-Range` total measures no size and no `moov` behind the media data, and a fragmented MP4 whose `mvhd` duration is 0 measures no bitrate.
 
 The Stremio answer shows and ranks the streams by them ([Ranking](stremio-addon.md#ranking)).
 
@@ -186,6 +188,7 @@ Each attempt ends with one outcome, recorded on the stage `hoster_resolve` with 
 | `stream` | The resolver's stream passed the playback check. | 1 h | resets |
 | `dead` | The resolver found no stream. | 15 min | neither |
 | `unplayable` | The playback check refused the stream. | 15 min | counts |
+| `too_small` | A resolved file is below the stub floor. | 15 min | neither |
 | `http_error`, `error` | An HTTP error or an exception reached the registry. | 15 min | neither |
 | `challenge` | The pages showed a challenge, and no stream came while it stood or before the bound cut. | no | neither |
 | `timeout` | The resolve bound cut the attempt before any challenge. | no | counts |
@@ -204,7 +207,7 @@ stateDiagram-v2
     Lookup --> Skipped: the hoster's challenge cooldown runs, or its breaker is open
     Lookup --> Resolving: no answer yet
     Resolving --> Stream: a stream that passes the playback check
-    Resolving --> Dead: no stream, or an unplayable one
+    Resolving --> Dead: no stream, an unplayable one, or a stub
     Resolving --> Challenge: no stream while a challenge stands, or a cut after one
     Resolving --> NoVerdict: a timeout, a network error, no free page, a failed check
     Challenge --> Completion: the bound cut the capture after its challenge
@@ -336,7 +339,7 @@ Its strategies, in order:
 
 - The stages `hoster_resolve`, `hoster_challenge_completion` and `hoster_pass_keep` with their outcomes are in [the metrics reference](../reference/metrics.md#hoster-resolutions).
 - `GET /api/v1/stats/metrics` lists the hosters without a resolver (`unresolved_hosters`) and what the start restored (`hoster_state`).
-- The log lines name the hoster and, for a CDN, its domain: `hoster_resolve_success`, `hoster_resolve_failed`, `hoster_resolve_unplayable`, `hoster_resolve_timeout`, `hoster_resolve_challenge`, `hoster_resolve_circuit_open`, `hoster_without_resolver`.
+- The log lines name the hoster and, for a CDN, its domain: `hoster_resolve_success`, `hoster_resolve_failed`, `hoster_resolve_unplayable`, `hoster_resolve_too_small`, `hoster_resolve_timeout`, `hoster_resolve_challenge`, `hoster_resolve_circuit_open`, `hoster_without_resolver`.
 - The pass keeper logs `hoster_pass_keep` (`stream`, `gone_s`, `duration_ms`), `hoster_pass_keep_skipped` (`reason=no_link`, or `reason=idle` with `demand_h`) and `hoster_pass_keep_error`.
 - `scripts/probes/resolver_urls.py` collects hoster page URLs for the live resolver tests (`tests/live/test_resolver_live.py`), `scripts/probes/header_binding.py` tells which CDNs need a resolution's playback headers, and `scripts/probes/capture_timing.py` times a capture resolver's page load, clicks, challenges and stream ([Operations](../how-to/operations.md)).
 

@@ -111,6 +111,48 @@ def video_size(data: bytes) -> tuple[int, int] | None:
     )
 
 
+# A movie header's duration the file leaves unknown
+_MVHD_UNKNOWN = {0: 0xFFFFFFFF, 1: 0xFFFFFFFFFFFFFFFF}
+
+
+def _mvhd_seconds(data: bytes, payload: int, end: int) -> float | None:
+    """The seconds of the movie header ``data[payload:end]``, ``None`` when
+    the bytes cut its times or its duration is unknown (all ones)."""
+    if payload + 4 > end:
+        return None
+    version = data[payload]
+    if version == 0:
+        at = payload + 12  # creation and modification, then the timescale
+        if at + 8 > end:
+            return None
+        timescale, duration = struct.unpack_from(">II", data, at)
+    elif version == 1:
+        at = payload + 20
+        if at + 12 > end:
+            return None
+        timescale = struct.unpack_from(">I", data, at)[0]
+        duration = struct.unpack_from(">Q", data, at + 4)[0]
+    else:
+        return None
+    if not timescale or duration in (0, _MVHD_UNKNOWN[version]):
+        return None
+    return duration / timescale
+
+
+def movie_duration(data: bytes) -> float | None:
+    """The seconds of the ``mvhd`` box in the top-level ``moov`` box of
+    *data*, ``None`` without one whose duration the bytes hold."""
+    for kind, payload, box_end in _boxes(data, 0, len(data)):
+        if kind != b"moov":
+            continue
+        end = min(box_end, len(data))
+        for child, start, child_end in _boxes(data, payload, end):
+            if child == b"mvhd":
+                return _mvhd_seconds(data, start, min(child_end, end))
+        return None
+    return None
+
+
 def moov_offset(head: bytes, total: int) -> int | None:
     """Where the box after an MP4 file's media data starts (its ``moov``),
     from the file's first bytes *head* and its *total* size. ``None`` for a

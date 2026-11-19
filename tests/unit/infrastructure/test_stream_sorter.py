@@ -26,12 +26,14 @@ def _stream(
     hoster: str = "generic",
     quality: StreamQuality = StreamQuality.UNKNOWN,
     language: StreamLanguage | None = None,
+    bitrate_bps: int | None = None,
 ) -> RankedStream:
     return RankedStream(
         url=f"https://example.com/{hoster}",
         hoster=hoster,
         quality=quality,
         language=language,
+        bitrate_bps=bitrate_bps,
     )
 
 
@@ -196,6 +198,122 @@ class TestCustomConfig:
         stream = _stream(hoster="myhost", quality=StreamQuality.UNKNOWN, language=None)
         # 100 (default lang) + 0 (quality) + 100 (hoster) = 200
         assert sorter.rank(stream) == 200
+
+    def test_quality_multiplier_1000_puts_every_1080p_before_every_720p(self) -> None:
+        """`data/config.local.yaml`: quality first, language breaks the tie.
+
+        A 1000 multiplier makes one quality step 10,000, more than the widest
+        language gap (1000 - 100), so a German dub 720p ranks below even an
+        English 1080p (2026-11-17)."""
+        sorter = StreamSorter(StremioConfig(quality_multiplier=1000))
+        de_720 = _stream(quality=StreamQuality.HD_720P, language=GERMAN_DUB)
+        en_1080 = _stream(quality=StreamQuality.HD_1080P, language=ENGLISH_DUB)
+        de_1080 = _stream(quality=StreamQuality.HD_1080P, language=GERMAN_DUB)
+
+        result = sorter.sort([de_720, en_1080, de_1080])
+
+        assert [s.quality for s in result] == [
+            StreamQuality.HD_1080P,
+            StreamQuality.HD_1080P,
+            StreamQuality.HD_720P,
+        ]
+        assert result[0].language == GERMAN_DUB
+        assert result[1].language == ENGLISH_DUB
+
+    def test_the_higher_bitrate_wins_same_quality_and_language(self) -> None:
+        sorter = StreamSorter(StremioConfig(quality_multiplier=1000))
+        fast = _stream(
+            quality=StreamQuality.HD_1080P,
+            language=GERMAN_DUB,
+            bitrate_bps=8_000_000,
+        )
+        slow = _stream(
+            quality=StreamQuality.HD_1080P,
+            language=GERMAN_DUB,
+            bitrate_bps=2_000_000,
+        )
+
+        result = sorter.sort([slow, fast])
+
+        assert result[0].bitrate_bps == 8_000_000
+        assert result[0].rank_score == 51_008
+
+    def test_a_bitrate_does_not_outrank_a_better_language(self) -> None:
+        """One Mbps is one point, capped below the smallest language gap."""
+        sorter = StreamSorter(StremioConfig(quality_multiplier=1000))
+        de_720 = _stream(
+            quality=StreamQuality.HD_720P,
+            language=GERMAN_DUB,
+            bitrate_bps=2_000_000,
+        )
+        en_720 = _stream(
+            quality=StreamQuality.HD_720P,
+            language=ENGLISH_DUB,
+            bitrate_bps=100_000_000,
+        )
+
+        result = sorter.sort([en_720, de_720])
+
+        assert result[0].language == GERMAN_DUB
+
+    def test_a_bitrate_does_not_outrank_the_tightest_language_gap(self) -> None:
+        """en-sub 200 vs en 150 is only 50: a 99-point cap would break it."""
+        sorter = StreamSorter(StremioConfig(quality_multiplier=1000))
+        sub = _stream(
+            quality=StreamQuality.HD_1080P,
+            language=ENGLISH_SUB,
+            bitrate_bps=900_000,
+        )
+        dub = _stream(
+            quality=StreamQuality.HD_1080P,
+            language=ENGLISH_DUB,
+            bitrate_bps=51_000_000,
+        )
+
+        result = sorter.sort([dub, sub])
+
+        assert result[0].language == ENGLISH_SUB
+        assert sorter._max_bitrate_points == 44
+
+    def test_a_bitrate_does_not_outrank_a_language_plus_hoster_bonus(self) -> None:
+        """The largest hoster bonus is part of the margin too."""
+        sorter = StreamSorter(StremioConfig(quality_multiplier=1000))
+        sub = _stream(
+            quality=StreamQuality.HD_1080P,
+            language=ENGLISH_SUB,
+            bitrate_bps=900_000,
+        )
+        dub = _stream(
+            hoster="supervideo",
+            quality=StreamQuality.HD_1080P,
+            language=ENGLISH_DUB,
+            bitrate_bps=60_000_000,
+        )
+
+        result = sorter.sort([dub, sub])
+
+        assert result[0].language == ENGLISH_SUB
+
+    def test_a_bitrate_does_not_outrank_a_quality_step_plus_a_hoster_bonus(
+        self,
+    ) -> None:
+        sorter = StreamSorter(StremioConfig(quality_multiplier=1))
+        hd = _stream(
+            quality=StreamQuality.HD_1080P,
+            language=GERMAN_DUB,
+            bitrate_bps=900_000,
+        )
+        sd = _stream(
+            hoster="supervideo",
+            quality=StreamQuality.HD_720P,
+            language=GERMAN_DUB,
+            bitrate_bps=100_000_000,
+        )
+
+        result = sorter.sort([sd, hd])
+
+        assert result[0].quality == StreamQuality.HD_1080P
+        assert sorter._max_bitrate_points == 4
 
 
 def test_sort_keeps_every_field() -> None:

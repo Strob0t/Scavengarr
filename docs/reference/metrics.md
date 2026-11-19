@@ -103,7 +103,7 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 ### Hoster resolutions
 
 - `hoster_resolve` `resolver`: the resolver's name, or `direct` for a content-type probe (a playlist, a URL without a resolver).
-- Its outcomes: `stream`, `dead`, `unplayable`, `check_error` (the playback check failed), `timeout`, `challenge`, `network_error`, `http_error`, `error`, `cut` and `busy`.
+- Its outcomes: `stream`, `dead`, `unplayable`, `too_small` (a resolved file below the stub floor), `check_error` (the playback check failed), `timeout`, `challenge`, `network_error`, `http_error`, `error`, `cut` and `busy`.
 - `challenge` is a resolution whose pages showed a challenge and found no stream while it stood, or that the bound cut after one; the breaker does not count it.
 - `busy` is a capture that got no stealth browser page before its request was due.
 - Its outcomes without a run: *`cached`*, *`breaker_open`*, *`challenge_cooldown`* (a link skipped while its hoster's challenge cooldown runs) and *`joined`* (a request for a link whose challenged capture runs on in the background waited for it instead of a second capture).

@@ -22,6 +22,7 @@ import structlog
 
 from scavengarr.application.stremio.search_progress import SearchProgress
 from scavengarr.application.stremio.stream_builder import (
+    cap_links_per_hoster,
     hoster_key,
     is_direct_video_url,
 )
@@ -96,13 +97,25 @@ class HosterResolution:
         return sum(not task.done() for task in self._tasks.values())
 
     def update(self, ranked: list[RankedStream]) -> None:
-        """Take a new ranking (more results) and start what is due.
+        """Take a new ranking (more results, or links that turned out dead)
+        and start what is due.
 
-        New results only push streams down: a resolution whose stream left
-        the top *limit* can no longer be part of the answer and is
-        cancelled, so the answer does not wait for it and its slot frees.
+        A resolution that already gave a video stays in the list even when
+        it leaves the top *limit*: it is part of the answer, and a
+        better-labelled newcomer must not displace it before the newcomer
+        resolved (code review, 2026-11-18). A dead link is not passed in.
+        Any other stream that leaves the top is cancelled, so the answer
+        does not wait for it and its slot frees.
         """
-        self._ranked = ranked[: self._limit]
+        window = ranked[: self._limit]
+        present = {stream.url for stream in window}
+        known = self.video_urls()
+        window += [
+            stream
+            for stream in ranked
+            if stream.url in known and stream.url not in present
+        ]
+        self._ranked = sorted(window, key=lambda s: -s.rank_score)
         considered = {stream.url for stream in self._ranked}
         for url, task in self._tasks.items():
             if url not in considered:
@@ -112,6 +125,27 @@ class HosterResolution:
             groups.setdefault(hoster_key(stream) or stream.url, []).append(i)
         self._hosters = list(groups.values())
         self._start_due()
+
+    def video_urls(self) -> frozenset[str]:
+        """The URLs whose resolution is a playable video, the streams a new
+        result must not push out of the probe window."""
+        return frozenset(
+            url
+            for url, task in self._tasks.items()
+            if task.done()
+            and not task.cancelled()
+            and (resolved := task.result()) is not None
+            and is_direct_video_url(resolved, url)
+        )
+
+    def dead_urls(self) -> frozenset[str]:
+        """The URLs whose resolution ended without a stream; they must not
+        consume their hoster's links in the probe window."""
+        return frozenset(
+            url
+            for url, task in self._tasks.items()
+            if task.done() and not task.cancelled() and task.result() is None
+        )
 
     def pending(self) -> bool:
         """Whether a resolution runs or is due (the due ones start)."""
@@ -207,6 +241,7 @@ class ResolveConfig(Protocol):
     """The answer rule's limits."""
 
     max_probe_count: int
+    max_links_per_hoster: int
     probe_concurrency: int
     resolve_target_count: int
     stream_deadline_seconds: float
@@ -238,6 +273,7 @@ class ResolveFlow:
         self._cached_resolution_fn = cached_resolution_fn
         self._telemetry = telemetry
         self._max_probe_count = config.max_probe_count
+        self._max_links_per_hoster = config.max_links_per_hoster
         self._probe_concurrency = config.probe_concurrency
         self._resolve_target = config.resolve_target_count
         self._deadline_s = config.stream_deadline_seconds
@@ -276,16 +312,31 @@ class ResolveFlow:
         cached_fn = self._cached_resolution_fn
         if from_cache and cached_fn is not None:
             ranked = await self._rank(progress.results, plugin_languages)
-            ranked = ranked[: self._max_probe_count]
+            # Read the cached outcomes before the cap: a hoster's cached-live
+            # link may rank below its first two and must not be lost
             cached = self._cached_resolutions(ranked, cached_fn)
             if any(is_direct_video_url(r, ranked[i].url) for i, r in cached.items()):
+                exempt = frozenset(ranked[i].url for i in cached)
+                dead = frozenset(
+                    s.url for s in ranked if cached_fn(s.url) == (True, None)
+                )
+                window = cap_links_per_hoster(
+                    ranked,
+                    self._max_links_per_hoster,
+                    exempt=exempt,
+                    dead=dead,
+                )
+                window = self._with_exempt(
+                    window[: self._max_probe_count], ranked, exempt
+                )
+                cached = self._reindex(cached, ranked, window)
                 log.info("stremio_resolve_from_cache", resolved=len(cached))
                 self._telemetry.count("stremio_phase", "cached", phase="resolve")
                 if any(not cached_fn(s.url)[0] for s in ranked):
                     self.resolve_in_background(
                         key, progress, plugin_languages, resolve_fn
                     )
-                return ranked, cached
+                return window, cached
         return await self._resolve_as_results_arrive(
             progress,
             plugin_languages,
@@ -382,6 +433,39 @@ class ResolveFlow:
                     break
         return found
 
+    @staticmethod
+    def _with_exempt(
+        window: list[RankedStream],
+        ranked: list[RankedStream],
+        exempt: frozenset[str],
+    ) -> list[RankedStream]:
+        """*window* with every exempt stream of *ranked* that it lacks, in
+        rank order: the probe window's truncation must not drop a stream the
+        registry already knows works."""
+        present = {stream.url for stream in window}
+        extra = [
+            stream
+            for stream in ranked
+            if stream.url in exempt and stream.url not in present
+        ]
+        if not extra:
+            return window
+        return sorted([*window, *extra], key=lambda s: -s.rank_score)
+
+    @staticmethod
+    def _reindex(
+        cached: dict[int, ResolvedStream],
+        ranked: list[RankedStream],
+        window: list[RankedStream],
+    ) -> dict[int, ResolvedStream]:
+        """*cached* (indexed into *ranked*) indexed into *window* instead."""
+        position = {stream.url: i for i, stream in enumerate(window)}
+        return {
+            position[ranked[old].url]: resolved
+            for old, resolved in cached.items()
+            if ranked[old].url in position
+        }
+
     async def _resolve_as_results_arrive(
         self,
         progress: SearchProgress,
@@ -417,7 +501,7 @@ class ResolveFlow:
             claim=PageClaim("background" if background else "capture", deadline),
         )
         target = 0 if background else self._resolve_target
-        ranked: list[RankedStream] = []
+        full: list[RankedStream] = []
         seen = 0
         reason = "deadline"
         phase = "background_resolve" if background else "resolve"
@@ -435,15 +519,26 @@ class ResolveFlow:
                         # per batch scored every stream again (10 ms per
                         # request on x86 for 200). The stable merge keeps the
                         # full sort's order
-                        ranked = list(
+                        full = list(
                             heapq.merge(
-                                ranked,
+                                full,
                                 await self._rank(new, plugin_languages),
                                 key=lambda s: -s.rank_score,
                             )
                         )
-                        resolution.update(ranked)
-                        continue
+                    # A site that lists dozens of links for the same hosters
+                    # must not fill the probe window with them (see
+                    # ``cap_links_per_hoster``). Rebuilt on every wake, so a
+                    # hoster whose first links turned out dead reaches its
+                    # next one, and a stream that already resolved stays
+                    # whatever new result ranks above it.
+                    window = cap_links_per_hoster(
+                        full,
+                        self._max_links_per_hoster,
+                        exempt=resolution.video_urls(),
+                        dead=resolution.dead_urls(),
+                    )
+                    resolution.update(window)
                     if target > 0 and resolution.videos() >= target:
                         reason = "target"
                         break

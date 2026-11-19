@@ -1,8 +1,8 @@
 """The streams of a Stremio answer: ranked, measured, served by Scavengarr.
 
 The search results convert into streams in a worker thread (CPU work) and
-the sorter ranks them; what a resolution measured (quality, size) can
-change a stream's rank. Streams Scavengarr serves point at ``/play/`` or
+the sorter ranks them; what a resolution measured (quality, size, bitrate, hoster)
+can change a stream's rank. Streams Scavengarr serves point at ``/play/`` or
 the HLS proxy, and their links are saved for those to look up.
 """
 
@@ -19,6 +19,8 @@ from scavengarr.application.stremio.stream_builder import (
     apply_resolution,
     build_cache_link,
     build_stream_from_resolved,
+    hoster_key,
+    is_direct_video_url,
     stream_link_id,
 )
 from scavengarr.domain.entities.stremio import (
@@ -92,24 +94,67 @@ def with_measurements(
     *,
     rank_score: Callable[[RankedStream], int],
 ) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
-    """The streams with what their resolutions measured (quality, size;
-    ``apply_resolution``) and the resolutions by index.
+    """The streams with what their resolutions measured (quality, size,
+    bitrate, the hoster the link ended at; ``apply_resolution``) and the
+    resolutions by index.
 
-    A changed quality changes the rank: the streams are sorted again
-    (stable, like the sorter), the resolutions follow their streams.
+    A changed quality, bitrate or hoster changes the rank: the streams are
+    sorted again (stable, like the sorter), the resolutions follow their
+    streams. Two labels that resolve to the same hoster (a shortener that
+    lands on voe) are then one stream, the better-ranked.
     """
     merged = [
         apply_resolution(s, resolved[i]) if i in resolved else s
         for i, s in enumerate(ranked)
     ]
-    if all(m.quality is s.quality for m, s in zip(merged, ranked, strict=True)):
-        return merged, resolved
-    scores = [rank_score(s) for s in merged]
-    order = sorted(range(len(merged)), key=scores.__getitem__, reverse=True)
-    return (
-        [replace(merged[old], rank_score=scores[old]) for old in order],
-        {new: resolved[old] for new, old in enumerate(order) if old in resolved},
+    changed = any(
+        m.quality is not s.quality
+        or m.bitrate_bps != s.bitrate_bps
+        or m.hoster != s.hoster
+        for m, s in zip(merged, ranked, strict=True)
     )
+    if changed:
+        scores = [rank_score(s) for s in merged]
+        order = sorted(range(len(merged)), key=scores.__getitem__, reverse=True)
+        merged = [replace(merged[old], rank_score=scores[old]) for old in order]
+        resolved = {
+            new: resolved[old] for new, old in enumerate(order) if old in resolved
+        }
+    return _deduplicate(merged, resolved)
+
+
+def _deduplicate(
+    ranked: list[RankedStream], resolved: dict[int, ResolvedStream]
+) -> tuple[list[RankedStream], dict[int, ResolvedStream]]:
+    """*ranked* with one playable stream per hoster, language and episode,
+    and the resolutions by their new index.
+
+    Only a resolved direct video is deduplicated: an unresolved link or an
+    echoed embed page is no stream of its hoster (``cache_and_proxy`` drops
+    it), and the hoster's next link may be the one that resolved. The
+    episode label is part of the key: a wrong-season result that outranks
+    the right one must not remove it (code review, 2026-11-18). The input
+    must already be sorted by rank. Streams without a hoster name are always
+    kept (no dedup key).
+    """
+    kept: list[RankedStream] = []
+    resolutions: dict[int, ResolvedStream] = {}
+    seen: set[tuple[object, ...]] = set()
+    for old, stream in enumerate(ranked):
+        base = hoster_key(stream)
+        resolution = resolved.get(old)
+        playable = resolution is not None and is_direct_video_url(
+            resolution, stream.url
+        )
+        if base is not None and playable:
+            key = (*base, stream.label_season, stream.label_episode)
+            if key in seen:
+                continue
+            seen.add(key)
+        if resolution is not None:
+            resolutions[len(kept)] = resolution
+        kept.append(stream)
+    return kept, resolutions
 
 
 async def cache_and_proxy(

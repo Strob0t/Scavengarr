@@ -445,6 +445,16 @@ class StremioConfig(BaseModel):
             "the stream; a timeout or network error keeps it."
         ),
     )
+    min_stream_size_mb: int = Field(
+        default=20,
+        ge=0,
+        description=(
+            "A resolved file smaller than this is dropped as a stub (an ad "
+            "or a placeholder, not the film): the playback check measured its "
+            "size. A playlist has no size, the content-type probe is not "
+            "checked, and 0 turns the floor off."
+        ),
+    )
     probe_concurrency: int = Field(
         default=10,
         description="Max parallel hoster resolutions at stream time.",
@@ -452,6 +462,17 @@ class StremioConfig(BaseModel):
     max_probe_count: int = Field(
         default=50,
         description="Max streams to resolve at stream time (top-ranked first).",
+    )
+    max_links_per_hoster: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "Max links per hoster and language in the probe window. A site "
+            "that lists dozens of links for the same hosters would otherwise "
+            "fill max_probe_count with them and push out another site's link "
+            "(a 1080p stream without a quality label ranks below a flood of "
+            "720p guesses). 0 keeps every link."
+        ),
     )
     probe_stealth_timeout_seconds: float = Field(
         default=15.0,

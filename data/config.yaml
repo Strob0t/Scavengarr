@@ -124,6 +124,7 @@ stremio:
   plugin_timeout_seconds: 30.0 # plugin search ends 30 s after the request
   stream_deadline_seconds: 60.0 # latest answer
   verify_streams: true # drop resolved URLs that do not return video bytes
+  min_stream_size_mb: 20 # drop a resolved file below this as a stub (0 = off)
   plugin_health_interval_seconds: 1800.0 # check every plugin's site; searches skip sites that did not answer (0 = off)
   allow_hls_transcoding: false # let Stremio's streaming server transcode HLS (too slow for 1080p on the production host)
 
@@ -143,6 +144,7 @@ stremio:
   # Hoster resolution at /stream time
   probe_concurrency: 20 # parallel resolutions (auto-tuned when auto_tune_all)
   max_probe_count: 80 # top-ranked streams to resolve (was 50)
+  max_links_per_hoster: 2 # each hoster and language's best links before the window (0 = off)
 
   # The answer goes out once this many hosters have a video
   resolve_target_count: 5

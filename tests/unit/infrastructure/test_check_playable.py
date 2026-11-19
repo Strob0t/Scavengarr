@@ -255,7 +255,53 @@ class TestMeasurement:
 
         check = await _measure(ResolvedStream(_M3U8, is_hls=True))
 
-        assert check == PlaybackCheck(playable=True, width=1920, height=1080)
+        assert check == PlaybackCheck(
+            playable=True, width=1920, height=1080, bitrate_bps=5_000_000
+        )
+
+    @respx.mock
+    async def test_average_bandwidth_is_preferred(self) -> None:
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=6000000,AVERAGE-BANDWIDTH=4500000,"
+            b"RESOLUTION=1920x1080\nv.m3u8\n"
+        )
+        respx.get(_M3U8).respond(200, content=master)
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert check.bitrate_bps == 4_500_000
+
+    @respx.mock
+    async def test_the_higher_bitrate_wins_an_equal_resolution(self) -> None:
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1920x1080\na.m3u8\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080\nb.m3u8\n"
+        )
+        respx.get(_M3U8).respond(200, content=master)
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert check.bitrate_bps == 6_000_000
+
+    @respx.mock
+    async def test_an_iframe_variant_is_not_a_playable_variant(self) -> None:
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720\na.m3u8\n"
+            b"#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=3840x2160,"
+            b'URI="iframes.m3u8"\n'
+        )
+        respx.get(_M3U8).respond(200, content=master)
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert (check.width, check.height, check.bitrate_bps) == (
+            1280,
+            720,
+            3_000_000,
+        )
 
     @respx.mock
     async def test_a_media_playlist_has_no_resolution(self) -> None:
@@ -269,16 +315,75 @@ class TestMeasurement:
 
     @respx.mock
     async def test_a_variant_cut_off_by_the_sniff_is_not_read(self) -> None:
-        # The check reads 4 KiB: a 4K variant whose height is cut must not
-        # count as 3840x21
+        # The check reads 4 KiB: a 4K variant whose line the read cuts must
+        # not count from its truncated resolution (8192x432 would win)
         head = b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1280x720\na\n"
-        cut = b"#EXT-X-STREAM-INF:BANDWIDTH=9,RESOLUTION=3840x21"
+        cut = b"#EXT-X-STREAM-INF:BANDWIDTH=9,RESOLUTION=8192x432"
         padding = b"#" * (_SNIFF_BYTES - len(head) - len(cut) - 1) + b"\n"
-        respx.get(_M3U8).respond(200, content=head + padding + cut + b"60\nb\n")
+        respx.get(_M3U8).respond(200, content=head + padding + cut)
 
         check = await _measure(ResolvedStream(_M3U8, is_hls=True))
 
         assert (check.width, check.height) == (1280, 720)
+
+    @respx.mock
+    async def test_a_crlf_master_keeps_its_variants(self) -> None:
+        # RFC 8216 allows CRLF; the carriage return must not spoil the last
+        # attribute (2026-11-18 code review)
+        master = (
+            b"#EXTM3U\r\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\r\n"
+            b"v.m3u8\r\n"
+        )
+        respx.get(_M3U8).respond(200, content=master)
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert check == PlaybackCheck(
+            playable=True, width=1920, height=1080, bitrate_bps=5_000_000
+        )
+
+    @respx.mock
+    async def test_a_playlist_body_without_the_suffix_is_a_playlist(self) -> None:
+        # A resolver may guess is_hls from the URL; the body decides. Its
+        # range answer sizes the playlist, not a video (2026-11-18 review)
+        url = "https://cdn.example.com/stream/abc"
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nv.m3u8\n"
+        )
+        respx.get(url).respond(
+            206,
+            content=master,
+            headers={"Content-Range": f"bytes 0-{len(master) - 1}/{len(master)}"},
+        )
+
+        check = await _measure(ResolvedStream(url))
+
+        assert check == PlaybackCheck(
+            playable=True,
+            width=1920,
+            height=1080,
+            size_bytes=None,
+            bitrate_bps=5_000_000,
+        )
+
+    @respx.mock
+    async def test_a_quoted_codec_list_is_one_attribute(self) -> None:
+        master = (
+            b"#EXTM3U\n"
+            b"#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,"
+            b'CODECS="avc1.640028,mp4a.40.2"\nv.m3u8\n'
+        )
+        respx.get(_M3U8).respond(200, content=master)
+
+        check = await _measure(ResolvedStream(_M3U8, is_hls=True))
+
+        assert (check.width, check.height, check.bitrate_bps) == (
+            1920,
+            1080,
+            5_000_000,
+        )
 
     @respx.mock
     async def test_a_file_gives_its_size(self) -> None:
@@ -291,6 +396,37 @@ class TestMeasurement:
         check = await _measure(ResolvedStream(_MP4))
 
         assert check == PlaybackCheck(playable=True, size_bytes=1_500_000_000)
+
+    @respx.mock
+    async def test_a_file_gives_its_bitrate(self) -> None:
+        body = FTYP + moov(trak(1920, 800), duration_s=600)
+        respx.get(_MP4).respond(
+            206,
+            content=body,
+            headers={"Content-Range": f"bytes 0-{len(body) - 1}/1500000000"},
+        )
+
+        check = await _measure(ResolvedStream(_MP4))
+
+        assert check == PlaybackCheck(
+            playable=True,
+            width=1920,
+            height=800,
+            size_bytes=1_500_000_000,
+            bitrate_bps=20_000_000,
+        )
+
+    @respx.mock
+    async def test_a_file_without_a_duration_has_no_bitrate(self) -> None:
+        respx.get(_MP4).respond(
+            206,
+            content=b"\x00\x00\x00\x18ftypmp42",
+            headers={"Content-Range": "bytes 0-4095/1500000000"},
+        )
+
+        check = await _measure(ResolvedStream(_MP4))
+
+        assert check.bitrate_bps is None
 
     @respx.mock
     async def test_a_playlists_range_answer_is_no_file_size(self) -> None:

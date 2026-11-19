@@ -34,11 +34,12 @@ _SEGMENT_GONE_STATUSES = frozenset({403, 404, 410})
 # A CDN that does not allow HEAD is asked for the first bytes instead
 _HEAD_NOT_ALLOWED = 405
 
-# A variant of a master playlist; its RESOLUTION complete (a comma or the
-# line end after it: the sniff can cut the last line)
-_VARIANT_RESOLUTION_RE = re.compile(
-    rb"^#EXT-X-STREAM-INF:.*?RESOLUTION=(\d+)x(\d+)(?=[,\r\n])", re.MULTILINE
-)
+# A variant of a master playlist; its attributes (a cut last line names no
+# resolution, because the pattern needs the whole line). An I-frame variant
+# is not a playable variant and does not match.
+_STREAM_INF_RE = re.compile(rb"^#EXT-X-STREAM-INF:(.*)$", re.MULTILINE)
+_ATTRIBUTE_RE = re.compile(rb'([A-Z0-9-]+)=("[^"]*"|[^,]*)')
+_RESOLUTION_RE = re.compile(rb"(\d+)x(\d+)")
 # The total of a range answer; "*" (unknown) does not match
 _CONTENT_RANGE_TOTAL_RE = re.compile(r"bytes \d+-\d+/(\d+)")
 
@@ -162,17 +163,65 @@ async def verify_video_url(
 class PlaybackCheck:
     """What the playback check saw: whether a player could play the stream,
     the largest resolution of an HLS master playlist or an MP4 file's
-    video, and a file's size."""
+    video, a file's size, and the bitrate of the variant or file."""
 
     playable: bool
     width: int | None = None
     height: int | None = None
     size_bytes: int | None = None
+    bitrate_bps: int | None = None
 
 
-def _largest_variant(head: bytes) -> tuple[int, int] | None:
-    sizes = [(int(w), int(h)) for w, h in _VARIANT_RESOLUTION_RE.findall(head)]
-    return max(sizes, key=lambda size: size[0] * size[1], default=None)
+@dataclass(frozen=True)
+class _Variant:
+    """A playable variant of an HLS master playlist."""
+
+    width: int
+    height: int
+    bitrate_bps: int | None
+
+
+def _variants(head: bytes) -> list[_Variant]:
+    """The variants a master playlist's ``#EXT-X-STREAM-INF`` lines name
+    with a complete ``RESOLUTION``; a line the sniff cut is ignored."""
+    variants: list[_Variant] = []
+    for match in _STREAM_INF_RE.finditer(head):
+        # The sniff may end inside the last line: its attributes are cut
+        if match.end() == len(head) and not head.endswith(b"\n"):
+            continue
+        # A CRLF playlist leaves the carriage return in the group
+        line = match.group(1).rstrip(b"\r")
+        attributes = {
+            name: value.strip(b'"') for name, value in _ATTRIBUTE_RE.findall(line)
+        }
+        resolution = _RESOLUTION_RE.fullmatch(attributes.get(b"RESOLUTION", b""))
+        if resolution is None:
+            continue
+        # AVERAGE-BANDWIDTH is the better figure when the playlist has it
+        bitrate = attributes.get(b"AVERAGE-BANDWIDTH") or attributes.get(
+            b"BANDWIDTH", b""
+        )
+        variants.append(
+            _Variant(
+                int(resolution[1]),
+                int(resolution[2]),
+                int(bitrate) if bitrate.isdigit() else None,
+            )
+        )
+    return variants
+
+
+def _best_variant(head: bytes) -> _Variant | None:
+    """The variant with the most pixels, the higher bitrate among equal
+    resolutions; ``None`` for a media playlist."""
+    return max(
+        _variants(head),
+        key=lambda variant: (
+            variant.width * variant.height,
+            variant.bitrate_bps or 0,
+        ),
+        default=None,
+    )
 
 
 def _total_size(content_range: str | None) -> int | None:
@@ -180,15 +229,24 @@ def _total_size(content_range: str | None) -> int | None:
     return int(match[1]) if match else None
 
 
-async def _file_video_size(
+@dataclass(frozen=True)
+class _FileVideo:
+    """What an MP4 file's header names: its video size and its duration."""
+
+    width: int | None = None
+    height: int | None = None
+    seconds: float | None = None
+
+
+async def _file_video_info(
     http_client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str],
     answer: _Answer,
     deadline: float,
-) -> tuple[int, int] | None:
-    """The video size an MP4 file's header names: from the checked bytes
-    when its ``moov`` comes first, else from one more read of
+) -> _FileVideo:
+    """The video size and duration an MP4 file's header names: from the
+    checked bytes when its ``moov`` comes first, else from one more read of
     ``_SNIFF_BYTES`` where its ``moov`` starts, before the check's
     *deadline* (``time.monotonic()``). A failed read measures nothing.
 
@@ -196,13 +254,16 @@ async def _file_video_size(
     byte below 0x09, which ``lstrip()`` keeps.
     """
     size = _mp4.video_size(answer.head)
+    seconds = _mp4.movie_duration(answer.head)
+    if size is not None and seconds is not None:
+        return _FileVideo(*size, seconds)
     total = _total_size(answer.content_range)
-    if size is not None or total is None:
-        return size
+    if total is None:
+        return _FileVideo(*(size or (None, None)), seconds)
     offset = _mp4.moov_offset(answer.head, total)
     left = deadline - time.monotonic()
     if offset is None or left <= 0:
-        return None
+        return _FileVideo(*(size or (None, None)), seconds)
     try:
         async with asyncio.timeout(left):
             moov = await _first_bytes(http_client, url, headers, left, start=offset)
@@ -212,13 +273,14 @@ async def _file_video_size(
             cdn=extract_domain(url),
             error=type(exc).__name__,
         )
-        return None
+        return _FileVideo(*(size or (None, None)), seconds)
     # A CDN that ignores the range answers from the file's start
     if moov.status != 206 or not (moov.content_range or "").startswith(
         f"bytes {offset}-"
     ):
-        return None
-    return _mp4.video_size(moov.head)
+        return _FileVideo(*(size or (None, None)), seconds)
+    width, height = _mp4.video_size(moov.head) or size or (None, None)
+    return _FileVideo(width, height, _mp4.movie_duration(moov.head) or seconds)
 
 
 async def check_playable(
@@ -232,10 +294,11 @@ async def check_playable(
     such as mixdrop's answer other agents with 403.  An error status, an
     HTML page, or (for HLS) a body that is no playlist means the player
     would fail, so the stream is not playable. A playable stream comes with
-    what the bytes tell: the largest variant of a master playlist, the total
-    size of a file's range answer and an MP4 file's video size
-    (``_file_video_size``: one more read for a ``moov`` at the end, within
-    the check's 6 s).
+    what the bytes tell: the largest variant of a master playlist and that
+    variant's bitrate, the total size of a file's range answer, an MP4
+    file's video size and duration (``_file_video_info``: one more read for
+    a ``moov`` at the end, within the check's 6 s), and the file's bitrate
+    from its size and duration.
 
     A failed request (timeout, reset) raises ``httpx.HTTPError``: it says
     nothing about the stream.
@@ -245,22 +308,38 @@ async def check_playable(
     answer = await _first_bytes(
         http_client, stream.video_url, headers, _PLAYBACK_CHECK_TIMEOUT_S
     )
+    # A body that starts like a playlist is one, whatever the resolver
+    # guessed from the URL: its range answer sizes the playlist, not a video
+    playlist = answer.head.startswith(b"#EXTM3U")
     if answer.status >= 400:
         reason = f"status {answer.status}"
     elif answer.is_html:
         reason = "html"
-    elif stream.is_hls and not answer.head.startswith(b"#EXTM3U"):
+    elif stream.is_hls and not playlist:
         reason = "no playlist"
-    elif stream.is_hls:
-        width, height = _largest_variant(answer.head) or (None, None)
+    elif playlist:
+        variant = _best_variant(answer.head)
         # A playlist's range answer sizes the playlist, not the video
-        return PlaybackCheck(True, width, height)
+        return PlaybackCheck(
+            True,
+            width=variant.width if variant else None,
+            height=variant.height if variant else None,
+            bitrate_bps=variant.bitrate_bps if variant else None,
+        )
     else:
-        video = await _file_video_size(
+        video = await _file_video_info(
             http_client, stream.video_url, headers, answer, deadline
         )
-        width, height = video or (None, None)
-        return PlaybackCheck(True, width, height, _total_size(answer.content_range))
+        total = _total_size(answer.content_range)
+        return PlaybackCheck(
+            True,
+            width=video.width,
+            height=video.height,
+            size_bytes=total,
+            bitrate_bps=(
+                round(total * 8 / video.seconds) if total and video.seconds else None
+            ),
+        )
     log.info(
         "playback_check_failed",
         cdn=extract_domain(stream.video_url),
