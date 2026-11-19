@@ -20,6 +20,13 @@ Stremio streams: kinoking no longer gives another film's links (its `group_filmo
 - Docs: `configuration.md` regenerated.
 - Tests: `test_hls_proxy.py` (`prefer_audio_language`: set, unset, no match, one rendition, media playlist, region subtag, missing attribute).
 
+### Fixed: streamkiste Follows the 2026-11 Next.js Front End
+
+- streamkiste moved to `streamkiste.onl`: the old DLE mirrors redirect there or are dead, and the site serves a Next.js search at `GET /suche?q=` that caps the hit list on one page. The plugin searches that page and parses its `div.grid a.cv` cards (`div.cv-t` title or the `title` attribute, `div.cv-m` year or "Serie", `span.qual b` badges, `span.tag-serie` marks a series); the 2026-10 DLE parsers and their tests are removed.
+- Detail pages: `og:type` names the kind (`video.tv_show`), `og:description` is the site's SEO blurb, and the body carries the year (`span.sk-det-jahr`), genres (`div.sk-det-genres a`), rating (`span.sk-stern`) and the plot (`div.sk-det-trama`), which the parser prefers. The devideosrc player (`/movie/tt…`, `/serial/tt…`) names the kind as well, so link resolution is unchanged.
+- Domains: `streamkiste.onl` only. `streamkiste.bid` is a 301 to it, and `.taxi`, `.tv`, `.sx`, `.al` and `.city` are dead or parked since 2026-11, so all of them are gone.
+- Tests: `test_streamkiste_plugin.py` (a CV card, the zero-hit page, duplicate cards, the title fallback, a series card, Open Graph and page-body metadata, one search page) and `test_real_pages.py` against pages captured from the new site.
+
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
 - A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.
