@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from scavengarr.domain.plugins.base import SearchResult
+from scavengarr.infrastructure.plugins.constants import search_external_ids
 from scavengarr.infrastructure.plugins.httpx_base import HttpxPluginBase
 from scavengarr.infrastructure.plugins.relevance import hit_title, relevant_hits
 
@@ -213,6 +214,36 @@ class EinschaltenPlugin(HttpxPluginBase):
 
         return self._build_search_result(entry, detail, watch)
 
+    async def _direct_lookup(self, query: str) -> list[SearchResult]:
+        """Open the movie's API entry by TMDB id when the search is weak.
+
+        The site's API ids are TMDB ids. A detail or watch miss leaves the
+        caller to run the normal text search.
+        """
+        external = search_external_ids.get(None)
+        if external is None or external.tmdb_id is None:
+            return []
+        if external.content_type not in (None, "movie"):
+            return []
+        movie_id = external.tmdb_id
+        detail, watch = await asyncio.gather(
+            self._fetch_detail(movie_id),
+            self._fetch_watch(movie_id),
+        )
+        if detail is None or watch is None:
+            self._log.info("einschalten_direct_lookup", tmdb_id=movie_id, found=False)
+            return []
+        entry = {
+            "id": movie_id,
+            "title": detail.get("title") or query,
+            "releaseDate": detail.get("releaseDate", ""),
+            "posterPath": detail.get("posterPath", ""),
+        }
+        result = self._build_search_result(entry, detail, watch)
+        found = bool(result.download_links)
+        self._log.info("einschalten_direct_lookup", tmdb_id=movie_id, found=found)
+        return [result] if found else []
+
     async def search(
         self,
         query: str,
@@ -233,6 +264,10 @@ class EinschaltenPlugin(HttpxPluginBase):
             return []
 
         await self._ensure_client()
+
+        direct = await self._direct_lookup(query)
+        if direct:
+            return direct
 
         # The search also lists loose matches ("Oppenheimer" finds "Jud Süß");
         # each hit costs a movie and a watch request

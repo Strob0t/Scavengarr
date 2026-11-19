@@ -508,7 +508,9 @@ class HttpxPluginBase:
         with the browser's session (see ``_fetch_via_browser()``).  Without
         a fetcher this behaves like a plain GET with ``_safe_fetch()``-style
         logging.  A host in the browser memo goes straight to the browser.
-        *headers* go with the httpx request (the browser sends its own).
+        *headers* go with the httpx request and, when the page goes to the
+        browser, with the browser's requests too (an API that needs a header
+        such as ``X-XSRF-TOKEN`` keeps it).
 
         *raising* is the search page's mode (``_fetch_search_page()``): a
         domain that does not answer (a 5xx without a challenge, a transport
@@ -519,7 +521,9 @@ class HttpxPluginBase:
         if memo_fetcher is not None:
             full_url = str(httpx.URL(url, params=params)) if params else url
             return await memo_fetcher.fetch_text(
-                full_url, timeout=_BROWSER_FETCH_TIMEOUT_S
+                full_url,
+                timeout=_BROWSER_FETCH_TIMEOUT_S,
+                headers=headers,
             )
 
         client = await self._ensure_client()
@@ -540,7 +544,9 @@ class HttpxPluginBase:
         if resp.status_code < 400:
             self._follow_site_move(resp)
             return resp.text
-        return await self._error_answer(url, resp, context=context, raising=raising)
+        return await self._error_answer(
+            url, resp, context=context, raising=raising, headers=headers
+        )
 
     def _request_failed(
         self, url: str, exc: Exception, context: str
@@ -569,7 +575,13 @@ class HttpxPluginBase:
         return None
 
     async def _error_answer(
-        self, url: str, resp: httpx.Response, *, context: str, raising: bool
+        self,
+        url: str,
+        resp: httpx.Response,
+        *,
+        context: str,
+        raising: bool,
+        headers: dict[str, str] | None = None,
     ) -> str | None:
         """An answer from 400 up to ``_fetch_text()``: a Cloudflare page goes
         to the browser fetcher; anything else is logged as
@@ -580,7 +592,11 @@ class HttpxPluginBase:
         fetcher = self._browser_fetcher
         if fetcher is not None and challenge == "cloudflare_page":
             return await self._fetch_via_browser(
-                fetcher, str(resp.url), context=context, challenge=challenge
+                fetcher,
+                str(resp.url),
+                context=context,
+                challenge=challenge,
+                headers=headers,
             )
 
         if challenge is not None:
@@ -663,6 +679,7 @@ class HttpxPluginBase:
         *,
         context: str,
         challenge: str,
+        headers: dict[str, str] | None = None,
     ) -> str | None:
         """Load *url* in the browser and let httpx go on with its session.
 
@@ -684,7 +701,9 @@ class HttpxPluginBase:
             self._log.info(
                 f"{self.name}_browser_session_rejected", url=url, context=context
             )
-            body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            body = await fetcher.fetch_text(
+                url, timeout=_BROWSER_FETCH_TIMEOUT_S, headers=headers
+            )
             settle_challenge(solved=body is not None)
             return body
 
@@ -694,7 +713,9 @@ class HttpxPluginBase:
             context=context,
             challenge=challenge,
         )
-        solve = asyncio.create_task(self._solve_and_adopt(fetcher, url))
+        solve = asyncio.create_task(
+            self._solve_and_adopt(fetcher, url, headers=headers)
+        )
         self._background_solves.add(solve)
         solve.add_done_callback(_forget_solve)
         # A failed solve or a cut request leaves the challenge open: unsolved
@@ -703,11 +724,17 @@ class HttpxPluginBase:
         return body
 
     async def _solve_and_adopt(
-        self, fetcher: BrowserFetcherPort, url: str
+        self,
+        fetcher: BrowserFetcherPort,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> str | None:
         """Load *url* in the browser, then take over the browser's session."""
         try:
-            body = await fetcher.fetch_text(url, timeout=_BROWSER_FETCH_TIMEOUT_S)
+            body = await fetcher.fetch_text(
+                url, timeout=_BROWSER_FETCH_TIMEOUT_S, headers=headers
+            )
             if body is None:
                 return None
             session = await fetcher.session(url)

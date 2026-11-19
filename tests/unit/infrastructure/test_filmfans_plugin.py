@@ -744,7 +744,7 @@ class TestCloudflareBrowserFallback:
             ]
         }
 
-        async def _browser(url: str, *, timeout: float) -> str:
+        async def _browser(url: str, *, timeout: float, headers: object = None) -> str:
             if "/api/v2/search" in url:
                 return json.dumps(search)
             if "/api/v1/" in url:

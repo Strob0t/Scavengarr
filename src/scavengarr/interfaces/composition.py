@@ -93,6 +93,7 @@ from scavengarr.infrastructure.persistence.stream_link_cache import (
 from scavengarr.infrastructure.plugins import PluginRegistry
 from scavengarr.infrastructure.plugins.constants import (
     DEFAULT_USER_AGENT,
+    search_external_ids,
     search_max_results,
 )
 from scavengarr.infrastructure.plugins.health_monitor import PluginHealthMonitor
@@ -785,6 +786,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         episode_filter_fn=filter_by_episode,
         user_agent=DEFAULT_USER_AGENT,
         max_results_var=search_max_results,
+        external_ids_var=search_external_ids,
         stream_link_repo=state.stream_link_repo,
         resolve_fn=state.hoster_resolver_registry.resolve,
         # A cached search answers at once with the cached resolutions

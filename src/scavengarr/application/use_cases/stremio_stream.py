@@ -56,6 +56,7 @@ from scavengarr.application.stremio.title_resolution import (
 from scavengarr.application.stremio.title_search import TitleSearch, answer_budget_s
 from scavengarr.domain.entities.stremio import (
     EpisodeRef,
+    ExternalIds,
     RankedStream,
     ResolvedStream,
     SeriesMeta,
@@ -140,6 +141,7 @@ class StremioStreamUseCase:
         episode_filter_fn: EpisodeFilterFn,
         user_agent: str,
         max_results_var: ContextVar[int | None],
+        external_ids_var: ContextVar[ExternalIds | None] | None = None,
         stream_link_repo: StreamLinkRepository | None = None,
         resolve_fn: ResolveCallback | None = None,
         cached_resolution_fn: CachedResolutionCallback | None = None,
@@ -174,6 +176,7 @@ class StremioStreamUseCase:
                 search_engine=search_engine,
                 episode_filter_fn=episode_filter_fn,
                 max_results_var=max_results_var,
+                external_ids_var=external_ids_var,
                 plugin_timeout=config.plugin_timeout_seconds,
                 max_results_per_plugin=config.max_results_per_plugin,
                 telemetry=telemetry,

@@ -460,7 +460,7 @@ class TestKinogerCloudflareFallback:
         mock_client.get = AsyncMock(side_effect=_challenge)
         plug._client = mock_client
 
-        async def _browser(url: str, *, timeout: float) -> str:
+        async def _browser(url: str, *, timeout: float, headers: object = None) -> str:
             if "search_start=2" in url:
                 return ""
             if "do=search" in url:

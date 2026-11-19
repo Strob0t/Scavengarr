@@ -27,6 +27,7 @@ from scavengarr.infrastructure.hoster_resolvers.xfs import (
     create_all_xfs_resolvers,
     extract_xfs_file_id,
 )
+from scavengarr.infrastructure.plugins.constants import DEFAULT_USER_AGENT
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -329,7 +330,7 @@ class TestXFSResolverVideo:
         url = _make_url(config)
         embed_url = _make_embed_url(config)
         respx.get(embed_url).respond(200, text=_video_html_jwplayer())
-        respx.head(_VIDEO_HLS_URL).respond(200)
+        head = respx.head(_VIDEO_HLS_URL).respond(200)
 
         async with httpx.AsyncClient() as client:
             resolver = XFSResolver(config=config, http_client=client)
@@ -339,7 +340,9 @@ class TestXFSResolverVideo:
         assert result.video_url == _VIDEO_HLS_URL
         assert result.is_hls is True
         assert result.quality == StreamQuality.UNKNOWN
-        assert "Referer" in result.headers
+        assert result.headers["Referer"] == embed_url
+        assert result.headers["User-Agent"] == DEFAULT_USER_AGENT
+        assert head.calls.last.request.headers["User-Agent"] == DEFAULT_USER_AGENT
 
     @respx.mock
     @pytest.mark.asyncio()
@@ -463,7 +466,10 @@ class TestVideoExtraction:
         assert result is not None
         assert result.video_url == _VIDEO_HLS_URL
         assert result.is_hls is True
-        assert result.headers == {"Referer": embed_url}
+        assert result.headers == {
+            "Referer": embed_url,
+            "User-Agent": DEFAULT_USER_AGENT,
+        }
 
     @respx.mock
     @pytest.mark.asyncio()
