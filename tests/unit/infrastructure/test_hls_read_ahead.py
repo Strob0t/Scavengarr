@@ -50,6 +50,7 @@ class _Cdn:
         declare_length: bool = True,
     ) -> None:
         self.requests: list[str] = []
+        self.ranges: list[str | None] = []
         self.read_timeouts: list[float | None] = []
         self.size = size
         self.statuses = statuses or {}
@@ -69,6 +70,7 @@ class _Cdn:
     async def _answer(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         self.requests.append(url)
+        self.ranges.append(request.headers.get("range"))
         self.read_timeouts.append(request.extensions["timeout"]["read"])
         if self.block is not None:
             await self.block.wait()
@@ -147,8 +149,10 @@ async def _segment(
     client: httpx.AsyncClient, read_ahead: SegmentReadAhead, url: str
 ) -> tuple[bytes, str]:
     """A segment through the proxy's path, as the player gets it."""
-    chunks, content_type = await stream_hls_segment(
-        client, url, {}, read_ahead=read_ahead
+    answer = await stream_hls_segment(client, url, {}, read_ahead=read_ahead)
+    chunks, content_type = (
+        answer.chunks,
+        answer.headers.get("content-type", "application/octet-stream"),
     )
     return b"".join([chunk async for chunk in chunks]), content_type
 
@@ -245,9 +249,10 @@ class TestReadAhead:
         read_ahead = SegmentReadAhead()
         read_ahead.remember(_PLAYLIST, _SEGMENTS)
         async with cdn.client() as client:
-            chunks, _ = await stream_hls_segment(
+            answer = await stream_hls_segment(
                 client, _SEGMENTS[0], {}, head=True, read_ahead=read_ahead
             )
+            chunks = answer.chunks
             assert [chunk async for chunk in chunks] == []
             await _settle(read_ahead)
 
@@ -274,9 +279,10 @@ class TestReadAhead:
         async with cdn.client() as client:
             await _segment(client, read_ahead, _SEGMENTS[0])
             await _settle(read_ahead)
-            chunks, _ = await stream_hls_segment(
+            answer = await stream_hls_segment(
                 client, _SEGMENTS[1], {}, on_sent=sent.append, read_ahead=read_ahead
             )
+            chunks = answer.chunks
             received = [chunk async for chunk in chunks]
             await _settle(read_ahead)
 
@@ -670,3 +676,55 @@ async def test_remember_without_segments_changes_nothing(size: int) -> None:
     read_ahead.remember(_PLAYLIST, _SEGMENTS[:size])
 
     assert (_PLAYLIST in read_ahead._playbacks) == (size == 1)
+
+
+class TestRanges:
+    """The desktop Stremio app's player asks every HLS segment with
+    ``Range: bytes=0-``; the proxy answers it with the segment's span."""
+
+    async def test_bytes_0_is_answered_from_the_fetch_ahead_as_a_range(self) -> None:
+        cdn = _Cdn(size=150_000)
+        read_ahead = SegmentReadAhead()
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+            answer = await stream_hls_segment(
+                client,
+                _SEGMENTS[1],
+                {},
+                player={"Range": "bytes=0-"},
+                read_ahead=read_ahead,
+            )
+            received = b"".join([chunk async for chunk in answer.chunks])
+            await _settle(read_ahead)
+
+        body = _segment_body(_SEGMENTS[1], 150_000)
+        assert answer.status == 206
+        assert answer.headers["content-range"] == f"bytes 0-{len(body) - 1}/{len(body)}"
+        assert answer.headers["content-length"] == str(len(body))
+        assert received == body
+        assert cdn.requested("seg-2.ts") == 1
+
+    async def test_a_partial_range_is_left_to_the_cdn(self) -> None:
+        """Anything but the whole segment needs the CDN's own byte offsets."""
+        cdn = _Cdn(size=150_000)
+        read_ahead = SegmentReadAhead()
+        read_ahead.remember(_PLAYLIST, _SEGMENTS)
+        async with cdn.client() as client:
+            await _segment(client, read_ahead, _SEGMENTS[0])
+            await _settle(read_ahead)
+            answer = await stream_hls_segment(
+                client,
+                _SEGMENTS[1],
+                {},
+                player={"Range": "bytes=1000-1999"},
+                read_ahead=read_ahead,
+            )
+            [chunk async for chunk in answer.chunks]
+            await _settle(read_ahead)
+
+        # the fetches ahead asked for no range; the player's own request did
+        assert cdn.ranges[-1] == "bytes=1000-1999"
+        assert all(wanted is None for wanted in cdn.ranges[:-1])
+        assert cdn.requested("seg-2.ts") == 2

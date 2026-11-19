@@ -408,7 +408,12 @@ The segments follow these rules:
 - When the resume fails or ends short too, the transfer aborts (`SegmentCut`, one `hls_proxy_segment_cut` warning with the CDN's domain, the error type and the bytes sent and promised), since a clean end would hand the player a truncated segment as whole.
 - TLS runs in the event loop (the shared client's `AsyncioNetworkBackend`), which costs less CPU per relayed megabyte than httpx's default backend.
 - CDN fetches share a global semaphore of 50, and CDN errors answer 502.
-- `HEAD` answers like `GET` without a body, and for a segment it takes the CDN's status and content type only.
+- A player's `Range` and `If-Range` go to the CDN and its status and headers (`Content-Length`, `Content-Range`, `Accept-Ranges`) come back out, the same route a direct file takes: a player that asks a range learns the segment's length instead of a chunked body of unknown size.
+- The desktop Stremio app's player asks every HLS segment with `Range: bytes=0-` (mpv behind the app's shell); without the length it re-requested segment after segment (5-7 times each, every answer within a second) and the picture stalled and broke, while a player that sends no range played the same source.
+- The CDN request carries `Accept-Encoding: identity`, as a file's does: a byte range must keep its offsets, so nothing is decoded on the way.
+- A `bytes=0-` request asks for the whole segment and is answered from the fetch ahead when there is one, as a `206` with the segment's `Content-Range`; a request for a part of a segment is left to the CDN, whose byte offsets decide.
+- A `416` from the CDN passes through to the player, as it does for a file.
+- `HEAD` answers like `GET` without a body; for a segment it takes the CDN's status and headers (`Content-Length` among them) and counts no bytes.
 - The playlist is refused (403, `hls_proxy_converter_refused`) to a streaming server's ffmpeg (User-Agent `Lavf/`) unless `stremio.allow_hls_transcoding` is on, while variants and segments are not refused.
 
 Stremio Web has its streaming server probe every stream, and an HLS source goes through the server's converter, which re-encodes the video.
@@ -421,6 +426,7 @@ A player loads the segments one after another over one connection, and a CDN tha
 - A segment request starts the fetches of the next three into memory, under the CDN semaphore, and is answered from memory when its own segment was fetched ahead, a fetch in flight awaited.
 - The segments the player passed or jumped away from are dropped.
 - A segment ahead holds at most 16 MiB, and a larger one is left to the player's own request.
+- A request for a part of a segment is not answered from memory, only for its whole body (`bytes=0-` included).
 - At most 8 playbacks hold fetches ahead, and one more takes the place of the least recently used one.
 - The segment orders of at most 32 playbacks are kept, each for 3 h after the playback's last request.
 - A playback's fetches ahead are dropped 60 s after its last request, while its order stays, so a player that resumes after a pause gets the next three fetched ahead from its first request on.
