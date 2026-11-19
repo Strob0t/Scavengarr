@@ -7,8 +7,15 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import respx
+from structlog.testing import capture_logs
 
-from scavengarr.infrastructure.tmdb.client import HttpxTmdbClient
+from scavengarr.infrastructure.tmdb.client import (
+    _TTL_ALTERNATIVE,
+    _TTL_ALTERNATIVE_FAILURE,
+    HttpxTmdbClient,
+    _best_prefix_candidate,
+    _pick_search_alternative,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -69,6 +76,45 @@ _FIND_TV_RESPONSE = {
         }
     ],
     "person_results": [],
+}
+
+# A Japanese series whose localized name has an apostrophe: its romaji
+# alternative is the one German sites index.
+_FIND_JOJO_RESPONSE = {
+    "movie_results": [],
+    "tv_results": [
+        {
+            "id": 45790,
+            "name": "JoJo's Bizarre Adventure",
+            "original_name": "ジョジョの奇妙な冒険",
+            "first_air_date": "2012-10-06",
+            "origin_country": ["JP"],
+        }
+    ],
+    "person_results": [],
+}
+
+_JOJO_ALTERNATIVES_RESPONSE = {
+    "id": 45790,
+    "results": [
+        {"iso_3166_1": "JP", "title": "JoJo no Kimyō na Bōken", "type": "romaji"},
+        {"iso_3166_1": "JP", "title": "JoJo no Kimyou na Bouken", "type": "romaji"},
+        {
+            "iso_3166_1": "JP",
+            "title": "JoJo no Kimyou na Bouken Stone Ocean 2nd",
+            "type": "season 5 part 2 romaji",
+        },
+        {
+            "iso_3166_1": "JP",
+            "title": "JoJo no Kimyou na Bouken - Steel Ball Run",
+            "type": "",
+        },
+        {
+            "iso_3166_1": "US",
+            "title": "JoJo's Bizarre Adventure STONE OCEAN",
+            "type": "",
+        },
+    ],
 }
 
 _FIND_EMPTY_RESPONSE = {
@@ -164,6 +210,20 @@ def _cache_writes(cache: AsyncMock) -> dict[str, tuple[object, object]]:
     return {
         c.args[0]: (c.args[1], c.kwargs.get("ttl")) for c in cache.set.call_args_list
     }
+
+
+class _MemoryCache:
+    """A tiny CachePort stand-in that keeps the values and their TTLs."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, tuple[object, int | None]] = {}
+
+    async def get(self, key: str) -> object | None:
+        entry = self.data.get(key)
+        return None if entry is None else entry[0]
+
+    async def set(self, key: str, value: object, *, ttl: int | None = None) -> None:
+        self.data[key] = (value, ttl)
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +752,236 @@ class TestGetTitleAndYear:
         assert result is not None
         assert result.title == "No Date Movie"
         assert result.year is None
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_tv_includes_romaji_search_title(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/find/tt2359704").respond(json=_FIND_JOJO_RESPONSE)
+        respx.get(f"{_BASE}/tv/45790/alternative_titles").respond(
+            json=_JOJO_ALTERNATIVES_RESPONSE
+        )
+
+        result = await client.get_title_and_year("tt2359704")
+
+        assert result is not None
+        assert result.title == "JoJo's Bizarre Adventure"
+        assert result.search_titles == ["JoJo no Kimyou na Bouken"]
+        assert "JoJo no Kimyou na Bouken" in result.alt_titles
+        assert "ジョジョの奇妙な冒険" in result.alt_titles
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_alternative_titles_failure_keeps_title(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/find/tt2359704").respond(json=_FIND_JOJO_RESPONSE)
+        respx.get(f"{_BASE}/tv/45790/alternative_titles").respond(status_code=500)
+
+        result = await client.get_title_and_year("tt2359704")
+
+        assert result is not None
+        assert result.title == "JoJo's Bizarre Adventure"
+        assert result.search_titles == []
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_movie_does_not_fetch_alternatives(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        route = respx.get(f"{_BASE}/find/tt0103064").respond(json=_FIND_MOVIE_RESPONSE)
+
+        result = await client.get_title_and_year("tt0103064")
+
+        assert result is not None
+        assert result.search_titles == []
+        assert len(route.calls) == 1
+
+
+class TestAlternativeTitleCaching:
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_alternative_titles_are_cached(self) -> None:
+        route = respx.get(f"{_BASE}/tv/45790/alternative_titles").respond(
+            json=_JOJO_ALTERNATIVES_RESPONSE
+        )
+        cache = _MemoryCache()
+        client = HttpxTmdbClient(
+            api_key=_API_KEY, http_client=httpx.AsyncClient(), cache=cache
+        )
+        result = {"id": 45790, "name": "JoJo's Bizarre Adventure"}
+
+        first = await client._alternative_titles(result)
+        second = await client._alternative_titles(result)
+
+        assert first == second
+        assert len(route.calls) == 1
+        assert cache.data["tmdb:alternatives:tv:45790"][1] == _TTL_ALTERNATIVE
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_failed_alternative_lookup_is_cached_briefly(self) -> None:
+        route = respx.get(f"{_BASE}/tv/45790/alternative_titles").respond(
+            status_code=500
+        )
+        cache = _MemoryCache()
+        client = HttpxTmdbClient(
+            api_key=_API_KEY, http_client=httpx.AsyncClient(), cache=cache
+        )
+        result = {"id": 45790, "name": "JoJo's Bizarre Adventure"}
+
+        assert await client._alternative_titles(result) == []
+        assert await client._alternative_titles(result) == []
+
+        assert len(route.calls) == 1
+        assert cache.data["tmdb:alternatives:tv:45790"][1] == _TTL_ALTERNATIVE_FAILURE
+
+    @respx.mock
+    @pytest.mark.asyncio()
+    async def test_error_log_does_not_name_the_api_key(
+        self, client: HttpxTmdbClient, cache: AsyncMock
+    ) -> None:
+        respx.get(f"{_BASE}/find/tt2359704").respond(json=_FIND_JOJO_RESPONSE)
+        respx.get(f"{_BASE}/tv/45790/alternative_titles").respond(status_code=500)
+
+        with capture_logs() as logs:
+            await client.get_title_and_year("tt2359704")
+
+        assert "tmdb_http_error" in [entry["event"] for entry in logs]
+        assert _API_KEY not in repr(logs)
+
+
+class TestPickSearchAlternative:
+    """The original-language alternative a search may add."""
+
+    _JOJO = {
+        "origin_country": ["JP"],
+    }
+    _JOJO_ALTERNATIVES = _JOJO_ALTERNATIVES_RESPONSE["results"]
+
+    def test_base_romaji_beats_its_spin_offs(self) -> None:
+        assert (
+            _pick_search_alternative(
+                self._JOJO,
+                self._JOJO_ALTERNATIVES,
+                title="JoJo's Bizarre Adventure",
+            )
+            == "JoJo no Kimyou na Bouken"
+        )
+
+    def test_localized_duplicate_is_skipped(self) -> None:
+        """One Piece's localized name is already the romaji base."""
+        alternatives = [
+            {"iso_3166_1": "JP", "title": "ONE PIECE"},
+            {"iso_3166_1": "JP", "title": "ONE PIECE FAN LETTER"},
+            {"iso_3166_1": "JP", "title": "Wan Pisu"},
+        ]
+        assert (
+            _pick_search_alternative(
+                {"origin_country": ["JP"]},
+                alternatives,
+                title="One Piece",
+            )
+            == "Wan Pisu"
+        )
+
+    def test_spin_off_only_is_not_search_title(self) -> None:
+        alt = [
+            {"iso_3166_1": "JP", "title": "Jujutsu Kaisen"},
+            {"iso_3166_1": "JP", "title": "Jujutsu Kaisen: Shimetsu Kaiyuu"},
+        ]
+        assert (
+            _pick_search_alternative(
+                {"origin_country": ["JP"]},
+                alt,
+                title="JUJUTSU KAISEN",
+            )
+            is None
+        )
+
+    def test_no_origin_country_adds_nothing(self) -> None:
+        assert (
+            _pick_search_alternative(
+                {},
+                self._JOJO_ALTERNATIVES,
+                title="JoJo's Bizarre Adventure",
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize(
+        ("alternative", "kind", "reference"),
+        [
+            ("A Modern Farewell", "special episode title", "Modern Family"),
+            ("Montauk", "working title", "Stranger Things"),
+            ("TWD", "common initialization", "The Walking Dead"),
+            ("GoT", "abbreviation", "Game of Thrones"),
+        ],
+    )
+    def test_typed_codes_and_specials_are_not_candidates(
+        self, alternative: str, kind: str, reference: str
+    ) -> None:
+        alternatives = [
+            {"iso_3166_1": "US", "title": alternative, "type": kind},
+        ]
+        assert (
+            _pick_search_alternative(
+                {"origin_country": ["US"]},
+                alternatives,
+                title=reference,
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize("code", ["AGT", "ANTM-USA", "B5", "RPDR", "ANTM 2.0"])
+    def test_untyped_short_codes_are_not_candidates(self, code: str) -> None:
+        alternatives = [{"iso_3166_1": "US", "title": code, "type": ""}]
+        assert (
+            _pick_search_alternative(
+                {"origin_country": ["US"]},
+                alternatives,
+                title="A Show",
+            )
+            is None
+        )
+
+    def test_single_valid_alternative_is_used(self) -> None:
+        alternatives = [
+            {"iso_3166_1": "US", "title": "Greys Anatomy", "type": ""},
+        ]
+        assert (
+            _pick_search_alternative(
+                {"origin_country": ["US"]},
+                alternatives,
+                title="Grey's Anatomy",
+            )
+            == "Greys Anatomy"
+        )
+
+    def test_non_latin_localized_title_still_gets_romaji(self) -> None:
+        alternatives = [
+            {"iso_3166_1": "JP", "title": "Shingeki no Kyojin", "type": "romaji"},
+        ]
+        assert (
+            _pick_search_alternative(
+                {"origin_country": ["JP"]},
+                alternatives,
+                title="進撃の巨人",
+            )
+            == "Shingeki no Kyojin"
+        )
+
+    def test_base_title_with_colon_sequels(self) -> None:
+        assert _best_prefix_candidate(["Foo", "Foo: Bar", "Foo: Baz"]) == "Foo"
+
+    def test_prefix_tie_is_ambiguous(self) -> None:
+        assert _best_prefix_candidate(["Foo Bar", "Foo Baz"]) is None
+
+    def test_unique_prefix_wins(self) -> None:
+        assert (
+            _best_prefix_candidate(["Foo Bar", "Foo Bar Qux", "Foo Baz"]) == "Foo Bar"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -138,6 +138,7 @@ There is no generic stage engine: each plugin runs its stages inside `search()`.
 A typical search fetches the result pages, keeps the relevant hits, fetches their detail pages in parallel and builds one result per detail page.
 A JSON API that answers with links needs one stage; a site with redirect or embed pages needs more.
 The mediathek plugin needs one: its API answers with the broadcasters' own files, which need no hoster page ([The mediathek plugin](#the-mediathek-plugin)).
+aniworld's `/ajax/search` answers an empty body for a keyword with an apostrophe, so a title with one was searched as no hits. The plugin retries the longest run of words without an apostrophe (`Apostrophe's Title` becomes `Title`); `relevant_hits()` still filters the site's hits with the original query.
 Link validation runs after the plugin, outside it.
 
 ```mermaid

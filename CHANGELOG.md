@@ -39,6 +39,20 @@ Stremio streams: kinoking no longer gives another film's links (its `group_filmo
 - The shared `RetryTransport` retried only 429 and 503, so a transient `502 Bad Gateway` or `504 Gateway Timeout` from an upstream (TMDB, a plugin site) went straight through. A title lookup that hit one returned no streams although a retry would have found the title. The transport now retries 502 and 504 with the same `Retry-After`/exponential backoff budget; only 429 and 503 still count as throttling for the adaptive rate limiter, so a gateway error does not halve a domain's rate.
 - Tests: `test_retry_transport.py` (502 and 504 retry, a cached 502 is not retried, a gateway error does not call `record_throttle`).
 
+### Fixed: A Vetted Original-Language Title Is Searched and Matched
+
+- A series whose localized name differs from the name a site indexes (an anime's romaji title) was searched only under the localized name, and a site result under the romaji name was dropped by the title match.
+- For a TV title whose TMDB `/find` result names its origin country, the client reads `/alternative_titles` and keeps one Latin-script alternative from the types that name the same content (`romaji`, `alternative spelling`, `common misspelling`, `literal translation`, `original name`, `title`, empty); a special, sequel, working title, acronym or short code is skipped, and a non-Latin alternative or an ambiguous set of candidates adds nothing. The base title (the one the others start with, compared by words) goes to the reference titles and `search_titles`; each language group searches it as an extra query without the colon-base fallback.
+- The alternatives are cached for 7 days; a failed lookup is cached empty for 5 minutes. TMDB error logs no longer carry the request URL and its API key.
+- Tests: `test_tmdb_client.py` (type filter, short codes, colon sequels, ambiguous prefixes, a non-Latin localized title, cache and negative cache, the log), `test_stremio_queries.py` (the extra query, no colon fallback, merged search titles), `test_title_matcher.py` (a romaji site title passes).
+- Docs: `docs/current/stremio-addon.md`.
+
+### Fixed: aniworld Searches a Title Whose Keyword Has an Apostrophe
+
+- aniworld's `/ajax/search` answers HTTP 200 with an empty body for any keyword containing an ASCII apostrophe, so a series with one was searched as no hits. The plugin retries the longest run of words without an apostrophe when the first answer has no hits; `relevant_hits()` still filters the site's hits with the original query.
+- Tests: `test_aniworld_plugin.py` (the fallback and its two POST bodies).
+- Docs: `docs/current/plugins.md`.
+
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
 - A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.

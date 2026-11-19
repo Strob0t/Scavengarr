@@ -68,9 +68,12 @@ def build_multi_lang_reference(
     The first available language becomes the primary title; additional
     language titles are merged into ``alt_titles``.  This lets the title
     matcher accept results in any of the plugin's configured languages.
+    ``search_titles`` are merged the same way, so a reference built from
+    several languages carries every fallback query its title infos found.
     """
     primary: TitleMatchInfo | None = None
     extra_titles: list[str] = []
+    extra_search_titles: list[str] = []
     for lang in languages:
         info = title_infos.get(lang)
         if not info:
@@ -87,12 +90,23 @@ def build_multi_lang_reference(
             for alt in info.alt_titles:
                 if alt and alt != primary.title and alt not in extra_titles:
                     extra_titles.append(alt)
+            for search_title in info.search_titles:
+                if (
+                    search_title
+                    and search_title != primary.title
+                    and search_title not in extra_search_titles
+                ):
+                    extra_search_titles.append(search_title)
     if primary is None:
         return None
     # Merge, filtering out any that already appear in primary.alt_titles.
     existing = set(primary.alt_titles)
     merged = list(primary.alt_titles) + [t for t in extra_titles if t not in existing]
-    return replace(primary, alt_titles=merged)
+    existing_search = set(primary.search_titles)
+    merged_search = list(primary.search_titles) + [
+        t for t in extra_search_titles if t not in existing_search
+    ]
+    return replace(primary, alt_titles=merged, search_titles=merged_search)
 
 
 def first_available_title(
@@ -113,9 +127,15 @@ def build_lang_group_queries(
 ) -> list[str]:
     """Search queries of a language group: the titles of its languages.
 
-    Original titles (``alt_titles``) only serve the title matching. As
-    queries they cost 23% of the search requests and added 2 of 58
-    streams on a 12-title set (production, 2026-10-04).
+    Original titles (``alt_titles``) otherwise only serve the title
+    matching: as queries they cost 23% of the search requests and added
+    2 of 58 streams on a 12-title set (production, 2026-10-04).
+
+    ``search_titles`` is the exception: the original-language name in
+    Latin script (an anime's romaji title) that sites often index in
+    place of the localized name, chosen by the TMDB client. Only the
+    full cleaned title is queried — the base-before-colon fallback is
+    for the localized title; a shorter original name would be too wide.
     """
     queries: list[str] = []
     for lang in languages:
@@ -124,5 +144,9 @@ def build_lang_group_queries(
             continue
         for q in build_search_queries(info.title):
             if q not in queries:
+                queries.append(q)
+        for search_title in info.search_titles:
+            q = build_search_query(search_title)
+            if q and q not in queries:
                 queries.append(q)
     return queries

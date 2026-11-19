@@ -163,6 +163,19 @@ class TestBuildMultiLangReference:
         assert "The Godfather" in ref.alt_titles
         assert "Il Padrino" in ref.alt_titles
 
+    def test_search_titles_from_secondary_included(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(title="Der Titel", year=2012),
+            "en": TitleMatchInfo(
+                title="The Title",
+                year=2012,
+                search_titles=["Original Title"],
+            ),
+        }
+        ref = build_multi_lang_reference(infos, ["de", "en"])
+        assert ref is not None
+        assert ref.search_titles == ["Original Title"]
+
     def test_duplicate_titles_not_repeated(self) -> None:
         infos = {
             "de": TitleMatchInfo(title="Dune", year=2021),
@@ -219,3 +232,38 @@ class TestBuildLangGroupQueries:
         infos = {"de": None, "en": TitleMatchInfo(title="Severance", year=2022)}
 
         assert build_lang_group_queries(infos, ["de", "en"]) == ["Severance"]
+
+    def test_search_titles_are_queries(self) -> None:
+        """An anime's romaji title is searched besides the localized one."""
+        infos = {
+            "de": TitleMatchInfo(
+                title="JoJo's Bizarre Adventure",
+                year=2012,
+                alt_titles=["ジョジョの奇妙な冒険", "JoJo no Kimyou na Bouken"],
+                search_titles=["JoJo no Kimyou na Bouken"],
+            )
+        }
+
+        assert build_lang_group_queries(infos, ["de"]) == [
+            "JoJo's Bizarre Adventure",
+            "JoJo no Kimyou na Bouken",
+        ]
+
+    def test_search_title_equal_to_localized_not_repeated(self) -> None:
+        infos = {
+            "de": TitleMatchInfo(
+                title="Naruto",
+                alt_titles=["Naruto"],
+                search_titles=["Naruto"],
+            ),
+        }
+
+        assert build_lang_group_queries(infos, ["de"]) == ["Naruto"]
+
+    def test_search_title_with_colon_has_no_base_fallback(self) -> None:
+        """The colon fallback belongs to the localized title query."""
+        infos = {
+            "de": TitleMatchInfo(title="Title", search_titles=["Foo: Bar"]),
+        }
+
+        assert build_lang_group_queries(infos, ["de"]) == ["Title", "Foo Bar"]

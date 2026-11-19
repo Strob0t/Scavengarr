@@ -269,6 +269,20 @@ class TestScoreTitleMatch:
         score = score_title_match(_sr("Iron Man"), ref)
         assert score >= 1.0
 
+    def test_romaji_alt_title_matches_site_result(self) -> None:
+        """A site's romaji series name is accepted through the alt title."""
+        ref = TitleMatchInfo(
+            title="JoJo's Bizarre Adventure",
+            year=2012,
+            alt_titles=["ジョジョの奇妙な冒険", "JoJo no Kimyou na Bouken"],
+            content_type="series",
+        )
+        score = score_title_match(
+            _sr("JoJo no Kimyou na Bouken - S01E01 - Dio der Eindringling"),
+            ref,
+        )
+        assert score >= 0.7
+
     def test_no_alt_titles_behaves_as_before(self) -> None:
         """Empty alt_titles list should not change scoring."""
         ref = TitleMatchInfo(title="Iron Man", alt_titles=[])
