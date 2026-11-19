@@ -4,21 +4,7 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## v0.6.0 - 2026-11-19
-
-Stremio streams: kinoking no longer gives another film's links (its `group_filmo_*` servers match by title only), a link without a source language shows "Sprache unbekannt" instead of the plugin default, and the new setting `stremio.preferred_audio_language` makes the HLS proxy start a stream with several audio tracks in that language. Title matching: the IMDb fallback takes only the requested id, a title without a year is no fuzzy match, and a film's follow-up with another year is another film. Playback: proxied files go on after every interruption of their CDN, VEEV plays through the file proxy, an MP4 file's header measures its quality, and a StreamUp HLS stream must answer its first segment. Diagnostics: season, episode and plugin per stream, the proxy's first CDN answer and player aborts, stuck requests and a stalled event loop are logged. Dependencies: minor and patch updates (fastapi 0.162.2, patchright 1.64.4, ruff 0.17.4 and others).
-
-### Fixed: kinoking Gives No Other Film's Links, Unknown Link Languages Shown as Such
-
-- kinoking's `group_filmo_*` servers match by title only, like the `group_kk_*` servers: on the page of Musk (2026, tmdb 1096228) "VOE (FILMO DE)" and "BYSE (FILMO DE)" pointed at `Conan.der.Barbar.1982.mp4`. The plugin now drops both groups.
-- A link whose source names no language was labelled with the plugin's default language ("German Dub"), also for kinoking series episodes with Japanese audio. kinoking now gives such links the language `unknown` (series episodes, movie servers without a language tag; a "(DE)" server stays German), and `parse_language` shows `unknown` as "Sprache unbekannt" instead of the plugin default. A release name with a language still wins.
-- Tests: `test_kinoking_plugin.py` (the live server list of the Musk page as fixture `tests/fixtures/html/kinoking/movie-musk-servers.json`, link languages), `test_release_parser.py` (unknown link language).
-
-### Added: Preferred Audio Track of HLS Streams (`stremio.preferred_audio_language`)
-
-- An HLS master playlist with several audio renditions (filmo/filemoon: English DEFAULT=YES, Deutsch DEFAULT=NO) started in the playlist's default language. The new setting `stremio.preferred_audio_language` (a language code, unset by default) makes the HLS proxy mark the rendition of that language `DEFAULT=YES` and `AUTOSELECT=YES` and the other renditions of its group `DEFAULT=NO`. Unset, or without a rendition in that language, the playlist is unchanged. No language is set in the code.
-- Docs: `configuration.md` regenerated.
-- Tests: `test_hls_proxy.py` (`prefer_audio_language`: set, unset, no match, one rendition, media playlist, region subtag, missing attribute).
+## Unreleased (staging)
 
 ### Fixed: streamkiste Follows the 2026-11 Next.js Front End
 
@@ -99,6 +85,22 @@ Stremio streams: kinoking no longer gives another film's links (its `group_filmo
 - The resolver's name is now the stream's hoster: `rb.gy` and `bit.ly` links that redirect to one voe upload no longer answer as three hosters. The measured answer keeps one resolved direct video per hoster, language and episode, and an echo or a wrong-season result cannot remove the hoster's real stream.
 - A resolved file below `stremio.min_stream_size_mb` (default 20, `0` off) is a stub (bigwarp served a 1 MB `player/321b.mp4` for a feature film) and is dropped and cached dead without counting against the resolver's circuit breaker. A body that starts with `#EXTM3U` is a playlist, not a stub; the content-type probe and a run with `stremio.verify_streams` off are not checked.
 - Tests: probe-window cap/exemptions, redirect hosters, deduplication, stub floor, CRLF and cut playlists. Docs: `stremio-addon.md`, `hoster-resolvers.md`, regenerated `configuration.md`.
+
+## v0.6.0 - 2026-11-19
+
+Stremio streams: kinoking no longer gives another film's links (its `group_filmo_*` servers match by title only), a link without a source language shows "Sprache unbekannt" instead of the plugin default, and the new setting `stremio.preferred_audio_language` makes the HLS proxy start a stream with several audio tracks in that language. Title matching: the IMDb fallback takes only the requested id, a title without a year is no fuzzy match, and a film's follow-up with another year is another film. Playback: proxied files go on after every interruption of their CDN, VEEV plays through the file proxy, an MP4 file's header measures its quality, and a StreamUp HLS stream must answer its first segment. Diagnostics: season, episode and plugin per stream, the proxy's first CDN answer and player aborts, stuck requests and a stalled event loop are logged. Dependencies: minor and patch updates (fastapi 0.162.2, patchright 1.64.4, ruff 0.17.4 and others).
+
+### Fixed: kinoking Gives No Other Film's Links, Unknown Link Languages Shown as Such
+
+- kinoking's `group_filmo_*` servers match by title only, like the `group_kk_*` servers: on the page of Musk (2026, tmdb 1096228) "VOE (FILMO DE)" and "BYSE (FILMO DE)" pointed at `Conan.der.Barbar.1982.mp4`. The plugin now drops both groups.
+- A link whose source names no language was labelled with the plugin's default language ("German Dub"), also for kinoking series episodes with Japanese audio. kinoking now gives such links the language `unknown` (series episodes, movie servers without a language tag; a "(DE)" server stays German), and `parse_language` shows `unknown` as "Sprache unbekannt" instead of the plugin default. A release name with a language still wins.
+- Tests: `test_kinoking_plugin.py` (the live server list of the Musk page as fixture `tests/fixtures/html/kinoking/movie-musk-servers.json`, link languages), `test_release_parser.py` (unknown link language).
+
+### Added: Preferred Audio Track of HLS Streams (`stremio.preferred_audio_language`)
+
+- An HLS master playlist with several audio renditions (filmo/filemoon: English DEFAULT=YES, Deutsch DEFAULT=NO) started in the playlist's default language. The new setting `stremio.preferred_audio_language` (a language code, unset by default) makes the HLS proxy mark the rendition of that language `DEFAULT=YES` and `AUTOSELECT=YES` and the other renditions of its group `DEFAULT=NO`. Unset, or without a rendition in that language, the playlist is unchanged. No language is set in the code.
+- Docs: `configuration.md` regenerated.
+- Tests: `test_hls_proxy.py` (`prefer_audio_language`: set, unset, no match, one rendition, media playlist, region subtag, missing attribute).
 
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
