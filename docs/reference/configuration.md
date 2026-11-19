@@ -116,7 +116,7 @@ Unprefixed `CACHE_*` variables are not read.
 | `SCAVENGARR_HTTP_RATE_LIMIT_MIN_RPS` (or `SCAVENGARR_RATE_LIMIT_MIN_RPS`) | float | `0.5` | Minimum adaptive rate per domain (rps). |
 | `SCAVENGARR_HTTP_RATE_LIMIT_RPS` (or `SCAVENGARR_RATE_LIMIT_REQUESTS_PER_SECOND`) | float | `5.0` | Default per-domain rate limit (requests/second). 0 = unlimited. |
 | `SCAVENGARR_HTTP_RETRY_BACKOFF_BASE` | float | `1.0` | Base delay in seconds for exponential backoff. |
-| `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS` | int | `3` | Max retry attempts on 429/503 responses. 0 = no retries. |
+| `SCAVENGARR_HTTP_RETRY_MAX_ATTEMPTS` | int | `3` | Max retry attempts on 429/502/503/504 responses. 0 = no retries. |
 | `SCAVENGARR_HTTP_RETRY_MAX_BACKOFF` | float | `30.0` | Maximum backoff delay in seconds. |
 | `SCAVENGARR_HTTP_TIMEOUT_RESOLVE_SECONDS` | float | `15.0` | HTTP timeout for hoster resolution requests. |
 | `SCAVENGARR_HTTP_TIMEOUT_SECONDS` | float | `30.0` | Default HTTP timeout in seconds (used by scraping engine). |

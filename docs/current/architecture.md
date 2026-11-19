@@ -126,7 +126,7 @@ Cache, HTTP, configuration, logging and persistence:
 | `infrastructure/cache/redis_adapter.py` | `RedisAdapter` | Redis through `redis.asyncio`. |
 | `infrastructure/common/private_address_guard.py` | `PrivateAddressGuard`, `GuardedTransport`, `GuardedNetworkBackend` | Requests to scraped URLs kept out of the local network. |
 | `infrastructure/common/asyncio_network.py` | `AsyncioNetworkBackend` | The httpcore network backend on asyncio streams. |
-| `infrastructure/common/retry_transport.py` | `RetryTransport` | Per-domain rate limiting and the retry of 429 and 503 answers. |
+| `infrastructure/common/retry_transport.py` | `RetryTransport` | Per-domain rate limiting and the retry of 429, 502, 503 and 504 answers. |
 | `infrastructure/common/rate_limiter.py` | `DomainRateLimiter`, `TokenBucket` | The per-domain token buckets. |
 | `infrastructure/common/parsers.py` | `parse_size_to_bytes` | Size strings as bytes. |
 | `infrastructure/config/schema.py` | `AppConfig`, `StremioConfig`, `CacheConfig`, `PluginOverride`, `EnvOverrides` | The Pydantic settings with their validation. |
@@ -433,7 +433,7 @@ In the container, `docker/entrypoint.sh` ends with `exec python -m scavengarr.in
 
 ### Cross-cutting runtime
 
-- Every outbound HTTP request of the app goes through one shared `httpx.AsyncClient` (`build_http_client()`): `RetryTransport` (per-domain rate limit, retry of 429 and 503) over `GuardedTransport`.
+- Every outbound HTTP request of the app goes through one shared `httpx.AsyncClient` (`build_http_client()`): `RetryTransport` (per-domain rate limit, retry of 429, 502, 503 and 504) over `GuardedTransport`.
 - `PrivateAddressGuard` refuses every request and redirect hop to a non-public address (blind SSRF): IP literals at once, host names after a DNS lookup cached for 60 s; only the solver sidecar's host is allowed.
 - `GuardedNetworkBackend` connects to the addresses of that lookup, IPv4 first, the next address 250 ms later or as soon as one fails, so a second lookup cannot rebind them; TLS still verifies the host name.
 - The connections are asyncio streams (`AsyncioNetworkBackend`), whose TLS runs in the event loop (uvloop) instead of in Python.

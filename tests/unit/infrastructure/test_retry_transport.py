@@ -1,4 +1,4 @@
-"""Tests for RetryTransport (rate limiting + 429/503 retry)."""
+"""Tests for RetryTransport (rate limiting + 429/502/503/504 retry)."""
 
 from __future__ import annotations
 
@@ -93,6 +93,40 @@ class TestRetryTransport:
 
         assert resp.status_code == 200
         assert m.sleep.await_count == 1
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("status", [502, 504])
+    async def test_retries_on_gateway_error_then_succeeds(self, status: int) -> None:
+        responses = [
+            _make_response(status),
+            _make_response(200),
+        ]
+        transport = _make_transport(responses)
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 200
+        assert m.sleep.await_count == 1
+        assert transport._wrapped.handle_async_request.call_count == 2
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("status", [502, 504])
+    async def test_gateway_error_does_not_throttle(self, status: int) -> None:
+        responses = [
+            _make_response(status),
+            _make_response(200),
+        ]
+        transport = _make_transport(responses)
+        with (
+            patch.object(transport._rate_limiter, "record_throttle") as throttle,
+            patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m,
+        ):
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 200
+        throttle.assert_not_called()
 
     @pytest.mark.asyncio()
     async def test_respects_retry_after_header(self) -> None:
@@ -203,7 +237,7 @@ class TestRetryTransport:
 
 
 class TestCachedRetryableResponse:
-    """A 429/503 served from Cloudflare's cache won't change on retry."""
+    """A retryable error served from Cloudflare's cache won't change on retry."""
 
     @pytest.mark.asyncio()
     @pytest.mark.parametrize("cache_status", ["HIT", "STALE", "UPDATING"])
@@ -222,6 +256,17 @@ class TestCachedRetryableResponse:
         assert transport._wrapped.handle_async_request.call_count == 1
         m.sleep.assert_not_awaited()
         throttle.assert_not_called()  # the origin did not throttle us now
+
+    @pytest.mark.asyncio()
+    async def test_cached_502_returned_without_retry(self) -> None:
+        transport = _make_transport([_make_response(502, {"cf-cache-status": "HIT"})])
+        with patch("scavengarr.infrastructure.common.retry_transport.asyncio") as m:
+            m.sleep = AsyncMock()
+            resp = await transport.handle_async_request(_make_request())
+
+        assert resp.status_code == 502
+        assert transport._wrapped.handle_async_request.call_count == 1
+        m.sleep.assert_not_awaited()
 
     @pytest.mark.asyncio()
     async def test_uncached_429_still_retried(self) -> None:

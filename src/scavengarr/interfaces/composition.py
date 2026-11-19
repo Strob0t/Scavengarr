@@ -302,7 +302,7 @@ def configure_event_loop() -> None:
 
 
 def build_http_client(config: AppConfig) -> httpx.AsyncClient:
-    """Shared HTTP client: per-domain rate limit, 429/503 retry, SSRF guard.
+    """Shared HTTP client: per-domain rate limit, 429/502/503/504 retry, SSRF guard.
 
     Scraped pages decide most URLs this client requests, so every request
     and redirect hop to a non-public address is refused, except for the
@@ -578,7 +578,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await cache.clear()
         log.debug("cache_cleared", environment="dev")
 
-    # 2) HTTP client with per-domain rate limiting + 429/503 retry
+    # 2) HTTP client with per-domain rate limiting + 429/502/503/504 retry
     state.http_client = build_http_client(config)
     log.info(
         "http_client_initialized",
