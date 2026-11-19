@@ -4,7 +4,13 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ---
 
-## Unreleased (staging)
+## v0.6.1 - 2026-11-19
+
+Plugins: hdfilme and streamcloud follow their 2026-11 layouts and open a title by its TMDB id, streamkiste follows its Next.js front end, and aniworld searches a keyword with an apostrophe. Stremio: a vetted original-language title is searched, HLS segments answer the player's byte range (the desktop app's mpv stalled without it), gateway errors 502 and 504 are retried, the measured bitrate ranks and labels a stream, a site's link flood no longer hides another hoster, and stub files below `stremio.min_stream_size_mb` are dropped. Security: filelock and virtualenv, development tools only, are updated for 27 Dependabot alerts.
+
+### Security: filelock and virtualenv Updated for Their Advisories
+
+- The lock file updates `filelock` 4.0.8 to 4.2.12 and `virtualenv` 21.14.2 to 21.15.9, the fixed versions of 27 Dependabot alerts (6 high: virtualenv activation scripts and console launchers, filelock's ReadWriteLock). Both are indirect development dependencies through `pre-commit`; the production image installs only the main group (`poetry install --only main`) and never carried them. `virtualenv` now pulls `distlib` 0.4.3 and `packaging` 26.3.
 
 ### Fixed: streamkiste Follows the 2026-11 Next.js Front End
 
