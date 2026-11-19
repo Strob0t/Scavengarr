@@ -13,6 +13,13 @@ import pytest
 import respx
 
 _PLUGIN_PATH = Path(__file__).resolve().parents[3] / "plugins" / "kinoking.py"
+_MUSK_SERVERS = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "html"
+    / "kinoking"
+    / "movie-musk-servers.json"
+)
 _BASE = "https://kinoking.cc"
 
 
@@ -223,8 +230,7 @@ class TestMovieLinks:
         links = [link["link"] for link in _mod._movie_links(_MOVIE_HTML)]
 
         assert links == [
-            "https://dood.to/e/de1",
-            "https://voe.sx/e/filmo1",  # dood.to/e/de1 deduped
+            "https://dood.to/e/de1",  # group_filmo_ and group_kk_ dropped
             "https://voe.sx/e/live0",
             "https://voe.sx/e/live1",
             "https://voe.sx/e/live2",  # capped per server
@@ -237,6 +243,34 @@ class TestMovieLinks:
     def test_no_servers(self) -> None:
         assert _mod._movie_links("<html></html>") == []
         assert _mod._movie_links("const SERVERS = [not json];\n") == []
+
+    def test_link_languages(self) -> None:
+        """A "(DE)" server's links are German, an untagged server's links
+        have no known language (not the plugin default)."""
+        langs = {
+            link["link"]: link["language"] for link in _mod._movie_links(_MOVIE_HTML)
+        }
+        assert langs["https://dood.to/e/de1"] == "de"
+        assert langs["https://voe.sx/e/live0"] == "unknown"
+
+    def test_title_match_groups_dropped_on_the_musk_page(self) -> None:
+        """The live server list of movie.php?id=64548 (Musk, 2026, tmdb
+        1096228; 2026-11-19): its "group_filmo_" servers point at a file
+        named Conan.der.Barbar.1982.mp4, so neither they nor the "group_kk_"
+        servers may give a link."""
+        servers = json.loads(_MUSK_SERVERS.read_text(encoding="utf-8"))
+        html = f"<script>\n    const SERVERS = {json.dumps(servers)};\n</script>"
+
+        links = [link["link"] for link in _mod._movie_links(html)]
+
+        assert links == [
+            "https://odysseusa.cc/e/QbokSjJIerwfy",
+            "https://voe.sx/e/8l6fhbjjyolc",
+            "https://flyfile.app/v/0crO8QRi9zbcXaH",
+        ]
+        joined = " ".join(links)
+        assert "d7n53eg3s972" not in joined  # BYSE (FILMO DE)
+        assert "cyvt2h7hno5i" not in joined  # VOE (FILMO DE)
 
 
 class TestPageMeta:

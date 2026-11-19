@@ -28,6 +28,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     build_cdn_url,
     cdn_base_from_url,
     fetch_hls_resource,
+    prefer_audio_language,
     resolve_query_string,
     rewrite_manifest,
     stream_file,
@@ -2555,3 +2556,56 @@ class TestResolveQueryString:
     def test_request_query_takes_priority(self) -> None:
         result = resolve_query_string("new=1", "https://cdn.example.com/m.m3u8?old=2")
         assert result == "new=1"
+
+
+# ---------------------------------------------------------------------------
+# prefer_audio_language
+# ---------------------------------------------------------------------------
+
+_AUDIO_MASTER = (
+    "#EXTM3U\n"
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio0",NAME="English",LANGUAGE="en",'
+    'AUTOSELECT=YES,DEFAULT=YES,CHANNELS="2",URI="https://p/s/index-a1.m3u8"\n'
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio0",NAME="Deutsch",LANGUAGE="de",'
+    'AUTOSELECT=NO,DEFAULT=NO,CHANNELS="2",URI="https://p/s/index-a2.m3u8"\n'
+    "#EXT-X-STREAM-INF:BANDWIDTH=988990,RESOLUTION=1248x520,"
+    'CODECS="avc1.64001f,mp4a.40.2",AUDIO="audio0"\n'
+    "https://p/s/index-v1-a1.m3u8\n"
+)
+
+
+class TestPreferAudioLanguage:
+    """The configured language's audio rendition becomes the default (live
+    master playlist of a filmo/filemoon stream, 2026-11-19)."""
+
+    def test_configured_language_becomes_the_default(self) -> None:
+        lines = prefer_audio_language(_AUDIO_MASTER, "de").splitlines()
+        assert "DEFAULT=NO" in lines[1] and 'NAME="English"' in lines[1]
+        assert "DEFAULT=YES" in lines[2] and 'NAME="Deutsch"' in lines[2]
+        assert "AUTOSELECT=YES" in lines[2]
+        assert 'URI="https://p/s/index-a2.m3u8"' in lines[2]
+        assert lines[3:] == _AUDIO_MASTER.splitlines()[3:]
+
+    def test_unset_setting_leaves_the_playlist_unchanged(self) -> None:
+        assert prefer_audio_language(_AUDIO_MASTER, None) == _AUDIO_MASTER
+        assert prefer_audio_language(_AUDIO_MASTER, "") == _AUDIO_MASTER
+
+    def test_language_without_a_rendition_leaves_it_unchanged(self) -> None:
+        assert prefer_audio_language(_AUDIO_MASTER, "fr") == _AUDIO_MASTER
+
+    def test_already_default_language_is_unchanged(self) -> None:
+        assert prefer_audio_language(_AUDIO_MASTER, "en") == _AUDIO_MASTER
+
+    def test_single_rendition_and_media_playlists_unchanged(self) -> None:
+        single = "\n".join(_AUDIO_MASTER.splitlines()[:2] + [""])
+        assert prefer_audio_language(single, "de") == single
+        assert prefer_audio_language(_VARIANT_MANIFEST, "de") == _VARIANT_MANIFEST
+
+    def test_region_subtag_and_case(self) -> None:
+        content = _AUDIO_MASTER.replace('LANGUAGE="de"', 'LANGUAGE="DE-de"')
+        assert "DEFAULT=YES" in prefer_audio_language(content, "de").splitlines()[2]
+
+    def test_missing_default_attribute_is_added(self) -> None:
+        content = _AUDIO_MASTER.replace("AUTOSELECT=NO,DEFAULT=NO,", "")
+        line = prefer_audio_language(content, "de").splitlines()[2]
+        assert line.endswith(",DEFAULT=YES,AUTOSELECT=YES")

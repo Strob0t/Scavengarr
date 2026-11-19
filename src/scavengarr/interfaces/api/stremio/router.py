@@ -35,6 +35,7 @@ from scavengarr.infrastructure.stremio.hls_proxy import (
     cdn_base_from_url,
     fetch_hls_resource,
     listed_segments,
+    prefer_audio_language,
     resolve_query_string,
     rewrite_manifest,
     stream_file,
@@ -683,6 +684,11 @@ def _playlist_response(
         cdn_base,
         proxy_base,
         playlist_dir=playlist_dir,
+    )
+    config = getattr(state, "config", None)
+    rewritten = prefer_audio_language(
+        rewritten,
+        config.stremio.preferred_audio_language if config is not None else None,
     )
     read_ahead = getattr(state, "hls_read_ahead", None)
     if read_ahead is not None:

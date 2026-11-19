@@ -6,6 +6,18 @@ All notable changes to Scavengarr are documented in this file. Format: version, 
 
 ## Unreleased (staging)
 
+### Fixed: kinoking Gives No Other Film's Links, Unknown Link Languages Shown as Such
+
+- kinoking's `group_filmo_*` servers match by title only, like the `group_kk_*` servers: on the page of Musk (2026, tmdb 1096228) "VOE (FILMO DE)" and "BYSE (FILMO DE)" pointed at `Conan.der.Barbar.1982.mp4`. The plugin now drops both groups.
+- A link whose source names no language was labelled with the plugin's default language ("German Dub"), also for kinoking series episodes with Japanese audio. kinoking now gives such links the language `unknown` (series episodes, movie servers without a language tag; a "(DE)" server stays German), and `parse_language` shows `unknown` as "Sprache unbekannt" instead of the plugin default. A release name with a language still wins.
+- Tests: `test_kinoking_plugin.py` (the live server list of the Musk page as fixture `tests/fixtures/html/kinoking/movie-musk-servers.json`, link languages), `test_release_parser.py` (unknown link language).
+
+### Added: Preferred Audio Track of HLS Streams (`stremio.preferred_audio_language`)
+
+- An HLS master playlist with several audio renditions (filmo/filemoon: English DEFAULT=YES, Deutsch DEFAULT=NO) started in the playlist's default language. The new setting `stremio.preferred_audio_language` (a language code, unset by default) makes the HLS proxy mark the rendition of that language `DEFAULT=YES` and `AUTOSELECT=YES` and the other renditions of its group `DEFAULT=NO`. Unset, or without a rendition in that language, the playlist is unchanged. No language is set in the code.
+- Docs: `configuration.md` regenerated.
+- Tests: `test_hls_proxy.py` (`prefer_audio_language`: set, unset, no match, one rendition, media playlist, region subtag, missing attribute).
+
 ### Added: Tests Guard the Rate Limiter's Domain Grouping and Wiring
 
 - A regression in the rate limiter's domain grouping or in its wiring passed the tests. `test_adaptive_rate_limiter.py` now throttles one URL and expects `www.example.com` and `example.org` to slow down with it (one bucket per domain name), and `test_http_client_wiring.py` builds the shared HTTP client from a config and checks that the adaptive switch and the min and max rps reach the limiter. No behaviour changed.

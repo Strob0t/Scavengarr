@@ -611,10 +611,12 @@ class TestKinoking:
         links = _plugin_module("kinoking")._movie_links(
             _page("kinoking", "movie-oppenheimer")
         )
-        assert len(links) == 19
+        # 19 links before the "group_filmo_" servers (title match) were dropped
+        assert len(links) == 15
         assert links[0] == {
             "hoster": "filemoon",
             "link": "https://filemoon.to/e/fwzwu9ny19jk",
+            "language": "de",
         }
 
     def test_movie_year_and_genres(self) -> None:
@@ -638,7 +640,11 @@ class TestKinoking:
         picked = mod._pick_episodes(episodes, 1, 5)
         assert [(e["season_number"], e["episode_number"]) for e in picked] == [(1, 5)]
         assert mod._episode_links(episodes[0]) == [
-            {"hoster": "voe", "link": "https://voe.sx/e/jwf9glrkk7sd"}
+            {
+                "hoster": "voe",
+                "link": "https://voe.sx/e/jwf9glrkk7sd",
+                "language": "unknown",
+            }
         ]
 
 

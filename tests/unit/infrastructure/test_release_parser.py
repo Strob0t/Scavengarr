@@ -236,3 +236,30 @@ class TestParseLanguage:
         # language it is, not the plugin's German
         result = parse_language(link_language=label, plugin_default_language="de")
         assert result == StreamLanguage(code="ov", label="Original", is_dubbed=False)
+
+
+class TestUnknownLinkLanguage:
+    """A link whose source names no language: shown as unknown, not as the
+    plugin's default language."""
+
+    def test_unknown_link_language_wins_over_the_plugin_default(self) -> None:
+        lang = parse_language(link_language="unknown", plugin_default_language="de")
+        assert lang is not None
+        assert lang.code == "unknown"
+        assert lang.label == "Sprache unbekannt"
+        assert lang.is_dubbed is False
+
+    def test_release_name_still_wins(self) -> None:
+        lang = parse_language(
+            release_name="Show.S01E01.German.DL.720p.WEB.x264-GRP",
+            link_language="unknown",
+            plugin_default_language="de",
+        )
+        assert lang is not None
+        assert lang.code == "de"
+
+    def test_no_link_language_keeps_the_plugin_default(self) -> None:
+        lang = parse_language(link_language=None, plugin_default_language="de")
+        assert lang is not None
+        assert lang.code == "de"
+        assert lang.label == "German Dub"

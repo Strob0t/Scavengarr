@@ -405,6 +405,16 @@ class StremioConfig(BaseModel):
         ),
     )
 
+    preferred_audio_language: str | None = Field(
+        default=None,
+        description=(
+            'Language code (e.g. "de") of the audio track an HLS master '
+            "playlist with several audio renditions starts with: the proxy "
+            "marks that rendition DEFAULT=YES and the others DEFAULT=NO. "
+            "Unset, the playlist's own default is kept."
+        ),
+    )
+
     allow_hls_transcoding: bool = Field(
         default=False,
         description=(

@@ -1,0 +1,302 @@
+[
+ {
+  "id": "meinecloud_backup",
+  "name": "Backup Yes",
+  "is_group": false,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://meinecloud.click/movie/tt27041231"
+  ]
+ },
+ {
+  "id": "backup",
+  "name": "VIDSYNC AUTO",
+  "is_group": false,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://vidsync.xyz/embed/movie/1096228?defaultServer=cineflix&autoPlay=true"
+  ]
+ },
+ {
+  "id": "group_huhu_erver1",
+  "name": "Server E1 (EN)",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://mixdrop.ps/f/ell6xvn1h86m97"
+  ]
+ },
+ {
+  "id": "group_filmo_",
+  "name": "VOE (FILMO DE)",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://voe.sx/e/cyvt2h7hno5i"
+  ]
+ },
+ {
+  "id": "group_filmo_",
+  "name": "BYSE (FILMO DE)",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://bysezejataos.com/d/d7n53eg3s972"
+  ]
+ },
+ {
+  "id": "group_filmo_",
+  "name": "VOE (FILMO UN)",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://voe.sx/e/cyvt2h7hno5i"
+  ]
+ },
+ {
+  "id": "group_filmo_",
+  "name": "BYSE (FILMO UN)",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://bysezejataos.com/d/d7n53eg3s972"
+  ]
+ },
+ {
+  "id": "cinesrc_backup",
+  "name": "Kinoking UP",
+  "is_group": false,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://cinesrc.st/embed/movie/1096228?prioritize=true&lastserver=sturm"
+  ]
+ },
+ {
+  "id": "group_huhudirect_",
+  "name": "DIRECT HLS (EN)",
+  "is_group": true,
+  "is_huhu_direct": true,
+  "is_backup": true,
+  "mirrors": [
+   "https://mixdrop.ps/f/ell6xvn1h86m97"
+  ]
+ },
+ {
+  "id": "group_kk_ares",
+  "name": "ARES",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://streamtape.com/v/Lp4WW3D8kQIR2qO/31280%29_Die_drei_Musketiere.mp4",
+   "https://streamtape.com/e/O4qd9aYkVmIZ3mV",
+   "https://streamtape.com/e/LMPjqLDye3ieaP",
+   "https://streamtape.com/e/0pmlzzb2eoIgR3",
+   "https://streamtape.com/e/xkQv2RBDlrtkrge",
+   "https://streamtape.com/e/dLRVv1aLK8C0vM",
+   "https://streamtape.com/e/qvvQpeX2oBtzgbw/Zv7Y2Y1emucfN3UZ.mkv",
+   "https://streamtape.com/e/XyDBRlmPzAt3Ja/",
+   "https://streamtape.com/e/gvqg4KylrJCq0Mz/Die.drei.Musketiere.2011.German.AC3.DL.1080p.BluRay.x265-FuN.mkv.mp4"
+  ]
+ },
+ {
+  "id": "group_kk_upstream",
+  "name": "UPSTREAM",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://upstream.to/0bqg7d19wnj4",
+   "https://upstream.to/embed-h69z1z6w5bk9.html",
+   "https://upstream.to/xvx52jzke9be",
+   "https://upstream.to/embed-k88078llwp3n.html"
+  ]
+ },
+ {
+  "id": "group_kk_matriculant401merited",
+  "name": "MATRICULANT401MERITED",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://matriculant401merited.com/fagggny7pxni"
+  ]
+ },
+ {
+  "id": "group_kk_chronos",
+  "name": "CHRONOS",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://filemoon.sx/e/g3r37aj85vs7",
+   "https://filemoon.sx/e/4y5kwjot12ia"
+  ]
+ },
+ {
+  "id": "group_kk_streamhide",
+  "name": "STREAMHIDE",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://streamhide.com/e/ywr3e8677pj9"
+  ]
+ },
+ {
+  "id": "group_kk_availedsmallest",
+  "name": "AVAILEDSMALLEST",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://availedsmallest.com/fagggny7pxni"
+  ]
+ },
+ {
+  "id": "group_kk_zeus",
+  "name": "ZEUS",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://voe.sx/e/fagggny7pxni",
+   "https://voe.sx/e/r2sa8ebob9gt"
+  ]
+ },
+ {
+  "id": "group_kk_streamwish",
+  "name": "STREAMWISH",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://streamwish.com/e/enw379g1vmu4"
+  ]
+ },
+ {
+  "id": "group_kk_doods",
+  "name": "DOODS",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://doods.pro/e/jiv0j0dtlums"
+  ]
+ },
+ {
+  "id": "group_kk_filelions",
+  "name": "FILELIONS",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://filelions.live/v/1xfru6sjhdsm"
+  ]
+ },
+ {
+  "id": "group_kk_streamhub",
+  "name": "STREAMHUB",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://streamhub.to/e/2imv1anh4qt3"
+  ]
+ },
+ {
+  "id": "group_kk_hermes",
+  "name": "HERMES",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgStdqSd1BmH1m1WiG",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgStspn2TkyDkOyiK7",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgStswPyKf4aVhEdKv",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgStt48D3Wvcfb3bh2",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgSu53YNnAC3qQ811t",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgSu5GIeOlqz2Fikgp",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgSu5S1tJI7cBs1Fpd",
+   "https://veev.to/e/22DxrvXU2lk5S5u65CqF6xgSu5Bq5ObWtnDVBvt"
+  ]
+ },
+ {
+  "id": "group_kk_vidhideplus",
+  "name": "VIDHIDEPLUS",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://vidhideplus.com/file/iajcha1w128g"
+  ]
+ },
+ {
+  "id": "group_kk_vidmoly",
+  "name": "VIDMOLY",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://vidmoly.me/w/757zaevdfdt1"
+  ]
+ },
+ {
+  "id": "group_kk_mixdrop",
+  "name": "MIXDROP",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://mixdrop.ag/f/4d91wd67sqq0nqx"
+  ]
+ },
+ {
+  "id": "group_kk_streamplay",
+  "name": "STREAMPLAY",
+  "is_group": true,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://streamplay.to/xs57dcaabwca"
+  ]
+ },
+ {
+  "id": "dyn_fpto_586fc9",
+  "name": "VIDARA (LIVE)",
+  "is_group": false,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://odysseusa.cc/e/QbokSjJIerwfy"
+  ]
+ },
+ {
+  "id": "dyn_fpto_589c38",
+  "name": "VOE (LIVE)",
+  "is_group": false,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://voe.sx/e/8l6fhbjjyolc"
+  ]
+ },
+ {
+  "id": "dyn_fpto_073b4a",
+  "name": "FLYFILE (LIVE)",
+  "is_group": false,
+  "is_huhu_direct": false,
+  "is_backup": true,
+  "mirrors": [
+   "https://flyfile.app/v/0crO8QRi9zbcXaH"
+  ]
+ }
+]

@@ -198,6 +198,66 @@ def rewrite_manifest(
     return "".join(lines)
 
 
+_AUDIO_MEDIA_PREFIX = "#EXT-X-MEDIA:"
+_ATTR_RE_TEMPLATE = r'(?<=[:,]){name}=("[^"]*"|[^,\r\n]*)'
+
+
+def _attr(line: str, name: str) -> str | None:
+    """The value of attribute *name* of an HLS tag line (quotes removed)."""
+    m = re.search(_ATTR_RE_TEMPLATE.format(name=name), line)
+    return m.group(1).strip('"') if m else None
+
+
+def _with_attr(line: str, name: str, value: str) -> str:
+    """*line* with attribute *name* set to *value* (appended if absent)."""
+    pattern = _ATTR_RE_TEMPLATE.format(name=name)
+    if re.search(pattern, line):
+        return re.sub(pattern, f"{name}={value}", line, count=1)
+    body = line.rstrip("\r\n")
+    return f"{body},{name}={value}{line[len(body) :]}"
+
+
+def prefer_audio_language(content: str, language: str | None) -> str:
+    """Make the audio rendition in *language* the default of a master playlist.
+
+    For each ``GROUP-ID`` of ``#EXT-X-MEDIA:TYPE=AUDIO`` tags that has more
+    than one rendition and one whose ``LANGUAGE`` is *language* (primary
+    subtag, case-insensitive): that rendition gets ``DEFAULT=YES`` and
+    ``AUTOSELECT=YES``, the others of the group ``DEFAULT=NO``. Without
+    *language* (the setting is unset), or without such a rendition, the
+    playlist is returned unchanged.
+    """
+    if not isinstance(language, str) or not language:
+        return content
+    wanted = language.strip().lower().split("-")[0]
+    if not wanted:
+        return content
+    lines = content.splitlines(keepends=True)
+    groups: dict[str, list[int]] = {}
+    for i, line in enumerate(lines):
+        if line.startswith(_AUDIO_MEDIA_PREFIX) and _attr(line, "TYPE") == "AUDIO":
+            groups.setdefault(_attr(line, "GROUP-ID") or "", []).append(i)
+    for indexes in groups.values():
+        if len(indexes) < 2:
+            continue
+        match = next(
+            (
+                i
+                for i in indexes
+                if (_attr(lines[i], "LANGUAGE") or "").lower().split("-")[0] == wanted
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        for i in indexes:
+            line = _with_attr(lines[i], "DEFAULT", "YES" if i == match else "NO")
+            if i == match:
+                line = _with_attr(line, "AUTOSELECT", "YES")
+            lines[i] = line
+    return "".join(lines)
+
+
 def _cache_manifest(url: str, body: bytes, content_type: str) -> None:
     """Cache a manifest; when full, drop expired entries, then the oldest."""
     now = time.monotonic()

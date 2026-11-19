@@ -77,6 +77,12 @@ _SUBTITLE_PATTERNS = re.compile(r"(?i)\b(sub|untertiteln?)\b")
 # "Originalversion")
 _ORIGINAL_PATTERNS = re.compile(r"(?i)\b(original(?:version|fassung)?|ov)\b")
 _ORIGINAL = StreamLanguage(code="ov", label="Original", is_dubbed=False)
+# A link whose source names no language (``link["language"] = "unknown"``):
+# shown as such instead of the plugin's default language
+UNKNOWN_LANGUAGE_CODE = "unknown"
+_UNKNOWN_LANGUAGE = StreamLanguage(
+    code=UNKNOWN_LANGUAGE_CODE, label="Sprache unbekannt", is_dubbed=False
+)
 
 
 def _quality_from_badge(badge: str) -> ParsedQuality:
@@ -161,6 +167,8 @@ def parse_language(
     """Determine language from multiple sources.
 
     Priority: 1) guessit(release_name), 2) link_language, 3) plugin_default_language.
+    A link_language of ``unknown`` (the source names none) gives the unknown
+    language, not the plugin default.
     """
     # 1) Try guessit on release_name
     if release_name:
@@ -169,6 +177,8 @@ def parse_language(
             return lang
 
     # 2) Try link_language string
+    if link_language and link_language.strip().lower() == UNKNOWN_LANGUAGE_CODE:
+        return _UNKNOWN_LANGUAGE
     if link_language:
         lang = _language_from_link_string(link_language)
         if lang is not None:
