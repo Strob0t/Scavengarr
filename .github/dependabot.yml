@@ -15,6 +15,10 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
+    # "all" adds the indirect packages of poetry.lock (for example filelock and
+    # virtualenv through pre-commit); without it only direct ones get updates
+    allow:
+      - dependency-type: "all"
     groups:
       minor-and-patch:
         update-types:
