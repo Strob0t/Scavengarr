@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 import threading
 import time
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 import structlog
@@ -73,8 +75,18 @@ class TestTracingOff:
             "print(sorted(m for m in sys.modules if m.startswith(heavy)))\n"
             "print(threading.active_count())\n"
         )
+        # The child gets the src directory this test imports from: pytest's
+        # pythonpath setting reaches only this process, and a venv without
+        # the project installed (poetry install --no-root) has no other path;
+        # scavengarr is a namespace package, so its __file__ is None
+        src = str(Path(__file__).resolve().parents[3] / "src")
+        env = {**os.environ, "PYTHONPATH": src}
         out = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
         ).stdout
 
         assert out.split() == ["[]", "1"]
