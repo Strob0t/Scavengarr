@@ -168,7 +168,7 @@ The version is the installed package's.
 The commit and the time come from `build_info.json` beside the package (`/app/src/scavengarr/build_info.json` in the image), which `docker/build_info.py` writes in a build stage of its own (`buildinfo`), so the git files stay out of the runtime image:
 
 - The commit comes from the build argument `SCAVENGARR_COMMIT` or, without one, from the checkout's `.git/HEAD` and the ref it points at; `.dockerignore` lets those files through, and no git binary is needed.
-- The time comes from `SCAVENGARR_BUILT` or the clock.
+- The time comes from `SCAVENGARR_BUILT`, then `SOURCE_DATE_EPOCH`, or the clock.
 - `image.yml` passes the commit's first 12 characters and the date; a local `docker compose up -d --build` from a checkout needs no arguments.
 - A rebuild of the same commit without arguments keeps the cached stage, the first build's time included.
 

@@ -92,9 +92,17 @@ def main(argv: list[str] | None = None) -> int:
     commit = _given(os.environ.get("SCAVENGARR_COMMIT")) or commit_of(args.git)
     if commit:
         info["commit"] = commit
-    info["built"] = _given(os.environ.get("SCAVENGARR_BUILT")) or datetime.now(
-        UTC
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    built = _given(os.environ.get("SCAVENGARR_BUILT"))
+    if not built:
+        epoch = _given(os.environ.get("SOURCE_DATE_EPOCH"))
+        if epoch:
+            try:
+                built = datetime.fromtimestamp(int(epoch), UTC).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            except (ValueError, OverflowError, OSError):
+                built = None
+    info["built"] = built or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     out: Path = args.out
     out.parent.mkdir(parents=True, exist_ok=True)

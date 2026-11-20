@@ -141,7 +141,7 @@ Without an outcome set by the code, a stage ends as `ok`, as `cut` on a cancella
 - `circuit_breaker_open` `breaker`: `plugin` or `hoster`; `state`: `open` or `half_open`; a plugin breaker's `name` is keyed `plugin:category`.
 - The container's CPU minus `process_cpu_seconds_total` is Chromium, its driver, Xvfb and the health checks.
 - `build_info` names the app version, the commit and the build time; without a recorded build the last two are `unknown`.
-- The image build writes them to `build_info.json` beside the package (`docker/build_info.py`, from the `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT` build arguments or the checkout), and the environment variables of the same names override it ([Deploy](../how-to/deploy.md)).
+- The image build writes them to `build_info.json` beside the package (`docker/build_info.py`, from the `SCAVENGARR_COMMIT` and `SCAVENGARR_BUILT` build arguments, `SOURCE_DATE_EPOCH`, or the checkout), and the environment variables of the same names override it ([Deploy](../how-to/deploy.md)).
 - `/api/v1/healthz`, `/api/v1/stremio/health` and the startup line `app_startup_complete` report the same three values.
 
 ## The JSON statistics

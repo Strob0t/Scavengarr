@@ -130,3 +130,16 @@ class TestMain:
         assert "commit" not in data
         assert _BUILT_RE.match(data["built"])
         assert "commit=unknown" in capsys.readouterr().out
+
+
+def test_source_date_epoch_is_used_without_an_explicit_built_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SCAVENGARR_BUILT", raising=False)
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1795165200")
+    out = tmp_path / "build_info.json"
+
+    rc = build_info.main(["--git", str(tmp_path / "no-git"), "--out", str(out)])
+
+    assert rc == 0
+    assert json.loads(out.read_text())["built"] == "2026-11-20T09:00:00Z"
