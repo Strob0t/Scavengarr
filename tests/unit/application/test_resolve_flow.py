@@ -78,6 +78,9 @@ _FIRST_DELAY = 0.8
 _SECOND_DELAY = 1.2
 # An answer from the cache does not wait for a budget: well below it
 _AT_ONCE = _BUDGET / 2
+# A deadline the fast plugin's resolved stream meets on a loaded runner too
+# (0.3 s did not: the answer went out empty)
+_DEADLINE = 1.5
 
 
 class TestResolverEchoFiltering:
@@ -706,18 +709,20 @@ class TestAnswerPolicy:
         self,
     ) -> None:
         cache = memory_cache()
+        slow_may_answer = asyncio.Event()
         sites = {
             "fast": fake_site([hit("https://voe.sx/e/fast")]),
-            "slow": fake_site([hit("https://dood.to/e/slow")], delay=0.5),
+            "slow": fake_site([hit("https://dood.to/e/slow")], gate=slow_may_answer),
         }
         uc = answering_use_case(sites, cache, Resolutions(), resolve_target_count=1)
 
-        started = time.monotonic()
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert time.monotonic() - started < 0.4
+        # The answer went out while the slow plugin still searched
+        assert not slow_may_answer.is_set()
         assert [video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         # The slow plugin goes on and its results reach the cache
+        slow_may_answer.set()
         await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_links_resolve_while_the_search_runs(self) -> None:
@@ -769,13 +774,14 @@ class TestAnswerPolicy:
             memory_cache(),
             Resolutions(),
             plugin_timeout_seconds=10.0,
-            stream_deadline_seconds=0.3,
+            stream_deadline_seconds=_DEADLINE,
         )
 
         started = time.monotonic()
         streams = await uc.execute(make_request(), base_url="http://localhost:8080")
 
-        assert 0.25 < time.monotonic() - started < 1.5
+        # At the deadline, long before the stuck plugin's timeout
+        assert _DEADLINE - 0.05 < time.monotonic() - started < 5
         assert [video(uc, s) for s in streams] == ["https://cdn.example/fast.mp4"]
         await uc.aclose()
 
@@ -829,18 +835,23 @@ class TestAnswerPolicy:
         await eventually(lambda: len(cached_links(cache)) == 2)
 
     async def test_requests_on_one_search_both_answer_at_the_target(self) -> None:
+        """The slow site answers only when the test lets it: both requests
+        answer at the target while it still runs, not after it."""
         cache = memory_cache()
         fast = fake_site([hit("https://voe.sx/e/fast")])
-        sites = {"fast": fast, "slow": fake_site([], delay=0.5)}
+        slow_may_answer = asyncio.Event()
+        slow = fake_site([], gate=slow_may_answer)
+        sites = {"fast": fast, "slow": slow}
         uc = answering_use_case(sites, cache, Resolutions(), resolve_target_count=1)
 
-        started = time.monotonic()
         first, second = await asyncio.gather(
             uc.execute(make_request(), base_url="http://localhost:8080"),
             uc.execute(make_request(), base_url="http://localhost:8080"),
         )
 
-        assert time.monotonic() - started < 0.4
+        assert not slow_may_answer.is_set()
+        assert slow.isolated_search.await_count == 1
+        slow_may_answer.set()
         assert [video(uc, s) for s in first] == ["https://cdn.example/fast.mp4"]
         assert [video(uc, s) for s in second] == ["https://cdn.example/fast.mp4"]
         assert fast.isolated_search.await_count == 1

@@ -665,10 +665,12 @@ class TestCheck:
     )
 
     @pytest.fixture(autouse=True)
-    def _fixed_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fixed_clock(self, production: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """prodctl's clock stands still, as in TestStreamAnswers: the rows
         read 0.0 s however slow the runner, and the settle wait returns at
-        once."""
+        once. After ``production``, whose clock it replaces: set up before
+        it, the real ``time.monotonic`` came back, and a loaded runner's
+        rows read 0.1 s."""
         monkeypatch.setattr(
             _mod,
             "time",

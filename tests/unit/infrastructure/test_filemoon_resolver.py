@@ -21,6 +21,7 @@ from scavengarr.infrastructure.browser.page_gate import (
     ChallengeMark,
     challenge_mark,
     mark_resolution_passed,
+    work_clock,
 )
 from scavengarr.infrastructure.browser.stealth_pool import CapturedMedia
 from scavengarr.infrastructure.circuit_breaker import PluginCircuitBreaker
@@ -745,7 +746,8 @@ def _store(expires_at: float | None) -> ClearanceStore:
 
 class _ColdPool(_FakePool):
     """A stealth pool that also records whether the resolution's challenge
-    mark stood when its capture began, answers after *delay* seconds, and
+    mark stood when its capture began, answers after *delay* seconds (with
+    a delay the resolution's bound fires first, at the capture's start), and
     with *gone* shows the page's verdict instead: the file is gone."""
 
     def __init__(
@@ -769,6 +771,10 @@ class _ColdPool(_FakePool):
     ) -> CapturedMedia | None:
         mark = challenge_mark.get()
         self.open_at_start.append(mark is not None and mark.open)
+        if self.delay:
+            clock = work_clock.get()
+            assert clock is not None
+            clock.reschedule(asyncio.get_running_loop().time())
         await asyncio.sleep(self.delay)
         if self.gone:
             mark_resolution_passed()
@@ -899,9 +905,10 @@ class TestColdStartOutcome:
     async def _run(
         self, pool: _ColdPool, store: ClearanceStore
     ) -> tuple[HosterResolverRegistry, Telemetry, list[EventDict]]:
-        """Resolve the link once with a 0.05 s bound, then let a capture that
-        runs on past it end (``_COMPLETION_S`` is far longer than the test's
-        delays)."""
+        """Resolve the link once, then let a capture that runs on past the
+        bound end (``_COMPLETION_S`` is far longer than the test's delays).
+        The bound (5 s) fires only where the pool fires it, so the page's
+        own verdict never races it on a loaded runner."""
         _byse_pages()
         telemetry = Telemetry()
         async with httpx.AsyncClient() as client:
@@ -913,7 +920,7 @@ class TestColdStartOutcome:
                         clearance_store=store,
                     )
                 ],
-                resolve_timeout=0.05,
+                resolve_timeout=5.0,
                 circuit_breaker=PluginCircuitBreaker(
                     failure_threshold=1, cooldown_seconds=60.0
                 ),
