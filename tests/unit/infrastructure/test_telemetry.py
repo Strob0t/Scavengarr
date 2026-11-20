@@ -316,8 +316,13 @@ class TestEventLoopLag:
         t = Telemetry()
         task = asyncio.create_task(monitor_loop_lag(t, interval=0.01, warn_ms=1e9))
         await eventually(lambda: _loop_samples(t) >= 1)
+        before = _loop_samples(t)
         time.sleep(0.05)  # CPU-bound work holding the loop
-        await eventually(lambda: t.snapshot()["event_loop"].get("lag_ms_max", 0) >= 30)
+        # Wait for the tick after the stall, not for the lag value: on a busy
+        # host one tick can already be 30 ms late before the stall, and then
+        # the lag condition held at once with 1 sample (assert 1 >= 2 under
+        # pytest -n 8)
+        await eventually(lambda: _loop_samples(t) > before)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task

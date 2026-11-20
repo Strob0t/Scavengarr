@@ -826,7 +826,7 @@ class TestMirrorStandby:
         answer budget instead of getting another full plugin timeout."""
         cancelled = asyncio.Event()
         plugins = self._plugins()
-        plugins["hdfilme"].search = _answer_after(1.0, [])
+        plugins["hdfilme"].search = _answer_after(10.0, [])
         plugins["streamcloud"].search = _endless_search(cancelled)
         breaker = PluginCircuitBreaker(failure_threshold=1)
         runner = _runner(
@@ -838,17 +838,23 @@ class TestMirrorStandby:
         started = time.monotonic()
         pool = ConcurrencyPool(httpx_slots=10, pw_slots=10)
 
+        # The budget leaves the standby a wide margin to start: with 60 ms
+        # a busy host (pytest -n 8) reached the budget before the hand-over,
+        # the standby was skipped and never cancelled. The plugin timeout
+        # (5 s) and hdfilme (10 s) stay far above the budget, so only the
+        # budget can end the search.
         async with pool.request() as budget:
             await runner.search_with_fallback(
                 list(plugins),
                 ["q"],
                 2000,
                 budget=budget,
-                budget_ends=started + 0.08,
+                budget_ends=started + 1.0,
             )
 
+        assert plugins["streamcloud"].search.await_count == 1
         assert cancelled.is_set()
-        assert time.monotonic() - started < 1.0
+        assert time.monotonic() - started < 4.0
         # Cut by the budget, the standby did not have its whole timeout:
         # the cut is no failure of its site
         assert breaker.allow("streamcloud:2000")
